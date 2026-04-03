@@ -1,0 +1,36 @@
+node_modules/
+.dist/
+.vscode/
+.DS_Store
+.docs
+
+layout.pptx
+
+# Vendored libraries — source only, not committed
+Dev/lightweight-charts-master/
+
+# Desktop (Tauri v2) — new location: Dev/Desktop/
+Dev/Desktop/target_*/
+Dev/Desktop/src-tauri/target/
+Dev/Desktop/src-tauri/target-check/
+Dev/Desktop/src-tauri/target_*/
+Dev/Desktop/src-tauri/gen/
+Dev/Desktop/src-tauri/icons/
+Dev/Desktop/dist/
+Dev/Desktop/tauri-build-*.log
+Dev/Desktop/src-tauri/release-build-*.log
+Dev/Desktop/src-tauri/src-tauri/
+
+# Claude internal
+.claude/
+.codex/
+package-lock.json
+Cargo.lock
+
+# Debug logs
+.docs/debug_log/
+
+# Old desktop-poc leftovers
+scripts/desktop-poc/
+AGENTS.md
+CLAUDE.md
