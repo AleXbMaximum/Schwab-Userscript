@@ -4,6 +4,27 @@ Schwaber is a browser userscript that augments Charles Schwab's positions experi
 
 The repository itself is named `Schwab-Userscript`, while the generated bundle and some runtime labels still use `AlexQuant` / `AlexHedgeFund`. In practice, these names refer to the same userscript surface in this repo.
 
+## Start Here
+
+If you want the user-facing install and usage guide on GitHub, open [USERGUIDE.md](USERGUIDE.md) first.
+
+| I Want To... | Open |
+| --- | --- |
+| Install the userscript and confirm first launch | [USERGUIDE.md](USERGUIDE.md) |
+| Learn which page to use for a task | [USERGUIDE.md#which-page-should-i-open](USERGUIDE.md#which-page-should-i-open) |
+| Troubleshoot setup or runtime issues | [USERGUIDE.md#troubleshooting](USERGUIDE.md#troubleshooting) |
+| Read the architecture docs | [Dev/src/README.md](Dev/src/README.md) |
+
+## User Guide At A Glance
+
+The full guide lives in [USERGUIDE.md](USERGUIDE.md). It covers:
+
+- installation and first launch
+- desktop and mobile navigation
+- page-by-page workflow guidance
+- common troubleshooting steps
+- links to deeper technical docs when you need source-level detail
+
 ## What You Get
 
 | Area | What It Adds | Main Entry |
