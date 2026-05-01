@@ -1,3 +1,5 @@
+import { isDarkTheme } from "../../components/core/axTheme/controller";
+
 export function createZeroLinePlugin(scaleId = "y") {
   return {
     id: "zeroLine",
@@ -7,7 +9,7 @@ export function createZeroLinePlugin(scaleId = "y") {
       const yPixel = yScale.getPixelForValue(0);
       const ctx = chart.ctx;
       ctx.save();
-      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)";
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();

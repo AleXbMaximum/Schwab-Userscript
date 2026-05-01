@@ -1,9 +1,12 @@
+import { isDarkTheme } from "../../components/core/axTheme/controller";
+
 export function createReferenceLinePlugin(
   value: number,
   scaleId = "y",
   style?: { color?: string; dash?: number[]; lineWidth?: number },
 ) {
-  const color = style?.color ?? "rgba(0,0,0,0.3)";
+  const color =
+    style?.color ?? (isDarkTheme() ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)");
   const dash = style?.dash ?? [4, 3];
   const lineWidth = style?.lineWidth ?? 1;
 
