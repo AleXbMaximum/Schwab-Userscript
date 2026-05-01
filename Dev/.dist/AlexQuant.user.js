@@ -7471,7 +7471,155 @@ function shareScaleValue(v) {
   const mul = getMultiplierForMode(_mode);
   return mul !== 1 ? v * mul : v;
 }
+;// ./src/frontend/components/core/axTheme/controller.ts
+// Central theme state management.
+// Single source of truth for the current theme mode.
+// Persists to localStorage so the chosen theme survives reloads.
+
+const THEME_STORAGE_KEY = "alexquant.themeMode";
+let controller_mode = "auto";
+let _effective = "light";
+let _initialized = false;
+const _observers = new Set();
+let _mediaQuery = null;
+function isDarkTheme() {
+  return _effective === "dark";
+}
+function getCurrentMode() {
+  return controller_mode;
+}
+function getEffectiveTheme() {
+  return _effective;
+}
+
+/** Subscribe to theme changes. Returns unsubscribe function. */
+function onThemeChanged(cb) {
+  _observers.add(cb);
+  return () => {
+    _observers.delete(cb);
+  };
+}
+
+/** Set theme mode and persist. */
+function setTheme(mode) {
+  controller_mode = mode;
+  const next = resolveEffective(mode);
+  applyEffective(next);
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, mode);
+  } catch {
+    /* non-critical */
+  }
+}
+
+/** Initialize theme from persisted preference + system detection. Call once at boot. */
+function initTheme() {
+  if (_initialized) return;
+  _initialized = true;
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark" || stored === "auto") {
+      controller_mode = stored;
+    }
+  } catch {
+    /* fallback to auto */
+  }
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    _mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    _mediaQuery.addEventListener("change", () => {
+      if (controller_mode === "auto") applyEffective(resolveEffective("auto"));
+    });
+  }
+  applyEffective(resolveEffective(controller_mode), false);
+}
+function resolveEffective(mode) {
+  if (mode === "auto") {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return "light";
+    }
+    const mq = _mediaQuery ?? window.matchMedia("(prefers-color-scheme: dark)");
+    return mq.matches ? "dark" : "light";
+  }
+  return mode;
+}
+
+/**
+ * Mark the host body so dark-mode CSS can target Schwab's content for
+ * filter-inversion (Dark Reader–style hijack). The CSS lives in
+ * axTheme/shellCss.ts and only filters body children that aren't tagged
+ * as AlexQuant overlays (`#alexquant-*`, `.ax-shell-element`, `alexquant-tip`,
+ * `.dock-notification-container`, etc.). This keeps Schwab visible but
+ * tone-matched to the dark theme, instead of just blanking it out.
+ */
+function ensurePageHijack(active) {
+  if (typeof document === "undefined") return;
+  // Drop any legacy blackout div from earlier iterations of this work.
+  const legacy = document.getElementById("ax-page-blackout");
+  if (legacy && legacy.parentNode) legacy.parentNode.removeChild(legacy);
+  const body = document.body;
+  if (!body) return;
+  body.classList.toggle("ax-host-hijack", active);
+}
+function applyEffective(theme, animate = true) {
+  if (typeof document === "undefined") {
+    _effective = theme;
+    return;
+  }
+
+  // Body may not exist yet when the userscript runs at document_start. Defer
+  // the class toggle until the body is parsed; CSS vars on :root still apply
+  // to the page, so the dark variants pick up automatically once body lands.
+  const body = document.body;
+  if (!body) {
+    _effective = theme;
+    if (typeof window !== "undefined") {
+      const apply = () => applyEffective(theme, false);
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", apply, {
+          once: true
+        });
+      } else {
+        // Body not yet parsed but readyState advanced — try again next tick.
+        queueMicrotask(apply);
+      }
+    }
+    return;
+  }
+  if (theme === _effective && body.classList.contains("theme-dark") === (theme === "dark")) {
+    // Even when no class change is needed, make sure the blackout is in sync
+    // (e.g. after navigation that wiped body children).
+    ensurePageHijack(theme === "dark");
+    return;
+  }
+  _effective = theme;
+  const root = document.documentElement;
+  if (animate) {
+    root.classList.add("theme-transitioning");
+    setTimeout(() => root.classList.remove("theme-transitioning"), 350);
+  }
+  body.classList.toggle("theme-dark", theme === "dark");
+  ensurePageHijack(theme === "dark");
+
+  // Dispatch custom event for canvas/chart listeners
+  try {
+    window.dispatchEvent(new CustomEvent("themeChanged", {
+      detail: {
+        theme
+      }
+    }));
+  } catch {
+    /* no-op */
+  }
+  for (const cb of _observers) {
+    try {
+      cb(theme);
+    } catch {
+      /* observer errors are non-critical */
+    }
+  }
+}
 ;// ./src/frontend/components/mainContainer/MainContainer.ts
+
 
 
 
@@ -7559,7 +7707,10 @@ function ui_createMain(dependencies = {}) {
       role: "region",
       "aria-expanded": "true"
     },
-    className: "dock-container dock-expanded",
+    // `.ax-glass-rim` wires the mouse-tracked rim via the global observer
+    // in axTheme/liquidGlass.ts, giving the dock the recorder-style hover
+    // light that follows the pointer along its border.
+    className: "dock-container dock-expanded ax-glass-rim",
     styleString: isMobile ? "left:0; top:0; width:100vw; height:100vh; opacity:0; transform:scale(0.98); transition: opacity .3s ease, transform .3s ease; border-radius:0;" : "left:0; top:0; width:82vw; height:100vh; opacity:0; transform:scale(0.98); transition: opacity .3s ease, transform .3s ease, width .3s ease, height .3s ease; border-radius:0;"
   });
 
@@ -7979,7 +8130,7 @@ function buildShareModeButton() {
       placeholder: "x"
     }
   });
-  customInput.style.cssText = "width:42px;padding:1px 3px;font-size:11px;text-align:center;" + "border:1px solid rgba(0,0,0,0.15);border-radius:3px;" + "background:rgba(0,0,0,0.04);color:#111;box-sizing:border-box;" + "display:none;-moz-appearance:textfield;";
+  customInput.style.cssText = "width:42px;padding:1px 3px;font-size: var(--ax-fs-sm);text-align:center;" + "border:1px solid var(--ax-border);border-radius: var(--ax-radius-xs);" + "background: var(--ax-bg-input);color: var(--ax-fg);box-sizing:border-box;" + "display:none;-moz-appearance:textfield;";
 
   // Stop click/keyboard events from bubbling to panel-close or host-page handlers
   customInput.addEventListener("click", e => e.stopPropagation());
@@ -8010,6 +8161,62 @@ function buildShareModeButton() {
   optionsContainer.appendChild(customInput);
   shareRow.appendChild(optionsContainer);
   panel.appendChild(shareRow);
+
+  // ── Theme Mode row ──────────────────────────────────────────────────────
+  const themeRow = createElement_ui_createElement("div", {
+    className: "dock-settings-row"
+  });
+  const themeLabel = createElement_ui_createElement("span", {
+    text: "Theme",
+    className: "dock-settings-label"
+  });
+  themeRow.appendChild(themeLabel);
+  const themeOptionsContainer = createElement_ui_createElement("div", {
+    className: "dock-settings-options"
+  });
+  const THEME_MODES = [{
+    mode: "light",
+    label: "Light"
+  }, {
+    mode: "dark",
+    label: "Dark"
+  }, {
+    mode: "auto",
+    label: "Auto"
+  }];
+  const themeOptionEls = [];
+  for (const {
+    mode,
+    label
+  } of THEME_MODES) {
+    const optBtn = createElement_ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: label,
+      events: {
+        click: e => {
+          e.stopPropagation();
+          setTheme(mode);
+        }
+      }
+    });
+    themeOptionEls.push({
+      mode,
+      el: optBtn
+    });
+    themeOptionsContainer.appendChild(optBtn);
+  }
+  themeRow.appendChild(themeOptionsContainer);
+  panel.appendChild(themeRow);
+  function syncThemeOptions(activeMode) {
+    for (const {
+      mode,
+      el
+    } of themeOptionEls) {
+      el.classList.toggle("active", mode === activeMode);
+    }
+  }
+  syncThemeOptions(getCurrentMode());
+  onThemeChanged(() => syncThemeOptions(getCurrentMode()));
   wrapper.appendChild(panel);
 
   // ── Sync dropdown option highlight ──────────────────────────────────────
@@ -18258,189 +18465,358 @@ class BackendOrchestrator {
     });
   }
 }
+;// ./src/frontend/components/core/axTokens/colors.ts
+// Color tokens — three independent semantic layers (no proxying).
+// Mirrors AlexQuant UI palette so light/dark variants share a vocabulary.
+//
+//   layer            handle              CSS var               hue intent
+//   ─────────────    ────────────────    ──────────────────    ──────────────────
+//   palette accent   AXC.green / AXC.red --ax-green/--ax-red   saturated, for
+//                                                              status dots,
+//                                                              BUY/SELL buttons,
+//                                                              chart shapes
+//
+//   P&L sign         AX_TONE.positive    --ax-positive         desaturated, for
+//                    AX_TONE.negative    --ax-negative         dashboards / tables
+//
+//   alert severity   AX_CRITICAL.text    --ax-critical         saturated red,
+//                                        --ax-critical-soft-bg reserved for P0
+//                                        --ax-critical-border  alerts
+//
+//   zero / missing   var(--ax-fg-muted)  (existing)            signColor(0|null)
+//                                                              returns this; "-"
+//                                                              is the textual
+//                                                              placeholder
+
+
+const AX_LIGHT_RAW = {
+  blue: "#007AFF",
+  darkBlue: "#0062CC",
+  green: "rgb(32, 169, 69)",
+  orange: "rgb(215, 129, 0)",
+  red: "rgb(215, 49, 38)",
+  gray: "rgb(142, 142, 147)",
+  cyan: "#5AC8FA",
+  purple: "#5856D6",
+  yellow: "#FFCC00",
+  fg: "#1c1c1e",
+  fg2: "#3a3a3c",
+  fgMuted: "#8E8E93",
+  // Desaturated P&L sign colors. Distinct from palette green/red so dashboards
+  // with many rows of P&L numbers feel calm; palette green/red stay vibrant
+  // for accents and chart shapes.
+  positive: "rgb(56, 150, 75)",
+  negative: "rgb(195, 75, 64)",
+  neutral: "#D78100",
+  info: "#007AFF",
+  muted: "#8E8E93",
+  // Sharp alert red — reserved for P0 alerts and severityColors("critical").
+  critical: "rgb(215, 49, 38)",
+  textPrimary: "#1c1c1e",
+  textSecondary: "#3a3a3c",
+  tableHeader: "#1b5fa7",
+  // Canvas-side tooltip (high alpha — chart canvases can't do backdrop-filter).
+  tooltipBg: "rgba(255, 255, 255, 0.95)",
+  tooltipBorder: "rgba(0, 0, 0, 0.15)"
+};
+const AX_DARK_RAW = {
+  blue: "#0A84FF",
+  darkBlue: "#409CFF",
+  green: "#34C759",
+  orange: "#FF9500",
+  red: "#FF453A",
+  gray: "#A2A2A7",
+  cyan: "#70D7FF",
+  purple: "#BF5AF2",
+  yellow: "#FFD60A",
+  fg: "#f2f2f4",
+  fg2: "#c8c8cc",
+  fgMuted: "#9a9aa0",
+  positive: "#3DBE65",
+  negative: "#E8554A",
+  neutral: "#FF9500",
+  info: "#0A84FF",
+  muted: "#A2A2A7",
+  critical: "#FF453A",
+  textPrimary: "#f2f2f4",
+  textSecondary: "#c8c8cc",
+  tableHeader: "#6bb3f0",
+  tooltipBg: "rgba(18, 18, 22, 0.95)",
+  tooltipBorder: "rgba(255, 255, 255, 0.12)"
+};
+// ── Palette handles (CSS-var form, preferred in DOM styling) ────────────────
+
+const AXC = {
+  blue: "var(--ax-blue)",
+  green: "var(--ax-green)",
+  red: "var(--ax-red)",
+  orange: "var(--ax-orange)",
+  gray: "var(--ax-gray)",
+  cyan: "var(--ax-cyan)",
+  purple: "var(--ax-purple)",
+  yellow: "var(--ax-yellow)"
+};
+
+// ── Semantic tones ──────────────────────────────────────────────────────────
+
+const AX_TONE = {
+  positive: "var(--ax-positive)",
+  negative: "var(--ax-negative)",
+  neutral: AXC.orange,
+  info: AXC.blue,
+  muted: AXC.gray
+};
+const AX_TONE_BG = {
+  positive: "var(--ax-tone-positive-bg)",
+  negative: "var(--ax-tone-negative-bg)",
+  neutral: "var(--ax-tone-neutral-bg)",
+  info: "var(--ax-tone-info-bg)",
+  muted: "var(--ax-tone-muted-bg)"
+};
+const AX_TONE_BORDER = {
+  positive: "var(--ax-tone-positive-border)",
+  negative: "var(--ax-tone-negative-border)",
+  neutral: "var(--ax-tone-neutral-border)",
+  info: "var(--ax-tone-info-border)",
+  muted: "var(--ax-tone-muted-border)"
+};
+const AX_TONE_BG_SOFT = {
+  positive: "var(--ax-tone-positive-soft-bg)",
+  negative: "var(--ax-tone-negative-soft-bg)",
+  neutral: "var(--ax-tone-neutral-soft-bg)",
+  info: "var(--ax-tone-info-soft-bg)",
+  muted: "var(--ax-tone-muted-soft-bg)"
+};
+const AX_CRITICAL = {
+  text: "var(--ax-critical)",
+  bg: "var(--ax-critical-soft-bg)",
+  border: "var(--ax-critical-border)"
+};
+const AX_FG = {
+  primary: "var(--ax-fg)",
+  secondary: "var(--ax-fg-2)",
+  muted: "var(--ax-fg-muted)",
+  onAccent: "#ffffff",
+  link: "var(--ax-blue)",
+  tableHead: "var(--ax-table-head)"
+};
+
+// ── Raw hex getter (for canvas / Chart.js callbacks) ────────────────────────
+
+function getAxRawColors() {
+  return isDarkTheme() ? AX_DARK_RAW : AX_LIGHT_RAW;
+}
+
+/**
+ * Compose a CSS rgba() string from a raw theme colour.
+ * Supports `#rgb`, `#rrggbb`, and `rgb(r, g, b)` inputs.
+ */
+function axColorWithAlpha(color, alpha) {
+  const safeAlpha = Math.max(0, Math.min(1, alpha));
+  const rgbMatch = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i.exec(color);
+  if (rgbMatch) {
+    const [, r, g, b] = rgbMatch;
+    return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+  }
+  const shortHexMatch = /^#([\da-f]{3})$/i.exec(color);
+  const fullHexMatch = /^#([\da-f]{6})$/i.exec(color);
+  let hex = fullHexMatch?.[1] ?? "";
+  if (!hex && shortHexMatch) {
+    hex = shortHexMatch[1].split("").map(part => part + part).join("");
+  }
+  if (!hex) return color;
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${safeAlpha})`;
+}
+
+/** P&L colour for DOM (returns CSS-var reference). */
+function axSignColor(value) {
+  if (value == null || !Number.isFinite(value) || value === 0) {
+    return "var(--ax-fg-muted)";
+  }
+  return value > 0 ? "var(--ax-positive)" : "var(--ax-negative)";
+}
+
+/** P&L colour for canvas / Chart.js (returns raw hex / rgb string). */
+function axSignColorRaw(value) {
+  const raw = getAxRawColors();
+  if (value == null || !Number.isFinite(value) || value === 0) return raw.fgMuted;
+  return value > 0 ? raw.positive : raw.negative;
+}
+
+/** Severity color triplet (text + bg + border) for info / warning / critical. */
+function axSeverityColors(severity) {
+  const raw = getAxRawColors();
+  if (severity === "critical") {
+    return {
+      text: raw.critical,
+      bg: AX_CRITICAL.bg,
+      border: AX_CRITICAL.border
+    };
+  }
+  if (severity === "warning") {
+    return {
+      text: raw.neutral,
+      bg: AX_TONE_BG_SOFT.neutral,
+      border: AX_TONE_BORDER.neutral
+    };
+  }
+  return {
+    text: raw.positive,
+    bg: AX_TONE_BG_SOFT.positive,
+    border: AX_TONE_BORDER.positive
+  };
+}
 ;// ./src/frontend/components/core/theme.ts
-// Base section shell style — used by DS_COMPONENTS.panel.
-const SECTION_BOX = "background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.12));" + " backdrop-filter: blur(calc(var(--lg-blur) - 2px)) saturate(var(--lg-saturate));" + " -webkit-backdrop-filter: blur(calc(var(--lg-blur) - 2px)) saturate(var(--lg-saturate));" + " border-radius:16px; padding:20px; box-shadow:var(--ios-shadow-sm);" + " border:1px solid var(--lg-border); margin-bottom:20px;";
+// Design-system tokens consumed by every page renderer.
+//
+// Backed by the AlexQuant `--ax-*` CSS-var system in ./axTheme. The legacy
+// `--ios-*` / `--lg-*` / `--glass-*` names still resolve (they're aliased
+// inside cssVars) so DS_* values stay compatible with older callsites that
+// inline raw vars.
+//
+// Theme awareness:
+//   - DS_COLORS.* / DS_TYPOGRAPHY.* / DS_COMPONENTS.* / DS_BUTTONS.* —
+//     reference --ax-* CSS vars and are therefore automatic in light/dark
+//     mode (controlled by `body.theme-dark`).
+//   - DS_COLORS.raw — getter that returns raw hex/rgb for canvas / Chart.js
+//     callbacks where CSS vars aren't available. Re-evaluates on each access.
+
+
+
+// ============================================================
+// SECTION SHELL — Tier-2 liquid-glass panel surface
+//
+// These string mixins are still emitted for legacy callsites that compose
+// `styleString:` from raw concatenations. Going forward, prefer the utility
+// classes `.ax-glass-2`, `.ax-glass-rim` from baseCss.ts — they're ~80%
+// shorter, hot-swap with theme changes, and pick up rim animation for free.
+// ============================================================
+
+const SECTION_BOX = "background: var(--ax-glass-2-bg);" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));" + " border-radius: var(--ax-radius-xl); padding: 20px;" + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);" + " border: 1px solid var(--ax-glass-2-border); margin-bottom: 20px;";
 
 // ============================================================
 // 1. COLOR TOKENS
 // ============================================================
 
+function getRawSwatch() {
+  const r = getAxRawColors();
+  return {
+    positive: r.positive,
+    negative: r.negative,
+    neutral: r.neutral,
+    info: r.info,
+    muted: r.muted,
+    textPrimary: r.textPrimary,
+    textSecondary: r.textSecondary,
+    tableHeader: r.tableHeader,
+    cyan: r.cyan,
+    purple: r.purple
+  };
+}
 const DS_COLORS = {
-  // Semantic intent -- CSS variable form (for DOM styleString)
-  positive: "var(--ios-green)",
-  negative: "var(--ios-red)",
-  neutral: "var(--ios-orange)",
-  info: "var(--ios-blue)",
-  muted: "var(--ios-gray)",
-  textPrimary: "var(--ios-text-primary)",
-  textSecondary: "var(--ios-text-secondary)",
-  border: "var(--ios-border)",
-  lightGray: "var(--ios-light-gray)",
-  tableHeader: "var(--ios-table-header)",
+  positive: "var(--ax-positive)",
+  negative: "var(--ax-negative)",
+  neutral: "var(--ax-orange)",
+  info: "var(--ax-blue)",
+  muted: "var(--ax-gray)",
+  textPrimary: "var(--ax-fg)",
+  textSecondary: "var(--ax-fg-2)",
+  border: "var(--ax-border)",
+  lightGray: "var(--ax-tone-muted-bg)",
+  tableHeader: "var(--ax-table-head)",
   white: "#ffffff",
-  cyan: "var(--ios-cyan)",
-  purple: "var(--ios-purple)",
-  // Raw hex -- for canvas 2D, Chart.js callbacks, and contexts
-  // where CSS custom properties are not supported.
-  raw: {
-    positive: "#20a945",
-    negative: "#d73126",
-    neutral: "#D78100",
-    info: "#007AFF",
-    muted: "#8E8E93",
-    textPrimary: "#1c1c1e",
-    textSecondary: "#3a3a3c",
-    tableHeader: "#1b5fa7",
-    cyan: "#5AC8FA",
-    purple: "#5856D6"
+  cyan: "var(--ax-cyan)",
+  purple: "var(--ax-purple)",
+  // Theme-aware raw hex/rgb getter for canvas / Chart.js callbacks.
+  // Each property is a getter so the value reflects the current theme.
+  get raw() {
+    return getRawSwatch();
   },
-  // Alpha backgrounds for badges, chips, status indicators
-  bgPositive: "rgba(32, 169, 69, 0.06)",
-  bgNegative: "rgba(215, 49, 38, 0.06)",
-  bgNeutral: "rgba(215, 129, 0, 0.06)",
-  bgInfo: "rgba(0, 122, 255, 0.06)",
-  bgMuted: "rgba(142, 142, 147, 0.06)",
-  bgSubtle: "rgba(0, 0, 0, 0.03)",
-  bgPanel: "rgba(255, 255, 255, 0.45)"
+  bgPositive: "var(--ax-tone-positive-soft-bg)",
+  bgNegative: "var(--ax-tone-negative-soft-bg)",
+  bgNeutral: "var(--ax-tone-neutral-soft-bg)",
+  bgInfo: "var(--ax-tone-info-soft-bg)",
+  bgMuted: "var(--ax-tone-muted-soft-bg)",
+  bgSubtle: "var(--ax-bg-glass-inset)",
+  bgPanel: "var(--ax-glass-2-bg)"
 };
 
 // ============================================================
-// 2. TYPOGRAPHY PRESETS  (ready-to-use styleString values)
+// 2. TYPOGRAPHY PRESETS
 // ============================================================
 
 const DS_TYPOGRAPHY = {
-  /** Panel title: 15px bold, primary color, tight letter-spacing */
-  panelTitle: "margin: 0 0 4px 0; font-size: 15px; font-weight: 700; color: var(--ios-text-primary); letter-spacing: -0.2px;",
-  /** Panel description: 11px secondary */
-  panelDesc: "font-size: 11px; color: var(--ios-text-secondary); margin-bottom: 8px;",
-  /** Metric label: tiny uppercase bold (section headings like "FUNDAMENTALS") */
-  metricLabel: "font-size: 10px; font-weight: 700; color: var(--ios-text-secondary); text-transform: uppercase; letter-spacing: 0.4px;",
-  /** Mini metric label inside cells */
-  metricLabelMini: "font-size: 9px; color: var(--ios-text-secondary); text-transform: uppercase;",
-  /** Metric value: 11px semibold primary */
-  metricValue: "font-size: 11px; font-weight: 600; color: var(--ios-text-primary);",
-  /** Body text inside cards/sections */
-  bodyText: "font-size: 12px; color: var(--ios-text-secondary); line-height: 1.4;",
-  /** Caption/footer */
-  caption: "font-size: 10px; color: var(--ios-text-secondary);",
-  /** Control label: 12px medium-weight, secondary color (view/filter labels) */
-  controlLabel: "font-size: 12px; font-weight: 500; color: var(--ios-text-secondary);",
-  /** Collapsible card label */
-  cardLabel: "font-size: 12px; font-weight: 600; color: var(--ios-text-primary); flex: 1;",
-  /** Card meta text */
-  cardMeta: "font-size: 11px; color: var(--ios-text-secondary);",
-  /** Section header title builder (uppercase, bold, custom color) */
-  sectionHeader: color => `font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; white-space: nowrap; color: ${color ?? "var(--ios-text-secondary)"};`,
-  /** Page-level title (larger, used in top-level page headers) */
-  pageTitle: "font-size: 20px; font-weight: 600; color: var(--ios-text-primary); margin: 0 0 16px 0;",
-  /** Heading: 13px bold, primary text (sub-panel titles, card headings) */
-  heading: "font-size: 13px; font-weight: 700; color: var(--ios-text-primary); line-height: 1.3;",
-  /** Compact body: 10px for dense/tiny UI elements */
-  compact: "font-size: 10px; color: var(--ios-text-secondary); line-height: 1.3;",
-  /** Monospace: 12px for code, data values, numeric displays */
-  mono: "font-size: 12px; font-weight: 600; color: var(--ios-text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;",
-  /** Large value: 20px extra-bold for hero numbers/KPIs */
-  largeValue: "font-size: 20px; font-weight: 800; color: var(--ios-text-primary); line-height: 1; letter-spacing: -0.5px;"
+  panelTitle: "margin: 0 0 4px 0; font-size: var(--ax-fs-xl); font-weight: var(--ax-fw-bold); color: var(--ax-fg); letter-spacing: -0.2px;",
+  panelDesc: "font-size: var(--ax-fs-sm); color: var(--ax-fg-2); margin-bottom: 8px;",
+  metricLabel: "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-bold); color: var(--ax-fg-2); text-transform: uppercase; letter-spacing: 0.4px;",
+  metricLabelMini: "font-size: var(--ax-fs-2xs); color: var(--ax-fg-2); text-transform: uppercase;",
+  metricValue: "font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); color: var(--ax-fg); font-variant-numeric: tabular-nums lining-nums;",
+  bodyText: "font-size: var(--ax-fs-md); color: var(--ax-fg-2); line-height: 1.4;",
+  caption: "font-size: var(--ax-fs-xs); color: var(--ax-fg-2);",
+  controlLabel: "font-size: var(--ax-fs-md); font-weight: var(--ax-fw-medium); color: var(--ax-fg-2);",
+  cardLabel: "font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); color: var(--ax-fg); flex: 1;",
+  cardMeta: "font-size: var(--ax-fs-sm); color: var(--ax-fg-2);",
+  sectionHeader: color => `font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-bold); text-transform: uppercase; letter-spacing: 0.6px; white-space: nowrap; color: ${color ?? "var(--ax-fg-2)"};`,
+  pageTitle: "font-size: var(--ax-fs-3xl); font-weight: var(--ax-fw-semibold); color: var(--ax-fg); margin: 0 0 16px 0;",
+  heading: "font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-bold); color: var(--ax-fg); line-height: 1.3;",
+  compact: "font-size: var(--ax-fs-xs); color: var(--ax-fg-2); line-height: 1.3;",
+  mono: "font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); color: var(--ax-fg); font-family: var(--ax-font-mono); font-variant-numeric: tabular-nums lining-nums;",
+  largeValue: "font-size: var(--ax-fs-3xl); font-weight: var(--ax-fw-heavy); color: var(--ax-fg); line-height: 1; letter-spacing: -0.5px; font-variant-numeric: tabular-nums lining-nums;"
 };
 
 // ============================================================
-// 3. COMPONENT STYLE PRESETS  (ready-to-use styleString values)
+// 3. COMPONENT STYLE PRESETS
 // ============================================================
 
 const theme_DS_COMPONENTS = {
-  /** Standard panel container (sectionBox + no bottom margin) */
   panel: SECTION_BOX + " margin-bottom: 0;",
-  /** Legacy card shell kept as DS token for compatibility */
-  card: "background: linear-gradient(135deg, rgba(255,255,255,var(--lg-alpha-1)), rgba(255,255,255,var(--lg-alpha-2)));" + " backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate));" + " -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate));" + " border-radius:14px; padding:16px; box-shadow:0 4px 12px rgba(0,0,0,0.08); border:1px solid var(--lg-border);",
-  /** Collapsible card outer shell */
-  collapsibleCard: "border: 1px solid var(--ios-border); border-radius: 10px; overflow: hidden; background: rgba(255,255,255,0.45);",
-  /** Collapsible card header */
-  collapsibleHeader: "display: flex; align-items: center; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none;",
-  /** Collapsible card body (hidden by default) */
-  collapsibleBody: "display: none; padding: 10px 13px; border-top: 1px solid var(--ios-border);",
-  /** Collapsible body in flex-column mode */
-  collapsibleBodyFlex: "padding: 10px 13px; border-top: 1px solid var(--ios-border); display: flex; flex-direction: column; gap: 10px;",
-  /** Caret/toggle arrow for collapsible */
-  caret: "font-size: 9px; color: var(--ios-text-secondary); transition: transform 0.2s; flex-shrink: 0;",
-  /** Status dot builder (7px circle) */
+  card: "background: var(--ax-glass-2-bg);" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));" + " border-radius: var(--ax-radius-lg); padding: 16px;" + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);" + " border: 1px solid var(--ax-glass-2-border);",
+  collapsibleCard: "border: 1px solid var(--ax-glass-2-border); border-radius: var(--ax-radius-lg); overflow: hidden;" + " background: var(--ax-glass-2-bg);" + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);",
+  collapsibleHeader: "display: flex; align-items: center; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; color: var(--ax-fg);",
+  collapsibleBody: "display: none; padding: 10px 13px; border-top: 1px solid var(--ax-border-subtle); color: var(--ax-fg);",
+  collapsibleBodyFlex: "padding: 10px 13px; border-top: 1px solid var(--ax-border-subtle); display: flex; flex-direction: column; gap: 10px; color: var(--ax-fg);",
+  caret: "font-size: var(--ax-fs-2xs); color: var(--ax-fg-2); transition: transform 0.2s; flex-shrink: 0;",
   statusDot: color => `width: 7px; height: 7px; border-radius: 50%; background: ${color}; flex-shrink: 0;`,
-  /** Metric cell: subtle background card (vertical label + value) */
-  metricCell: "background: rgba(0,0,0,0.03); border-radius: 6px; padding: 5px 7px; display: flex; flex-direction: column; gap: 1px;",
-  /** Metric cell inline (horizontal label + value) */
-  metricCellInline: "background: rgba(0,0,0,0.03); border-radius: 6px; padding: 4px 8px; display: flex; gap: 4px; align-items: center;",
-  /** Data section container (flex column with tight gap) */
+  metricCell: "background: var(--ax-glass-1-bg); border: 1px solid var(--ax-glass-1-border);" + " box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);" + " border-radius: var(--ax-radius-sm); padding: 5px 7px;" + " display: flex; flex-direction: column; gap: 1px;",
+  metricCellInline: "background: var(--ax-glass-1-bg); border: 1px solid var(--ax-glass-1-border);" + " box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);" + " border-radius: var(--ax-radius-sm); padding: 4px 8px;" + " display: flex; gap: 4px; align-items: center;",
   dataSection: "display: flex; flex-direction: column; gap: 5px;",
-  /** Driver/detail list item */
-  driverItem: "padding: 6px 10px; border-radius: 8px; font-size: 11px; line-height: 1.35; background: rgba(0,0,0,0.03); color: var(--ios-text-secondary); border: 1px solid rgba(0,0,0,0.06);",
-  /** News/activity list item */
-  newsItem: "display: flex; flex-direction: column; gap: 2px; padding: 5px 8px; background: rgba(0,0,0,0.03); border-radius: 6px;",
+  driverItem: "padding: 6px 10px; border-radius: var(--ax-radius-md); font-size: var(--ax-fs-sm); line-height: 1.35;" + " background: var(--ax-glass-1-bg); color: var(--ax-fg-2); border: 1px solid var(--ax-glass-1-border);",
+  newsItem: "display: flex; flex-direction: column; gap: 2px; padding: 5px 8px;" + " background: var(--ax-glass-1-bg); border: 1px solid var(--ax-glass-1-border);" + " border-radius: var(--ax-radius-sm);",
+  table: "width: 100%; border-collapse: separate; border-spacing: 0;" + " border-radius: var(--ax-radius-md); overflow: hidden;" + " border: 1px solid var(--ax-border); background: var(--ax-bg-table);",
+  tableHeader: "text-align: left; padding: 8px 10px; font-size: var(--ax-fs-sm);" + " font-weight: var(--ax-fw-semibold); color: var(--ax-table-head); letter-spacing: 0.2px;" + " border-bottom: 1px solid var(--ax-border-subtle); background: var(--ax-bg-table-head);",
+  tableCell: "padding: 7px 10px; font-size: var(--ax-fs-md); color: var(--ax-fg);" + " font-variant-numeric: tabular-nums lining-nums;",
   // ── Settings-panel form tokens ──────────────────────────────
 
-  // ── Table tokens ────────────────────────────────────────────
-
-  /** Table wrapper: border-collapse, rounded, bordered */
-  table: "width: 100%; border-collapse: separate; border-spacing: 0; border-radius: 10px;" + " overflow: hidden; border: 1px solid var(--ios-border); background: rgba(255,255,255,0.92);",
-  /** Table header cell: gradient background, colored text */
-  tableHeader: "text-align: left; padding: 8px 10px; font-size: 11px; font-weight: 600;" + " color: var(--ios-table-header); letter-spacing: 0.2px;" + " border-bottom: 1px solid rgba(60,60,67,0.1);" + " background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(250,250,252,0.75));",
-  /** Table body cell */
-  tableCell: "padding: 7px 10px; font-size: 12px; color: var(--ios-text-primary); font-variant-numeric: tabular-nums;",
-  // ── Settings-panel form tokens ──────────────────────────────
-
-  /** Settings panel: section title (uppercase label) */
-  settingSectionTitle: "font-size: 11px; font-weight: 700; color: var(--ios-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;",
-  /** Settings panel: field label */
-  settingFieldLabel: "font-size: 11px; color: var(--ios-text-secondary);",
-  /** Settings panel: field input */
-  settingFieldInput: "padding: 6px 9px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 8px;" + " font-family: var(--ios-font); background: rgba(255,255,255,0.86); color: var(--ios-text-primary); outline: none;",
-  /** Settings panel: section box container */
-  settingSectionBox: "display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--ios-border);" + " border-radius: 10px; background: rgba(0,0,0,0.015);",
-  /** Dense settings layout: adaptive grid for compact cards */
+  settingSectionTitle: "font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); color: var(--ax-fg-2);" + " text-transform: uppercase; letter-spacing: 0.5px;",
+  settingFieldLabel: "font-size: var(--ax-fs-sm); color: var(--ax-fg-2);",
+  settingFieldInput: "padding: 6px 9px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-md); font-family: var(--ax-font-body);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg); outline: none;",
+  settingSectionBox: "display: flex; flex-direction: column; gap: 8px; padding: 10px;" + " border: 1px solid var(--ax-glass-1-border); border-radius: var(--ax-radius-lg);" + " background: var(--ax-glass-1-bg);",
   settingDenseGrid: "display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; align-items: start;",
-  /** Dense settings card shell */
-  settingDenseCard: "display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px 10px;" + " border: 1px solid var(--ios-border); border-radius: 10px; background: rgba(255,255,255,0.66);",
-  /** Dense settings helper text */
-  settingDenseHint: "font-size: 10px; color: var(--ios-text-secondary); line-height: 1.3;",
-  /** Dense row: label + control */
+  settingDenseCard: "display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 8px 10px;" + " border: 1px solid var(--ax-glass-1-border); border-radius: var(--ax-radius-lg);" + " background: var(--ax-glass-1-bg);",
+  settingDenseHint: "font-size: var(--ax-fs-xs); color: var(--ax-fg-2); line-height: 1.3;",
   settingDenseRow: "display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; min-width: 0;",
-  /** Dense right-side value group */
   settingDenseValueGroup: "display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;",
-  /** Dense field input (narrow) */
-  settingDenseInput: "width: 96px; padding: 4px 8px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 8px;" + " font-family: var(--ios-font); background: rgba(255,255,255,0.9); color: var(--ios-text-primary); outline: none;",
-  /** Dense unit chip */
-  settingDenseUnit: "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary); background: rgba(0,0,0,0.04);" + " border: 1px solid rgba(0,0,0,0.08); border-radius: 6px; padding: 1px 5px; line-height: 1.2;",
-  /** Dense checkbox */
-  settingCheckbox: "width: 15px; height: 15px; cursor: pointer; accent-color: var(--ios-blue);",
-  /** Settings JSON textarea */
-  settingTextarea: "width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;" + " font-size: 12px; line-height: 1.4; padding: 8px 9px; border: 1px solid var(--ios-border);" + " border-radius: 10px; background: rgba(255,255,255,0.58); resize: vertical;" + " transition: border-color 0.2s, box-shadow 0.2s; outline: none;",
-  /** Grouped settings stack */
+  settingDenseInput: "width: 96px; padding: 4px 8px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-sm); font-family: var(--ax-font-body);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg); outline: none;",
+  settingDenseUnit: "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); color: var(--ax-fg-2);" + " background: var(--ax-bg-glass-inset); border: 1px solid var(--ax-border-subtle);" + " border-radius: var(--ax-radius-xs); padding: 1px 5px; line-height: 1.2;",
+  settingCheckbox: "width: 15px; height: 15px; cursor: pointer; accent-color: var(--ax-blue);",
+  settingTextarea: "width: 100%; box-sizing: border-box; font-family: var(--ax-font-mono);" + " font-size: var(--ax-fs-md); line-height: 1.4; padding: 8px 9px;" + " border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg); resize: vertical;" + " transition: border-color 0.2s, box-shadow 0.2s; outline: none;",
   settingGroupStack: "display: flex; flex-direction: column; gap: 10px;",
-  /** Grouped settings section card */
-  settingGroupCard: "display: flex; flex-direction: column; background: rgba(255,255,255,0.94); border: 1px solid rgba(60,60,67,0.14);" + " border-radius: 14px; overflow: hidden;",
-  /** Grouped settings header row */
-  settingGroupHeader: "display: grid; grid-template-columns: minmax(0,1fr) 220px; align-items: center; column-gap: 12px;" + " padding: 12px 16px; background: rgba(250,250,252,0.92);",
-  /** Grouped settings title */
-  settingGroupTitle: "font-size: 15px; font-weight: 600; color: var(--ios-text-primary); line-height: 1.25;",
-  /** Grouped settings body */
+  settingGroupCard: "display: flex; flex-direction: column; background: var(--ax-glass-2-bg);" + " border: 1px solid var(--ax-glass-2-border);" + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);" + " border-radius: var(--ax-radius-xl); overflow: hidden;",
+  settingGroupHeader: "display: grid; grid-template-columns: minmax(0,1fr) 220px; align-items: center;" + " column-gap: 12px; padding: 12px 16px;" + " background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent);" + " border-bottom: 1px solid var(--ax-border-subtle);",
+  settingGroupTitle: "font-size: var(--ax-fs-xl); font-weight: var(--ax-fw-semibold); color: var(--ax-fg); line-height: 1.25;",
   settingGroupBody: "display: flex; flex-direction: column; padding: 4px 16px 10px;",
-  /** Grouped form row */
-  settingFormRow: "display: grid; grid-template-columns: minmax(0,1fr) 220px; align-items: center; column-gap: 12px;" + " min-height: 44px; padding: 8px 0; border-bottom: 1px solid rgba(60,60,67,0.10);",
-  /** Grouped form row label */
-  settingFormLabel: "font-size: 13px; font-weight: 500; color: var(--ios-text-primary); line-height: 1.25;",
-  /** Grouped form row helper */
-  settingFormHelper: "font-size: 12px; color: var(--ios-text-secondary); line-height: 1.35; margin-top: 2px;",
-  /** Grouped form control slot */
+  settingFormRow: "display: grid; grid-template-columns: minmax(0,1fr) 220px; align-items: center;" + " column-gap: 12px; min-height: 44px; padding: 8px 0;" + " border-bottom: 1px solid var(--ax-border-subtle);",
+  settingFormLabel: "font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-medium); color: var(--ax-fg); line-height: 1.25;",
+  settingFormHelper: "font-size: var(--ax-fs-md); color: var(--ax-fg-2); line-height: 1.35; margin-top: 2px;",
   settingFormControl: "width: 220px; display: flex; justify-content: flex-end; align-items: center;",
-  /** Grouped input + suffix wrapper */
   settingInputGroup: "width: 220px; display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end;",
-  /** Grouped form input */
-  settingFormInput: "width: 168px; padding: 6px 10px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 8px;" + " font-family: var(--ios-font); background: rgba(255,255,255,0.96); color: var(--ios-text-primary); outline: none;",
-  /** Grouped form suffix */
-  settingFormSuffix: "min-width: 44px; text-align: center; font-size: 11px; font-weight: 600; color: var(--ios-text-secondary);" + " background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.10); border-radius: 8px; padding: 2px 6px; line-height: 1.2;",
-  /** Switch track */
-  settingSwitchTrack: "position: relative; width: 42px; height: 24px; border-radius: 999px; border: 1px solid rgba(60,60,67,0.25);" + " background: rgba(120,120,128,0.22); transition: background 0.16s, border-color 0.16s; cursor: pointer;",
-  /** Switch knob */
-  settingSwitchKnob: "position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;" + " background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.16s;"
+  settingFormInput: "width: 168px; padding: 6px 10px; font-size: var(--ax-fs-md);" + " border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " font-family: var(--ax-font-body); background: var(--ax-bg-glass-inset);" + " color: var(--ax-fg); outline: none;",
+  settingFormSuffix: "min-width: 44px; text-align: center; font-size: var(--ax-fs-sm);" + " font-weight: var(--ax-fw-semibold); color: var(--ax-fg-2);" + " background: var(--ax-bg-glass-inset); border: 1px solid var(--ax-border-subtle);" + " border-radius: var(--ax-radius-sm); padding: 2px 6px; line-height: 1.2;",
+  settingSwitchTrack: "position: relative; width: 42px; height: 24px; border-radius: var(--ax-radius-pill);" + " border: 1px solid var(--ax-border-strong); background: var(--ax-tone-muted-bg);" + " transition: background 0.16s, border-color 0.16s; cursor: pointer;",
+  settingSwitchKnob: "position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;" + " border-radius: 50%; background: #fff;" + " box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); transition: transform 0.16s;"
 };
 
 // ============================================================
@@ -18448,20 +18824,13 @@ const theme_DS_COMPONENTS = {
 // ============================================================
 
 const DS_BUTTONS = {
-  /** iOS-style primary button (blue gradient with glow) */
-  primary: "position:relative; overflow:hidden;" + " background: linear-gradient(to bottom, rgba(255,255,255,0.08) 0%, transparent 8%), linear-gradient(135deg, rgba(0,122,255,0.9), rgba(0,122,255,0.8));" + " color:white; border:1px solid rgba(255,255,255,0.25); border-radius:12px;" + " font-weight:600; cursor:pointer; transition:all 0.2s ease;" + " display:flex; align-items:center; gap:8px; box-shadow: 0 6px 16px rgba(0,122,255,0.20);",
-  /** Glass-style secondary button */
-  secondary: "background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.12));" + " color:var(--ios-text-secondary); border:1px solid var(--lg-border); border-radius:12px;" + " font-weight:600; cursor:pointer; transition:all 0.2s ease;" + " display:flex; align-items:center; gap:8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);",
-  /** Danger button (red outline or solid) */
-  danger: "padding: 6px 14px; font-size: 12px; font-weight: 600; border-radius: 10px; cursor: pointer;" + " border: 1px solid var(--ios-red); background: rgba(215,49,38,0.08); color: var(--ios-red);" + " font-family: var(--ios-font, inherit); transition: all 0.15s;",
-  /** Danger button solid (for confirm actions) */
-  dangerSolid: "padding: 8px 20px; font-size: 13px; font-weight: 700; border-radius: 10px; cursor: pointer;" + " border: none; background: var(--ios-red); color: #fff; font-family: inherit;",
-  /** Small button sizing (compact controls) */
-  sizeSm: "padding: 4px 10px; font-size: 11px;",
-  /** Medium button sizing (standard) */
-  sizeMd: "padding: 6px 12px; font-size: 12px;",
-  /** Large button sizing (prominent actions) */
-  sizeLg: "padding: 8px 16px; font-size: 13px;"
+  primary: "position: relative; overflow: hidden;" + " background: var(--ax-blue); color: white;" + " border: 1px solid var(--ax-blue); border-radius: var(--ax-radius-xl);" + " font-weight: var(--ax-fw-semibold); cursor: pointer;" + " transition: all var(--ax-dur-fast) var(--ax-ease-out);" + " display: flex; align-items: center; gap: 8px;" + " box-shadow: 0 1px 3px rgba(10, 132, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.22);",
+  secondary: "background: var(--ax-bg-glass-inset);" + " color: var(--ax-fg); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-xl); font-weight: var(--ax-fw-semibold);" + " cursor: pointer; transition: all var(--ax-dur-fast) var(--ax-ease-out);" + " display: flex; align-items: center; gap: 8px;" + " box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);",
+  danger: "padding: 6px 14px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold);" + " border-radius: var(--ax-radius-lg); cursor: pointer;" + " border: 1px solid var(--ax-red); background: var(--ax-tone-negative-soft-bg);" + " color: var(--ax-red); font-family: var(--ax-font-body);" + " transition: all var(--ax-dur-fast) var(--ax-ease-out);",
+  dangerSolid: "padding: 8px 20px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-bold);" + " border-radius: var(--ax-radius-lg); cursor: pointer; border: none;" + " background: var(--ax-red); color: #fff; font-family: var(--ax-font-body);" + " box-shadow: 0 1px 3px rgba(215, 49, 38, 0.30), inset 0 1px 0 rgba(255,255,255,0.22);",
+  sizeSm: "padding: 4px 10px; font-size: var(--ax-fs-sm);",
+  sizeMd: "padding: 6px 12px; font-size: var(--ax-fs-md);",
+  sizeLg: "padding: 8px 16px; font-size: var(--ax-fs-lg);"
 };
 
 // ============================================================
@@ -18470,29 +18839,31 @@ const DS_BUTTONS = {
 
 /** Returns green/red raw hex based on sign. Use for canvas/Chart.js. */
 function ds_signColorRaw(value) {
-  return value >= 0 ? DS_COLORS.raw.positive : DS_COLORS.raw.negative;
+  const r = getAxRawColors();
+  return value >= 0 ? r.positive : r.negative;
 }
 
 /** Returns severity color set { text, bg, border }. */
 function ds_severityColors(severity) {
+  const r = getAxRawColors();
   if (severity === "critical") {
     return {
-      text: DS_COLORS.raw.negative,
-      bg: DS_COLORS.bgNegative,
-      border: "rgba(215,49,38,0.25)"
+      text: r.negative,
+      bg: "var(--ax-tone-negative-soft-bg)",
+      border: "var(--ax-tone-negative-border)"
     };
   }
   if (severity === "warning") {
     return {
-      text: DS_COLORS.raw.neutral,
-      bg: DS_COLORS.bgNeutral,
-      border: "rgba(215,129,0,0.25)"
+      text: r.neutral,
+      bg: "var(--ax-tone-neutral-soft-bg)",
+      border: "var(--ax-tone-neutral-border)"
     };
   }
   return {
-    text: DS_COLORS.raw.positive,
-    bg: DS_COLORS.bgPositive,
-    border: "rgba(32,169,69,0.25)"
+    text: r.positive,
+    bg: "var(--ax-tone-positive-soft-bg)",
+    border: "var(--ax-tone-positive-border)"
   };
 }
 
@@ -18501,21 +18872,13 @@ function ds_severityColors(severity) {
 // ============================================================
 
 const DS_SPACING = {
-  /** 1px -- hairline gaps */
   "2xs": "1px",
-  /** 2px -- minimal internal gap */
   xs: "2px",
-  /** 4px -- tight internal padding */
   sm: "4px",
-  /** 8px -- standard gap between related items */
   md: "8px",
-  /** 12px -- padding inside containers */
   lg: "12px",
-  /** 16px -- section-level padding */
   xl: "16px",
-  /** 20px -- panel padding */
   "2xl": "20px",
-  /** 24px -- large section margins */
   "3xl": "24px"
 };
 
@@ -18524,23 +18887,14 @@ const DS_SPACING = {
 // ============================================================
 
 const DS_RADIUS = {
-  /** 4px -- small chips, inline badges */
   xs: "4px",
-  /** 6px -- metric cells, small cards */
   sm: "6px",
-  /** 8px -- driver items, table radius */
   md: "8px",
-  /** 10px -- collapsible cards, nav buttons */
   lg: "10px",
-  /** 12px -- buttons, badges, search boxes */
   xl: "12px",
-  /** 14px -- content cards */
   "2xl": "14px",
-  /** 16px -- panels */
   "3xl": "16px",
-  /** 18px -- top-level containers (--ios-radius) */
   "4xl": "18px",
-  /** 50% -- circles (status dots) */
   full: "50%"
 };
 
@@ -18549,17 +18903,11 @@ const DS_RADIUS = {
 // ============================================================
 
 const DS_LINE_HEIGHT = {
-  /** 1 -- single line, hero numbers */
   none: "1",
-  /** 1.2 -- tight, table cells */
   tight: "1.2",
-  /** 1.3 -- compact body text */
   snug: "1.3",
-  /** 1.35 -- driver items */
   normal: "1.35",
-  /** 1.4 -- body text */
   relaxed: "1.4",
-  /** 1.5 -- readable paragraphs */
   loose: "1.5"
 };
 
@@ -18568,27 +18916,16 @@ const DS_LINE_HEIGHT = {
 // ============================================================
 
 const DS_OPACITY = {
-  /** 0.03 -- subtle backgrounds (metricCell, bgSubtle) */
   subtle: 0.03,
-  /** 0.06 -- alpha badges/chips (bgPositive, bgNegative, etc.) */
   badge: 0.06,
-  /** 0.10 -- highlighted tints */
   tint: 0.1,
-  /** 0.15 -- status backgrounds, chart alpha fills */
   status: 0.15,
-  /** 0.25 -- borders on colored containers */
   border: 0.25,
-  /** 0.35 -- dragging / ghost elements */
   dragging: 0.35,
-  /** 0.45 -- semi-transparent panels */
   panel: 0.45,
-  /** 0.50 -- chart area fills */
   fill: 0.5,
-  /** 0.60 -- de-emphasized icons / secondary labels */
   dim: 0.6,
-  /** 0.70 -- muted text, inactive buttons */
   muted: 0.7,
-  /** 0.80 -- close/dismiss affordances */
   soft: 0.8
 };
 ;// ./src/shared/utils/formatters.ts
@@ -18712,6 +19049,7 @@ function formatPct(value, options = {}) {
   return `${sign}${v.toFixed(decimals)}%`;
 }
 ;// ./src/frontend/trade_holdings/holding_table/sparkline/SparklineRenderer.ts
+
 const SPARKLINE_WIDTH = 52;
 const SPARKLINE_HEIGHT = 20;
 const POS_R = 32,
@@ -18746,7 +19084,7 @@ const COLOR_TIERS = [{
   lineAlpha: 1.0
 }];
 const BASELINE_DASH = [2, 2];
-const BASELINE_STROKE = "rgba(142,142,147,0.62)";
+const baselineStroke = () => isDarkTheme() ? "rgba(162,162,167,0.55)" : "rgba(142,142,147,0.62)";
 const BASELINE_WIDTH = 0.9;
 function getSparklineColors(changePct) {
   const abs = Math.abs(changePct);
@@ -18835,7 +19173,7 @@ function drawIntradaySparkline(canvas, prices, changePct, previousClose) {
     const baseY = toY(prevClose);
     ctx.save();
     ctx.setLineDash(BASELINE_DASH);
-    ctx.strokeStyle = BASELINE_STROKE;
+    ctx.strokeStyle = baselineStroke();
     ctx.lineWidth = BASELINE_WIDTH;
     ctx.beginPath();
     ctx.moveTo(pad, baseY);
@@ -19655,7 +19993,7 @@ function applyHtmlClass(mode) {
 
 
 const SNAPSHOT_NEWS_MAX_ITEMS = 8;
-const NEWS_ACTION_BUTTON_STYLE = "padding:4px 8px; border:1px solid var(--ios-border); border-radius:8px;" + " background:rgba(255,255,255,0.55); color:var(--ios-text-secondary);" + " font-size:10px; font-weight:600; cursor:pointer;";
+const NEWS_ACTION_BUTTON_STYLE = "padding:4px 8px; border:1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);" + " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;";
 function bindHoverBackground(el, idle, hover) {
   el.addEventListener("mouseenter", () => {
     el.style.background = hover;
@@ -19666,7 +20004,7 @@ function bindHoverBackground(el, idle, hover) {
 }
 function createSnapshotNewsSection(openNewsPage) {
   const section = createElement_ui_createElement("div", {
-    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` + ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` + " border-top:1px solid rgba(0,0,0,0.10);"
+    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` + ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` + " border-top: 1px solid var(--ax-border);"
   });
   const headerRow = createElement_ui_createElement("div", {
     styleString: "display:flex; align-items:center; gap:6px;"
@@ -19692,7 +20030,7 @@ function createSnapshotNewsSection(openNewsPage) {
     },
     styleString: NEWS_ACTION_BUTTON_STYLE
   });
-  bindHoverBackground(collapseBtn, "rgba(255,255,255,0.55)", "rgba(255,255,255,0.9)");
+  bindHoverBackground(collapseBtn, "var(--ax-bg-glass-inset)", "var(--ax-bg-row-hover)");
   const markAllReadBtn = createElement_ui_createElement("button", {
     text: "Mark All Read",
     props: {
@@ -19700,7 +20038,7 @@ function createSnapshotNewsSection(openNewsPage) {
     },
     styleString: NEWS_ACTION_BUTTON_STYLE
   });
-  bindHoverBackground(markAllReadBtn, "rgba(255,255,255,0.55)", "rgba(255,255,255,0.9)");
+  bindHoverBackground(markAllReadBtn, "var(--ax-bg-glass-inset)", "var(--ax-bg-row-hover)");
   markAllReadBtn.addEventListener("click", () => {
     void newsService.markAllRead();
   });
@@ -19718,9 +20056,9 @@ function createSnapshotNewsSection(openNewsPage) {
       props: {
         type: "button"
       },
-      styleString: "padding:4px 8px; border:1px solid rgba(0,122,255,0.25); border-radius:8px;" + ` background:${DS_COLORS.bgInfo}; color:${DS_COLORS.raw.info};` + " font-size:10px; font-weight:600; cursor:pointer;"
+      styleString: "padding:4px 8px; border:1px solid var(--ax-tone-info-border); border-radius: var(--ax-radius-md);" + ` background:${DS_COLORS.bgInfo}; color:${DS_COLORS.raw.info};` + " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;"
     });
-    bindHoverBackground(openBtn, DS_COLORS.bgInfo, "rgba(0,122,255,0.12)");
+    bindHoverBackground(openBtn, DS_COLORS.bgInfo, "var(--ax-tone-info-bg)");
     openBtn.addEventListener("click", () => openNewsPage());
     headerRow.appendChild(openBtn);
   }
@@ -19756,7 +20094,7 @@ function createSnapshotNewsSection(openNewsPage) {
     if (display.length === 0) {
       listWrap.appendChild(createElement_ui_createElement("div", {
         text: "No recent news.",
-        styleString: DS_TYPOGRAPHY.caption + ` padding:${DS_SPACING.md} ${DS_SPACING.sm}; text-align:center;` + " border:1px dashed rgba(0,0,0,0.12); border-radius:8px;"
+        styleString: DS_TYPOGRAPHY.caption + ` padding:${DS_SPACING.md} ${DS_SPACING.sm}; text-align:center;` + " border:1px dashed var(--ax-border-strong); border-radius: var(--ax-radius-md);"
       }));
       return;
     }
@@ -19774,7 +20112,7 @@ function createSnapshotNewsSection(openNewsPage) {
         bg: DS_COLORS.bgInfo
       };
       const row = createElement_ui_createElement("div", {
-        styleString: theme_DS_COMPONENTS.newsItem + ` padding:${DS_SPACING.sm} ${DS_SPACING.md};` + " border:1px solid rgba(0,0,0,0.06);" + " transition:background .15s, border-color .15s, box-shadow .15s;" + (item.url ? " cursor:pointer;" : "")
+        styleString: theme_DS_COMPONENTS.newsItem + ` padding:${DS_SPACING.sm} ${DS_SPACING.md};` + " border:1px solid var(--ax-border-subtle);" + " transition:background .15s, border-color .15s, box-shadow .15s;" + (item.url ? " cursor:pointer;" : "")
       });
       const metaRow = createElement_ui_createElement("div", {
         styleString: "display:flex; align-items:center; gap:6px; min-width:0;"
@@ -19812,13 +20150,13 @@ function createSnapshotNewsSection(openNewsPage) {
       }
       if (item.url) {
         row.addEventListener("mouseenter", () => {
-          row.style.background = "rgba(255,255,255,0.86)";
-          row.style.borderColor = "rgba(0,122,255,0.22)";
-          row.style.boxShadow = "0 2px 10px rgba(0,0,0,0.06)";
+          row.style.background = "var(--ax-bg-row-hover)";
+          row.style.borderColor = "var(--ax-tone-info-border)";
+          row.style.boxShadow = "var(--ax-shadow-sm)";
         });
         row.addEventListener("mouseleave", () => {
           row.style.background = "";
-          row.style.borderColor = "rgba(0,0,0,0.06)";
+          row.style.borderColor = "var(--ax-border-subtle)";
           row.style.boxShadow = "";
         });
         row.addEventListener("click", () => {
@@ -20103,9 +20441,332 @@ function patchSnapshotMetricsDOM(overview, balances, primarySpans, detailSpans) 
     }
   }
 }
+;// ./src/frontend/components/core/axTheme/liquidGlass.ts
+// Liquid-glass runtime — mouse tracking + SVG chromatic-aberration filter.
+//
+// The CSS in baseCss.ts wires four custom properties on `.ax-glass-rim`:
+//   --ax-lg-mx      mouse offset from element center, x axis, in % (-50..50)
+//   --ax-lg-mx-abs  abs(--ax-lg-mx)
+//   --ax-lg-my      mouse offset from element center, y axis, in %
+//   --ax-lg-hover   0 when not hovered, 1 when hovered (drives rim opacity)
+//
+// `attachLiquidGlassRim(el)` writes those vars on `el.style` in response to
+// mousemove/enter/leave so the ::before/::after gradient rim follows the
+// pointer. WeakSet dedup means safe to call repeatedly.
+//
+// `ensureLiquidGlassFilter()` injects the SVG chromatic-aberration filter
+// (ported from recorder.user.js's AQ_LG_DISPLACEMENT_MAP). Reference it via
+// `filter: url(#ax-lg-filter)` on glass surfaces that want refraction.
+//
+// `startGlobalRimObserver()` watches the body subtree for new
+// `.ax-glass-rim` nodes and auto-attaches them. Idempotent; one observer
+// per page.
+
+const AX_LG_FILTER_ID = "ax-lg-filter";
+// Prefix the host node id with "alexquant-" so the dark-mode page-hijack
+// selector in axShellCss (which inverts every body child that *isn't*
+// id-prefixed `alexquant-*` etc.) skips our offscreen SVG defs container.
+// The SVG is 0×0 so visual impact would be nil regardless, but a
+// double-inverted filter pipeline produces the wrong colour-mix for
+// .ax-glass-refract consumers — easier to just stay outside the hijack.
+const AX_LG_FILTER_SVG_ID = "alexquant-lg-filter-host";
+const AX_LG_DISPLACEMENT_MAP = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAZABkAAD/2wCEAAQDAwMDAwQDAwQGBAMEBgcFBAQFBwgHBwcHBwgLCAkJCQkICwsMDAwMDAsNDQ4ODQ0SEhISEhQUFBQUFBQUFBQBBQUFCAgIEAsLEBQODg4UFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFP/CABEIAQABAAMBEQACEQEDEQH/xAAxAAEBAQEBAQAAAAAAAAAAAAADAgQIAQYBAQEBAQEBAQAAAAAAAAAAAAMCBAEACAf/2gAMAwEAAhADEAAAAPjPor6kOgOiKhKgKhKgOhKhOhKxKgKhOgKhKhKgKxOhKhOgKhKhKgKwKhKgKgKwG841nns9J/nn2KVCdCdCVAVCVCVAdCVCdiVAVidCVAVCVAdiVCVCdAVCVCVAVCVAVAViVZxsBrPPY6R/NvsY6E6ErEqAqE6ErAqE6E7E7ErA0ErArAqAqEuiVAXRLol0S6J0JUBWBUI0BXnG88djpH81+xjoToSoSoCoTsSoYQTsTsTQSsCsCsCsCsCoC6A0JeAuiXSLwn0SoioCoCoBsBrPFH0j+a/Yx0J0JUJUJ2BUMIR2MIRoBoJIBXnJAK840BUA0BdAegXhLpF4S8R+IuiVgVANAV546fSH5r9jHRHQFQlYxYnZQgnYwhQokgEgEmckzjecazlYD3OPQHoD0S8JcI/EXiPxF0SoSvONBFF0j+a/YxdI7EqA6KLGEKEKEGFI0AlA0AUzimYbzjecazlWce5w6BdEeCXhPhFwz8R+MuiVgVAdF0j+a/Yp0RUJ0MWUIUWUIUKUIJqBoArnJM4pmBMopmC84XlCswdzj3OPQHwlwS8R8M+HHDPxl0ioDoukfzT7GOhOyiimzmzhDlShBNBNBJc4rmFMwJlBMwXlC82esoVmHucOgXgHxH4j4Zyccg/GfiOiKh6R/NPsY6GLOKObOUObOUI0KEAlEkzimYFygmUEyZ0y57yZ0yZ7yheUKzh3OPc5dEvEfij0RyI9E+iPGfT6T/NPsQ6OKiKmajy4ijmyOyKwNAFM4JlBMudMmdMue8mdMme8me8wVmGsw0A9A+kfjjxx6J9EememfT6W/MvsMqOamKiamKmKOKM7ErErAUzAmYLyZ0y50yZ0yZ7yBeULzBeYazl0T6R9KPRPYj0T2J9B9Ppj8x+wjo4qY7M9iKmKg6MrIrErALzBeYEyZ0y50yZkyZ7x50yheXPeUbzjWcqA6I+lHYnsT6J7E9iOx0z+YfYBUc1MdmexHZjsHRlRBRDYBecEzZ7yAmXNeTOmTOmPOmXOmULyjeYbzlYnQxRx057E9mexPYij6a/L/r86OOzPpjsR6Y7B9MqIaILDPYZ7zZ0y57y50yZ0x5kyAmXPeUEyjeYUznQnYnRTUTUT2JqJ7EUfTn5d9fFRx2Z9EdmPTHjLsF0h6I2OegzXmzJmzplz3lzJjzpkBMudMoplBM5JnOwOyiimzmomomonsHRdO/l318VFHYj0x6I9McgumXiHpDQ56DPebMmbNebMmXMmQEy50yguQEzCmYkA7GLGEKaObibiaOKOKPp38s+vCsj7EeiPTHIP0Hwx6ReMKDP0M95895syZ815cy5c6ZQTKCZRXMKZiQDQYQYsps5uJs5qIsjounvyz68KyLpx4z9Mcg+GXoLxl4g6IUGes+a8+e82ZM2dMuZMoJmBcwrlJM5IBoMKMoUWc2c3E0cWRUXT/wCV/XQ2R0RdiPQfDPkFwy9BeIOiHQz0Ges+a8+e82ZM2dMwLmBcwpmJc5qBoMIUIUoU2c2cWZ0R0PT/AOV/XQ2RUJdM+wfDL0Hwy5A+EfEHQz0AUGe8+dM2e82dcwJnFcwrnJc5IEKUIMIUoUWc2cWRUJ0PT/5V9dFYjZFRF0z8ZeM+QPDLxD4Q6OfoBQhefPeYEz50ziucUzCoEuclCEKFGUKEKLOLI7E6EqHqD8o+uhsRsisSoi6ZeM+QPiHhj0R8IUIdALALzgmcEzimcVAlzioGomgyhQgwhRZHZFQHQlQ9Qfk/10NiVkNiNiVENiNiViNEViNkVCVgKCViViViSCViSCVgdCViVCViVCdgVCVCdD1D+U/XBWQ2I0I2Q2JUQ2I0JWQ0I2JUQ2JUI2JUI2J0JWJWJWA2R0BWJ0I2JUJ2BUJUJ0P//EABkQAQEBAQEBAAAAAAAAAAAAAAECABEDEP/aAAgBAQABAgB1atWrVq1atWrVq1atWrVq1atWrVq1atWrVq+OrVq1atWrVq1atWrVq1atWrVq1atWrVq1atXxVppppppdWrVq1atWrVq1NNNNNNNNNNNPVWmmmmms6tWrVq1atWpppppppppppppppp6q0000uc51atWrVq1ammmmmmmmmmmmmt1Vpppc5znVq1atWrVqaaaaaaaaaaaaaeqtNLnOc51atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a9TbbbbTTTTTSq000qtLnOc5zq1atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmmmlVppp6tKuc5znOrVq1a9TbbbbbbbbTTTTSqqqqqq5VWmmmmm222222mmmlVVVVVdWc5znOrVq1a9TbbbbbbbbbbaaaVVVVVVznOc6tWrVq1ammmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmllVVVVXVnOc5znVq1atWvU222220000qqqqqrnOc51atWrVqaaaaaaaaaaaaaeqtNLnOc5zq1atWrVr1Ntttttttpppppp6q0000qqqqrnOc5azq1atWrVq1a9TbbbbbbbTTTTSqqqqqqrnOc5zq1atWrVq1NNNNNNNNNNKq0000qqqqqq51atWrVq1a9TbbbbbbbTTTTSqqqqrnOc5znVq1atWrVr1Ntttttttppppp6q00000qqqqqq51atWrVq1a1atWrU00000qqqqqq51atWrVq1aterVq1atTTTTStNNNNK00000qqrTTTStNNNNNNNK0000000001NNNNNNK0000000rTTTStK0000001NNNNNNNK1NNNNNNNK01NNNNNNNK1NNNNNNNNNK00000qtNNNNNK//EABQRAQAAAAAAAAAAAAAAAAAAAKD/2gAIAQMBAz8AAB//2Q==";
+const attached = new WeakSet();
+let svgFilterInjected = false;
+let observer = null;
+let observerRoot = null;
+function isHtml(node) {
+  return typeof HTMLElement !== "undefined" && node instanceof HTMLElement;
+}
+
+/**
+ * Bind mouse tracking to a single liquid-glass element. Idempotent — calling
+ * twice on the same element is a no-op. Listeners are passive and never
+ * call preventDefault, so they don't interfere with scroll or click.
+ */
+function attachLiquidGlassRim(el) {
+  if (!isHtml(el) || attached.has(el)) return;
+  attached.add(el);
+  let raf = 0;
+  let lastClientX = 0;
+  let lastClientY = 0;
+
+  // Defer both getBoundingClientRect() and setProperty() to the RAF flush.
+  // getBoundingClientRect() forces a synchronous layout, so calling it on
+  // every mousemove (~60+/s on a fast pointer) produces measurable thrash
+  // even though the rect rarely changes between frames. Reading it inside
+  // the RAF batches with the property write, so we hit layout once per
+  // animation frame regardless of mouse event rate.
+  const flush = () => {
+    raf = 0;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const mx = (lastClientX - cx) / rect.width * 100;
+    const my = (lastClientY - cy) / rect.height * 100;
+    el.style.setProperty("--ax-lg-mx", String(mx));
+    el.style.setProperty("--ax-lg-mx-abs", String(Math.abs(mx)));
+    el.style.setProperty("--ax-lg-my", String(my));
+  };
+  const onMove = e => {
+    lastClientX = e.clientX;
+    lastClientY = e.clientY;
+    if (raf) return;
+    raf = requestAnimationFrame(flush);
+  };
+  const onEnter = () => {
+    el.style.setProperty("--ax-lg-hover", "1");
+  };
+  const onLeave = () => {
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    el.style.setProperty("--ax-lg-mx", "0");
+    el.style.setProperty("--ax-lg-mx-abs", "0");
+    el.style.setProperty("--ax-lg-my", "0");
+    el.style.setProperty("--ax-lg-hover", "0");
+  };
+  el.addEventListener("mousemove", onMove, {
+    passive: true
+  });
+  el.addEventListener("mouseenter", onEnter, {
+    passive: true
+  });
+  el.addEventListener("mouseleave", onLeave, {
+    passive: true
+  });
+}
+
+/**
+ * Inject the SVG chromatic-aberration / displacement filter into the document.
+ * Idempotent. Reference via `filter: url(#ax-lg-filter)` on a glass surface
+ * to give its frosted backdrop a slight RGB-channel split at the edges.
+ *
+ * The displacement map is a 256×256 base64 JPEG ported verbatim from the
+ * recorder userscript. Three channel-specific feDisplacementMap passes
+ * (R/G/B with scales -70/-77/-84) produce the chromatic split; the result
+ * is composited back over a clean center via an edge mask so only the
+ * outer ~24% of the surface gets the aberration.
+ */
+function ensureLiquidGlassFilter() {
+  if (svgFilterInjected) return;
+  if (typeof document === "undefined") return;
+  const host = document.body || document.documentElement;
+  if (!host) return;
+  const wrap = document.createElement("div");
+  wrap.id = AX_LG_FILTER_SVG_ID;
+  wrap.setAttribute("aria-hidden", "true");
+  wrap.style.cssText = "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;";
+
+  // Build the SVG via DOM rather than innerHTML to keep CSP-friendly and
+  // avoid any namespace quirks in the userscript injection environment.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("style", "position:absolute;width:0;height:0;");
+  const defs = document.createElementNS(SVG_NS, "defs");
+
+  // Edge-mask radial gradient — used to fade aberration to clean center.
+  const grad = document.createElementNS(SVG_NS, "radialGradient");
+  grad.setAttribute("id", "ax-lg-edge");
+  grad.setAttribute("cx", "50%");
+  grad.setAttribute("cy", "50%");
+  grad.setAttribute("r", "50%");
+  for (const [offset, alpha] of [["0%", "0"], ["76%", "0"], ["100%", "1"]]) {
+    const stop = document.createElementNS(SVG_NS, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", alpha === "0" ? "black" : "white");
+    stop.setAttribute("stop-opacity", alpha);
+    grad.appendChild(stop);
+  }
+  defs.appendChild(grad);
+
+  // Displacement filter pipeline.
+  const filter = document.createElementNS(SVG_NS, "filter");
+  filter.setAttribute("id", AX_LG_FILTER_ID);
+  filter.setAttribute("x", "-35%");
+  filter.setAttribute("y", "-35%");
+  filter.setAttribute("width", "170%");
+  filter.setAttribute("height", "170%");
+  filter.setAttribute("color-interpolation-filters", "sRGB");
+  const append = (tag, attrs, children = []) => {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "href") node.setAttributeNS("http://www.w3.org/1999/xlink", "href", v);else node.setAttribute(k, v);
+    }
+    for (const c of children) node.appendChild(c);
+    return node;
+  };
+  filter.appendChild(append("feImage", {
+    x: "0",
+    y: "0",
+    width: "100%",
+    height: "100%",
+    result: "DM",
+    href: AX_LG_DISPLACEMENT_MAP,
+    preserveAspectRatio: "xMidYMid slice"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "DM",
+    type: "matrix",
+    values: "0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0 0 0 1 0",
+    result: "EI"
+  }));
+  filter.appendChild(append("feComponentTransfer", {
+    in: "EI",
+    result: "EM"
+  }, [append("feFuncA", {
+    type: "discrete",
+    tableValues: "0 0.1 1"
+  })]));
+  filter.appendChild(append("feOffset", {
+    in: "SourceGraphic",
+    dx: "0",
+    dy: "0",
+    result: "CO"
+  }));
+  // R channel
+  filter.appendChild(append("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "DM",
+    scale: "-70",
+    xChannelSelector: "R",
+    yChannelSelector: "B",
+    result: "RD"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "RD",
+    type: "matrix",
+    values: "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0",
+    result: "RC"
+  }));
+  // G channel
+  filter.appendChild(append("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "DM",
+    scale: "-77",
+    xChannelSelector: "R",
+    yChannelSelector: "B",
+    result: "GD"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "GD",
+    type: "matrix",
+    values: "0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0",
+    result: "GC"
+  }));
+  // B channel
+  filter.appendChild(append("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "DM",
+    scale: "-84",
+    xChannelSelector: "R",
+    yChannelSelector: "B",
+    result: "BD"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "BD",
+    type: "matrix",
+    values: "0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0",
+    result: "BC"
+  }));
+  filter.appendChild(append("feBlend", {
+    in: "GC",
+    in2: "BC",
+    mode: "screen",
+    result: "GB"
+  }));
+  filter.appendChild(append("feBlend", {
+    in: "RC",
+    in2: "GB",
+    mode: "screen",
+    result: "RGB"
+  }));
+  filter.appendChild(append("feGaussianBlur", {
+    in: "RGB",
+    stdDeviation: "0.3",
+    result: "AB"
+  }));
+  filter.appendChild(append("feComposite", {
+    in: "AB",
+    in2: "EM",
+    operator: "in",
+    result: "EA"
+  }));
+  filter.appendChild(append("feComponentTransfer", {
+    in: "EM",
+    result: "IM"
+  }, [append("feFuncA", {
+    type: "table",
+    tableValues: "1 0"
+  })]));
+  filter.appendChild(append("feComposite", {
+    in: "CO",
+    in2: "IM",
+    operator: "in",
+    result: "CC"
+  }));
+  filter.appendChild(append("feComposite", {
+    in: "EA",
+    in2: "CC",
+    operator: "over"
+  }));
+  defs.appendChild(filter);
+  svg.appendChild(defs);
+  wrap.appendChild(svg);
+  host.appendChild(wrap);
+  svgFilterInjected = true;
+}
+function attachAllInside(root) {
+  const els = root.querySelectorAll(".ax-glass-rim");
+  for (let i = 0; i < els.length; i++) attachLiquidGlassRim(els[i]);
+}
+
+/**
+ * Watch the document for any element with `.ax-glass-rim` and auto-attach
+ * mouse tracking. Idempotent — second call is a no-op. Cheap: a single
+ * MutationObserver on the body subtree filters by class and skips
+ * already-attached nodes via a WeakSet.
+ *
+ * Components can still call attachLiquidGlassRim() directly when they
+ * mount panels — the observer is a safety net for view rebuilds and
+ * dynamically-injected children.
+ */
+function startGlobalRimObserver() {
+  if (typeof document === "undefined") return;
+  const root = document.body || document.documentElement;
+  if (!root) return;
+  if (observer && observerRoot === root) return;
+
+  // Initial scan covers anything already in the DOM.
+  attachAllInside(root);
+  observer = new MutationObserver(muts => {
+    for (let i = 0; i < muts.length; i++) {
+      const m = muts[i];
+      if (m.type !== "childList") continue;
+      const added = m.addedNodes;
+      for (let j = 0; j < added.length; j++) {
+        const node = added[j];
+        if (!isHtml(node)) continue;
+        if (node.classList.contains("ax-glass-rim")) {
+          attachLiquidGlassRim(node);
+        }
+        attachAllInside(node);
+      }
+    }
+  });
+  observer.observe(root, {
+    childList: true,
+    subtree: true
+  });
+  observerRoot = root;
+}
 ;// ./src/frontend/snapshot/panel/slidePanel.ts
 
-const slidePanel_FONT_FAMILY = 'var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)';
+
+const slidePanel_FONT_FAMILY = "var(--ax-font-body)";
 const PANEL_WIDTH_VW = "17.5vw";
 const PANEL_MIN_WIDTH_PX = 300;
 const PANEL_MAX_WIDTH_PX = 500;
@@ -20117,20 +20778,22 @@ const SLIDE_MS = 280;
 
 function buildSideTab(label, activeColor, topOffset) {
   const tab = createElement_ui_createElement("div", {
-    styleString: `position:fixed; right:0; top:${topOffset}px; z-index:var(--z-floating-toggle, 100400);` + ` width:${TAB_WIDTH}px; height:${TAB_HEIGHT}px;` + " background:var(--glass-3-bg, rgba(255,255,255,0.28));" + " -webkit-backdrop-filter:blur(var(--glass-3-blur, 20px)) saturate(var(--glass-3-saturate, 140%));" + " backdrop-filter:blur(var(--glass-3-blur, 20px)) saturate(var(--glass-3-saturate, 140%));" + ` color:${activeColor}; cursor:pointer; user-select:none;` + " display:flex; align-items:center; justify-content:center;" + " border-radius:10px 0 0 10px;" + " border:1px solid rgba(255,255,255,0.35); border-right:none;" + " box-shadow:-2px 0 10px rgba(0,0,0,0.08), var(--glass-3-inset-shadow, inset 0 1px 0 rgba(255,255,255,0.40));" + ` font-family:${slidePanel_FONT_FAMILY}; font-size:11px; font-weight:700;` + " letter-spacing:0.5px; writing-mode:vertical-rl; text-orientation:mixed;" + ` transition:right ${SLIDE_MS}ms cubic-bezier(0.4,0,0.2,1),` + ` box-shadow ${SLIDE_MS}ms, background ${SLIDE_MS}ms;`
+    // Glass + rim are class-driven so any future shell-tone changes
+    // propagate through the token system rather than this file.
+    className: "ax-shell-element ax-glass-3 ax-glass-rim",
+    styleString: `position:fixed; right:0; top:${topOffset}px; z-index:var(--ax-z-floating-toggle);` + ` width:${TAB_WIDTH}px; height:${TAB_HEIGHT}px;` + ` color:${activeColor}; cursor:pointer; user-select:none;` + " display:flex; align-items:center; justify-content:center;" + " border-radius: var(--ax-radius-lg) 0 0 var(--ax-radius-lg);" + " border-right:none;" + ` font-family:${slidePanel_FONT_FAMILY}; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold);` + " letter-spacing:0.5px; writing-mode:vertical-rl; text-orientation:mixed;" + ` transition:right ${SLIDE_MS}ms cubic-bezier(0.4,0,0.2,1),` + ` box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1), background 220ms;`
   });
+  attachLiquidGlassRim(tab);
   const span = createElement_ui_createElement("span", {
     text: label,
     styleString: "transform:rotate(180deg); pointer-events:none;"
   });
   tab.appendChild(span);
   tab.addEventListener("mouseenter", () => {
-    tab.style.background = "rgba(255,255,255,0.42)";
-    tab.style.boxShadow = "-3px 0 16px rgba(0,0,0,0.12), var(--glass-3-inset-shadow, inset 0 1px 0 rgba(255,255,255,0.40))";
+    tab.style.background = "var(--ax-glass-3-hover)";
   });
   tab.addEventListener("mouseleave", () => {
-    tab.style.background = "var(--glass-3-bg, rgba(255,255,255,0.28))";
-    tab.style.boxShadow = "-2px 0 10px rgba(0,0,0,0.08), var(--glass-3-inset-shadow, inset 0 1px 0 rgba(255,255,255,0.40))";
+    tab.style.background = "";
   });
   return {
     tab
@@ -20138,25 +20801,27 @@ function buildSideTab(label, activeColor, topOffset) {
 }
 function buildSlidePanel(title) {
   const panel = createElement_ui_createElement("div", {
-    styleString: `position:fixed; top:0; right:${PANEL_HIDE_RIGHT}; z-index:var(--z-floating-panel, 100200);` + ` width:${PANEL_WIDTH_VW}; min-width:${PANEL_MIN_WIDTH_PX}px; max-width:${PANEL_MAX_WIDTH_PX}px;` + " background:var(--glass-3-bg, rgba(255,255,255,0.28));" + " -webkit-backdrop-filter:blur(var(--glass-3-blur, 20px)) saturate(var(--glass-3-saturate, 140%));" + " backdrop-filter:blur(var(--glass-3-blur, 20px)) saturate(var(--glass-3-saturate, 140%));" + " border-left:1px solid rgba(255,255,255,0.35);" + " box-shadow:-4px 0 20px rgba(0,0,0,0.08), var(--glass-3-inset-shadow, inset 0 1px 0 rgba(255,255,255,0.40));" + ` font-family:${slidePanel_FONT_FAMILY};` + " display:flex; flex-direction:column; overflow:hidden;" + ` transition:right ${SLIDE_MS}ms cubic-bezier(0.4,0,0.2,1);`
+    className: "ax-shell-element ax-glass-3 ax-glass-rim",
+    styleString: `position:fixed; top:0; right:${PANEL_HIDE_RIGHT}; z-index:var(--ax-z-floating-panel);` + ` width:${PANEL_WIDTH_VW}; min-width:${PANEL_MIN_WIDTH_PX}px; max-width:${PANEL_MAX_WIDTH_PX}px;` + " border-left-width: 1px;" + " border-right: none; border-top: none; border-bottom: none;" + " border-top-left-radius: var(--ax-radius-2xl);" + " border-bottom-left-radius: var(--ax-radius-2xl);" + " color: var(--ax-fg);" + ` font-family:${slidePanel_FONT_FAMILY};` + " display:flex; flex-direction:column; overflow:hidden;" + ` transition:right ${SLIDE_MS}ms cubic-bezier(0.4,0,0.2,1);`
   });
+  attachLiquidGlassRim(panel);
   const titleBar = createElement_ui_createElement("div", {
-    styleString: "display:flex; align-items:center; justify-content:space-between; padding:10px 14px;" + " background:transparent; border-bottom:1px solid rgba(0,0,0,0.06);" + " flex-shrink:0; user-select:none;"
+    styleString: "display:flex; align-items:center; justify-content:space-between; padding:10px 14px;" + " background:transparent; border-bottom:1px solid var(--ax-border-subtle);" + " flex-shrink:0; user-select:none;"
   });
   titleBar.appendChild(createElement_ui_createElement("span", {
     text: title,
-    styleString: "font-size:13px; font-weight:700; color:var(--ios-text-primary); letter-spacing:0.3px;"
+    styleString: "font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-bold); color: var(--ax-fg); letter-spacing: 0.3px;"
   }));
   const closeBtn = createElement_ui_createElement("button", {
     props: {
       type: "button",
       title: "Close"
     },
-    styleString: "background:none; border:none; cursor:pointer; padding:2px 6px; border-radius:4px;" + " color:var(--ios-text-secondary); line-height:1; transition:background .15s;"
+    styleString: "background:none; border:none; cursor:pointer; padding:2px 6px; border-radius: var(--ax-radius-xs);" + " color: var(--ax-fg-2); line-height:1; transition:background .15s;"
   });
   closeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">' + '<path d="M18 6L6 18M6 6l12 12"/></svg>';
   closeBtn.addEventListener("mouseenter", () => {
-    closeBtn.style.background = "rgba(0,0,0,0.06)";
+    closeBtn.style.background = "var(--ax-bg-row-hover)";
   });
   closeBtn.addEventListener("mouseleave", () => {
     closeBtn.style.background = "none";
@@ -20758,93 +21423,165 @@ async function runArchive(allPoints) {
     await store.deleteOlderThan(recentCutoff);
   } catch {}
 }
+;// ./src/frontend/components/core/axTheme/chartTheme.ts
+// Chart palette and option helpers — theme-aware, derived from axTokens.
+// Canvas + Chart.js contexts read raw hex from here; DOM styling should use
+// CSS-var tokens instead.
+
+
+
+function rgba(hex, alpha) {
+  if (hex.startsWith("rgba") || hex.startsWith("rgb(")) return hex;
+  const m = hex.match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+function buildChartColors(palette, dark) {
+  const alpha = dark ? 0.2 : 0.15;
+  return {
+    success: palette.green,
+    warning: palette.neutral,
+    danger: palette.red,
+    info: palette.info,
+    neutral: palette.muted,
+    categorical: [palette.blue, palette.green, palette.orange, palette.purple, "#FF2D55", palette.cyan, palette.yellow, "#BF5AF2"],
+    heatmapScale: dark ? [palette.red, palette.neutral, "rgb(100, 100, 110)", "rgb(80, 200, 120)", palette.green] : [palette.red, palette.neutral, "rgb(255, 255, 255)", "rgb(144, 238, 144)", palette.green],
+    successAlpha: rgba(palette.green, alpha),
+    warningAlpha: rgba(palette.neutral, alpha),
+    dangerAlpha: rgba(palette.red, alpha),
+    infoAlpha: rgba(palette.info, alpha),
+    textPrimary: palette.textPrimary,
+    textSecondary: palette.textSecondary,
+    grid: dark ? "rgba(255, 255, 255, 0.08)" : "#f0f0f0",
+    gridDark: dark ? "#555" : "#bbb"
+  };
+}
+const AX_CHART_COLORS_LIGHT = buildChartColors(AX_LIGHT_RAW, false);
+const AX_CHART_COLORS_DARK = buildChartColors(AX_DARK_RAW, true);
+
+/** Returns theme-aware chart colors (light or dark palette). */
+function chartTheme_getAxChartColors() {
+  return isDarkTheme() ? AX_CHART_COLORS_DARK : AX_CHART_COLORS_LIGHT;
+}
 ;// ./src/frontend/charts/ChartTheme.ts
-// Canvas and Chart.js colors. Keep semantic values aligned with the frontend raw tokens.
+// Canvas and Chart.js colors. Theme-aware: returns light or dark palette
+// depending on the current AlexQuant theme controller state.
+//
+// Existing callsites import `CHART_COLORS`, `OPTIONS_SEMANTIC_COLORS`,
+// `CHART_TOOLTIP_CONFIG`, `CHART_LEGEND_CONFIG`, etc. as constants — those
+// references still resolve, but now they are getters in disguise
+// (Object.freeze proxy) so each property read returns the current-theme
+// value. Static destructuring at module load (`const { success } = CHART_COLORS`)
+// snapshots the value, so prefer reading the field at call time inside
+// chart callbacks for proper theme reactivity.
 
 
 
-const CHART_COLORS = {
-  success: "rgb(32, 169, 69)",
-  // --ios-green
-  warning: "rgb(215, 129, 0)",
-  // --ios-orange
-  danger: "rgb(215, 49, 38)",
-  // --ios-red
-  info: "#007AFF",
-  // --ios-blue
-  neutral: "rgb(142, 142, 147)",
-  // --ios-gray
 
-  categorical: ["#007AFF",
-  // Blue
-  "#4CAF50",
-  // Green
-  "#D78100",
-  // Orange (matches DS_COLORS.raw.neutral)
-  DS_COLORS.raw.purple,
-  // Purple
-  "#FF2D55",
-  // Pink
-  "#00C7BE",
-  // Teal
-  "#FFD60A",
-  // Yellow
-  "#BF5AF2" // Violet
-  ],
-  heatmapScale: ["rgb(215, 49, 38)",
-  // -100% (worst loss)
-  "rgb(215, 129, 0)",
-  // -50% (matches --ios-orange)
-  "rgb(255, 255, 255)",
-  // 0% (neutral)
-  "rgb(144, 238, 144)",
-  // +50%
-  "rgb(32, 169, 69)" // +100% (best gain)
-  ],
-  successAlpha: "rgba(32, 169, 69, 0.15)",
-  warningAlpha: "rgba(215, 129, 0, 0.15)",
-  dangerAlpha: "rgba(215, 49, 38, 0.15)",
-  infoAlpha: "rgba(0, 122, 255, 0.15)",
-  textPrimary: "#1c1c1e",
-  textSecondary: "#3a3a3c",
-  grid: "#f0f0f0",
-  gridDark: "#bbb"
-};
-const OPTIONS_SEMANTIC_COLORS = {
-  spot: "#007AFF",
-  forward: "#00C7BE",
-  // cyan, draw as dashed
-  putWall: "#d73126",
-  callWall: "#20a945",
-  maxPain: "#D78100",
-  gammaFlip: "#8E44AD",
-  bullish: "#20a945",
-  bearish: "#d73126",
-  neutral: "#8E8E93",
-  bgPositive: "rgba(32, 169, 69, 0.06)",
-  bgNegative: "rgba(215, 49, 38, 0.06)",
-  bgNeutral: "rgba(142, 142, 147, 0.06)",
-  bgInfo: "rgba(0, 122, 255, 0.06)",
-  fillPositive: "rgba(32, 169, 69, 0.5)",
-  fillNegative: "rgba(215, 49, 38, 0.5)",
-  fillInfo: "rgba(0, 122, 255, 0.5)",
-  arrowUp: "\u25B2",
-  arrowDown: "\u25BC",
-  diamond: "\u25C6"
-};
+
+
+// ── Theme-aware palette proxy ───────────────────────────────────────────
+// Each property read goes through getAxChartColors(), so chart callbacks
+// pick up the active theme without any additional plumbing.
+
+function makeReactive() {
+  return new Proxy({}, {
+    get(_t, prop) {
+      return chartTheme_getAxChartColors()[prop];
+    },
+    ownKeys() {
+      return Object.keys(AX_CHART_COLORS_LIGHT);
+    },
+    getOwnPropertyDescriptor(_t, prop) {
+      if (prop in AX_CHART_COLORS_LIGHT) {
+        return {
+          configurable: true,
+          enumerable: true,
+          writable: false,
+          value: undefined
+        };
+      }
+      return undefined;
+    }
+  });
+}
+const CHART_COLORS = makeReactive();
+
+// ── Options-chain domain colors (theme-aware) ───────────────────────────
+// Saturated palette → candle bodies, walls, GEX bars; `forward` / `gammaFlip`
+// are options-specific hues without a palette equivalent.
+function ChartTheme_rgba(hex, alpha) {
+  if (hex.startsWith("rgba") || hex.startsWith("rgb(")) return hex;
+  const m = hex.match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+function buildOptionsSemantic(dark) {
+  const r = dark ? AX_CHART_COLORS_LIGHT : AX_CHART_COLORS_LIGHT; // placeholder, replaced below
+  // Rebuild from raw palette to ensure correct light/dark hex.
+  const raw = getAxRawColors();
+  void r;
+  return {
+    spot: raw.info,
+    forward: "#00C7BE",
+    putWall: raw.red,
+    callWall: raw.green,
+    maxPain: raw.neutral,
+    gammaFlip: "#8E44AD",
+    bullish: raw.green,
+    bearish: raw.red,
+    neutral: raw.muted,
+    bgPositive: ChartTheme_rgba(raw.green, 0.06),
+    bgNegative: ChartTheme_rgba(raw.red, 0.06),
+    bgNeutral: ChartTheme_rgba(raw.muted, 0.06),
+    bgInfo: ChartTheme_rgba(raw.info, 0.06),
+    fillPositive: ChartTheme_rgba(raw.green, 0.5),
+    fillNegative: ChartTheme_rgba(raw.red, 0.5),
+    fillInfo: ChartTheme_rgba(raw.info, 0.5),
+    arrowUp: "▲",
+    arrowDown: "▼",
+    diamond: "◆"
+  };
+}
+let _optionsSemLight = null;
+let _optionsSemDark = null;
+function getOptionsSemantic() {
+  if (isDarkTheme()) {
+    if (!_optionsSemDark) _optionsSemDark = buildOptionsSemantic(true);
+    return _optionsSemDark;
+  }
+  if (!_optionsSemLight) _optionsSemLight = buildOptionsSemantic(false);
+  return _optionsSemLight;
+}
+const OPTIONS_SEMANTIC_COLORS = new Proxy({}, {
+  get(_t, prop) {
+    return getOptionsSemantic()[prop];
+  }
+});
+
+// ── Helpers (theme-aware) ───────────────────────────────────────────────
+
 function getColorForPercentage(percentage, thresholds = {
   low: 50,
   medium: 75
 }) {
-  if (percentage >= thresholds.medium) return CHART_COLORS.danger;
-  if (percentage >= thresholds.low) return CHART_COLORS.warning;
-  return CHART_COLORS.success;
+  const c = getAxChartColors();
+  if (percentage >= thresholds.medium) return c.danger;
+  if (percentage >= thresholds.low) return c.warning;
+  return c.success;
 }
 function getColorForValue(value) {
-  return value >= 0 ? CHART_COLORS.success : CHART_COLORS.danger;
+  const c = getAxChartColors();
+  return value >= 0 ? c.success : c.danger;
 }
 function getHeatmapColor(normalizedValue) {
-  const colors = CHART_COLORS.heatmapScale;
+  const colors = chartTheme_getAxChartColors().heatmapScale;
   const clamped = Math.max(-1, Math.min(1, normalizedValue));
   const index = (clamped + 1) / 2 * (colors.length - 1);
   const lower = Math.floor(index);
@@ -20855,39 +21592,40 @@ function getHeatmapColor(normalizedValue) {
   const colorUpper = parseColor(colors[upper]);
   return `rgb(${Math.round(colorLower.r + (colorUpper.r - colorLower.r) * fraction)}, ${Math.round(colorLower.g + (colorUpper.g - colorLower.g) * fraction)}, ${Math.round(colorLower.b + (colorUpper.b - colorLower.b) * fraction)})`;
 }
-function parseColor(rgb) {
-  const match = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-  if (!match) return {
+function parseColor(input) {
+  const m = input.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (m) return {
+    r: parseInt(m[1], 10),
+    g: parseInt(m[2], 10),
+    b: parseInt(m[3], 10)
+  };
+  const h = input.match(/^#?([0-9a-f]{6})$/i);
+  if (h) return {
+    r: parseInt(h[1].slice(0, 2), 16),
+    g: parseInt(h[1].slice(2, 4), 16),
+    b: parseInt(h[1].slice(4, 6), 16)
+  };
+  return {
     r: 255,
     g: 255,
     b: 255
   };
-  return {
-    r: parseInt(match[1], 10),
-    g: parseInt(match[2], 10),
-    b: parseInt(match[3], 10)
-  };
 }
 const CHART_FONTS = {
-  // 9px — standard chart labels and ticks
   label: "600 9px -apple-system, BlinkMacSystemFont, sans-serif",
   labelBold: "700 9px -apple-system, BlinkMacSystemFont, sans-serif",
   labelSmall: "500 9px -apple-system, BlinkMacSystemFont, sans-serif",
   tick: "10px -apple-system, BlinkMacSystemFont, sans-serif",
   tickSmall: "9px -apple-system, BlinkMacSystemFont, sans-serif",
   axis: "500 10px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 8px — dense/compact canvas elements (contour labels, event badges, compact cells)
   dense: "600 8px -apple-system, BlinkMacSystemFont, sans-serif",
   denseBold: "700 8px -apple-system, BlinkMacSystemFont, sans-serif",
   denseLight: "500 8px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 10px semibold/bold — heatmap axis, summary headers, spot labels
   axisSemibold: "600 10px -apple-system, BlinkMacSystemFont, sans-serif",
   axisBold: "700 10px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 11px — heatmap headers and cell values
   heatmap: "600 11px -apple-system, BlinkMacSystemFont, sans-serif",
   heatmapBold: "700 11px -apple-system, BlinkMacSystemFont, sans-serif",
   heatmapLight: "500 11px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 12px — row labels for large heatmaps
   rowLabel: "500 12px -apple-system, BlinkMacSystemFont, sans-serif"
 };
 const CHART_ANIMATIONS = {
@@ -20903,29 +21641,44 @@ const CHART_ANIMATIONS = {
     duration: 0
   }
 };
-const CHART_TOOLTIP_CONFIG = {
-  enabled: true,
-  mode: "index",
-  intersect: false,
-  backgroundColor: "rgba(255, 255, 255, 0.95)",
-  titleColor: CHART_COLORS.textPrimary,
-  bodyColor: CHART_COLORS.textSecondary,
-  borderColor: "rgba(0, 0, 0, 0.1)",
-  borderWidth: 1,
-  padding: 14,
-  cornerRadius: 8,
-  displayColors: true
-};
+
+// ── Theme-aware tooltip / legend / axis configs ─────────────────────────
+
+function buildTooltipConfig() {
+  const raw = getAxRawColors();
+  const colors = chartTheme_getAxChartColors();
+  return {
+    enabled: true,
+    mode: "index",
+    intersect: false,
+    backgroundColor: raw.tooltipBg,
+    titleColor: colors.textPrimary,
+    bodyColor: colors.textSecondary,
+    borderColor: raw.tooltipBorder,
+    borderWidth: 1,
+    padding: 14,
+    cornerRadius: 8,
+    displayColors: true
+  };
+}
+const CHART_TOOLTIP_CONFIG = new Proxy({}, {
+  get(_t, prop) {
+    return buildTooltipConfig()[prop];
+  }
+});
+function getChartTooltipConfig() {
+  return buildTooltipConfig();
+}
 const CHART_LEGEND_CONFIG = {
   display: false,
   position: "right",
   align: "center",
   labels: {
     font: {
-      family: 'var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)',
+      family: "var(--ax-font-body)",
       size: 12
     },
-    color: CHART_COLORS.textSecondary,
+    color: "var(--ax-fg-2)",
     padding: 10,
     usePointStyle: true,
     pointStyle: "circle"
@@ -20957,9 +21710,13 @@ const TIME_X_AXIS = {
   }
 };
 function yAxis(title, extra) {
+  const tickColor = chartTheme_getAxChartColors().textSecondary;
   return {
     grid: {
-      color: "rgba(0,0,0,0.06)"
+      color: isDarkTheme() ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)"
+    },
+    ticks: {
+      color: tickColor
     },
     ...(title ? {
       title: {
@@ -20967,7 +21724,8 @@ function yAxis(title, extra) {
         text: title,
         font: {
           size: 10
-        }
+        },
+        color: tickColor
       }
     } : {}),
     ...extra
@@ -20982,42 +21740,39 @@ function baseChartOptions(overrides) {
       intersect: false
     },
     plugins: {
-      legend: CHART_LEGEND_TOP,
+      legend: {
+        ...CHART_LEGEND_TOP,
+        labels: {
+          ...CHART_LEGEND_TOP.labels,
+          color: chartTheme_getAxChartColors().textSecondary
+        }
+      },
       tooltip: {
-        ...CHART_TOOLTIP_CONFIG
+        ...buildTooltipConfig()
       }
     },
     ...overrides
   };
 }
-
-/**
- * Compute Chart.js-ready `min`, `max`, and `ticks.stepSize` from data values.
- * Spread the result into a Chart.js scale config:
- *   `y: { ...yAxis('Price'), ...niceLinearScale(values) }`
- */
 function niceLinearScale(values, opts) {
   const s = niceScaleFromValues(values, opts);
   return {
     min: s.min,
     max: s.max,
     ticks: {
-      stepSize: s.step
+      stepSize: s.step,
+      color: chartTheme_getAxChartColors().textSecondary
     }
   };
 }
-
-/**
- * Create tick config for a category axis with numeric labels (e.g. strike prices).
- * Shows labels only at "nice" round intervals instead of arbitrary autoSkip values.
- * Spread into `ticks`: `x: { ticks: { font: …, ...niceStrikeTicks(labels) } }`
- */
 function niceStrikeTicks(labels) {
   const nums = labels.map(Number);
   const valid = nums.filter(n => !isNaN(n));
+  const color = chartTheme_getAxChartColors().textSecondary;
   if (valid.length < 3) {
     return {
       autoSkip: false,
+      color,
       callback: (_v, i) => labels[i] ?? null
     };
   }
@@ -21030,11 +21785,13 @@ function niceStrikeTicks(labels) {
   if (step <= 0) {
     return {
       autoSkip: false,
+      color,
       callback: (_v, i) => labels[i] ?? null
     };
   }
   return {
     autoSkip: false,
+    color,
     callback: (_value, index) => {
       const s = nums[index];
       if (isNaN(s)) return labels[index] ?? null;
@@ -21907,6 +22664,7 @@ function findCandleBucketByTs(buckets, ts) {
 
 
 
+
 /** Draw session background colors for compressed gap mode. */
 function drawSessionBackgrounds(ctx, axisMapping, effectiveRangeMs, chartH) {
   const pad = SNAPSHOT_CHART_PAD;
@@ -21916,16 +22674,17 @@ function drawSessionBackgrounds(ctx, axisMapping, effectiveRangeMs, chartH) {
     const x1 = Math.max(pad.left, seg.startPx);
     const x2 = Math.min(pad.left + chartW, seg.endPx);
     if (x2 - x1 < 0.5) continue;
+    const dark = isDarkTheme();
     let bgColor = null;
     if (seg.isGap) {
-      bgColor = "rgba(142,142,147,0.06)";
+      bgColor = dark ? "rgba(142,142,147,0.10)" : "rgba(142,142,147,0.06)";
     } else {
       switch (seg.sessionType) {
         case "pre":
-          bgColor = "rgba(59,130,246,0.04)";
+          bgColor = dark ? "rgba(59,130,246,0.08)" : "rgba(59,130,246,0.04)";
           break;
         case "post":
-          bgColor = "rgba(245,158,11,0.04)";
+          bgColor = dark ? "rgba(245,158,11,0.08)" : "rgba(245,158,11,0.04)";
           break;
         default:
           bgColor = null;
@@ -21942,7 +22701,7 @@ function drawSessionBackgrounds(ctx, axisMapping, effectiveRangeMs, chartH) {
 /** Draw horizontal grid lines at nice scale tick positions. */
 function drawGridLines(ctx, nice, toY, chartW, chartH) {
   const pad = SNAPSHOT_CHART_PAD;
-  ctx.strokeStyle = "rgba(0,0,0,0.08)";
+  ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)";
   ctx.lineWidth = 1;
   for (const tick of nice.ticks) {
     const y = toY(tick);
@@ -21961,7 +22720,7 @@ function drawBaselineLine(ctx, baseline, forceBaseline, toY, chartW, chartH) {
   const y0 = toY(baseline);
   if (y0 >= pad.top && y0 <= pad.top + chartH) {
     ctx.beginPath();
-    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)";
     ctx.lineWidth = 1;
     ctx.moveTo(pad.left, y0);
     ctx.lineTo(pad.left + chartW, y0);
@@ -21977,7 +22736,7 @@ function drawMarketBoundaries(ctx, startTs, endTs, effectiveRangeMs, toX, chartW
   ctx.save();
   ctx.setLineDash([4, 4]);
   ctx.lineWidth = 1;
-  ctx.font = '10px var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)';
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif";
   ctx.textBaseline = "top";
   ctx.textAlign = "center";
   for (const b of boundaries) {
@@ -22538,6 +23297,7 @@ function drawXAxisLabels(ctx, axisMapping, startTs, endTs, effectiveRangeMs, toX
 
 
 
+
 /**
  * Draw the base chart (everything except hover tooltip).
  * Returns a SnapshotChartBaseState that can be reused for fast hover rendering.
@@ -22564,8 +23324,8 @@ function drawSnapshotChartBase(canvas, points, metric, rangeDurationMs, axisMapp
   const chartW = Math.max(1, cssWidth - pad.left - pad.right);
   const chartH = Math.max(1, cssHeight - pad.top - pad.bottom);
   if (points.length === 0) {
-    ctx.fillStyle = "#8E8E93";
-    ctx.font = '13px var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)';
+    ctx.fillStyle = DS_COLORS.raw.muted;
+    ctx.font = "13px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif";
     ctx.fillText("Waiting for history points...", pad.left + 2, pad.top + 18);
     return null;
   }
@@ -22778,6 +23538,7 @@ function drawSnapshotChartBase(canvas, points, metric, rangeDurationMs, axisMapp
 
 
 
+
 /** Binary-search for the nearest overlay data point at a given timestamp. */
 function findNearestOverlayIndex(timestamps, targetTs) {
   const n = timestamps.length;
@@ -22839,7 +23600,7 @@ function drawSnapshotChartHover(canvas, baseState, hoveredIndex, originalPoints)
   }
 
   // Vertical dashed line
-  ctx.strokeStyle = "rgba(0,0,0,0.18)";
+  ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)";
   ctx.lineWidth = 1;
   ctx.setLineDash([3, 3]);
   ctx.beginPath();
@@ -22853,7 +23614,7 @@ function drawSnapshotChartHover(canvas, baseState, hoveredIndex, originalPoints)
     ctx.arc(hx, hy, 4, 0, Math.PI * 2);
     ctx.fillStyle = metric.baseline != null ? ds_signColorRaw(value - metric.baseline) : metric.color;
     ctx.fill();
-    ctx.strokeStyle = "#fff";
+    ctx.strokeStyle = isDarkTheme() ? "#1a1a1f" : "#fff";
     ctx.lineWidth = 1.5;
     ctx.stroke();
   }
@@ -22877,7 +23638,7 @@ function drawSnapshotChartHover(canvas, baseState, hoveredIndex, originalPoints)
       ctx.arc(olX, olY, 3, 0, Math.PI * 2);
       ctx.fillStyle = ol.color;
       ctx.fill();
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = isDarkTheme() ? "#1a1a1f" : "#fff";
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -22952,9 +23713,9 @@ function drawSnapshotChartHover(canvas, baseState, hoveredIndex, originalPoints)
   ctx.lineTo(tx, ty + r);
   ctx.quadraticCurveTo(tx, ty, tx + r, ty);
   ctx.closePath();
-  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  ctx.fillStyle = isDarkTheme() ? "rgba(20,20,25,0.96)" : "rgba(255,255,255,0.96)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,0.12)";
+  ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.12)";
   ctx.lineWidth = 1;
   ctx.stroke();
   ctx.textAlign = "left";
@@ -23413,7 +24174,7 @@ function createIndexOverlayDropdown(initial, onChange) {
   };
   updateButtonLabel(initial);
   const dropdown = createElement_ui_createElement("div", {
-    styleString: "position:absolute; top:100%; left:0; z-index:10; margin-top:2px;" + ` background:rgba(255,255,255,0.96); border:1px solid ${DS_COLORS.border};` + ` border-radius: ${DS_RADIUS.md}; box-shadow:var(--ios-shadow-sm);` + " padding:4px 0; min-width:130px; display:none;" + ' font-family:var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);'
+    styleString: "position:absolute; top:100%; left:0; z-index:10; margin-top:2px;" + ` background: var(--ax-bg-card); color: var(--ax-fg); border:1px solid ${DS_COLORS.border};` + ` border-radius: ${DS_RADIUS.md}; box-shadow: var(--ax-shadow-sm);` + " padding:4px 0; min-width:130px; display:none;" + " font-family: var(--ax-font-body);"
   });
   const selectedSet = new Set(initial);
   for (const opt of INDEX_OVERLAY_OPTIONS) {
@@ -26550,7 +27311,7 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-row--child {
-    background-color: var(--ios-secondary-bg);
+    background-color: var(--ax-bg-subtle);
 }
 
 .table-row--summary {
@@ -26558,7 +27319,7 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-row--summary td {
-    border-top: 1px solid rgba(180, 190, 210, 0.5);
+    border-top: 1px solid var(--ax-border);
     padding-top: 10px;
 }
 
@@ -26570,12 +27331,12 @@ const TABLE_CSS_STYLES = `
 
 .table-row--group {
     font-weight: 700;
-    background-color: rgba(27, 95, 167, 0.08);
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group {
-    background-color: rgba(27, 95, 167, 0.15);
-    color: black;
+    background-color: var(--ax-bg-group-strong);
+    color: var(--ax-fg);
 }
 
 .table-header-cell {
@@ -26583,10 +27344,10 @@ const TABLE_CSS_STYLES = `
     text-align: right;
     cursor: pointer;
     font-weight: 700;
-    color: var(--ios-text-primary);
+    color: var(--ax-fg);
     padding: 8px 10px;
     background-color: inherit;
-    border-bottom: 1px solid rgba(60, 60, 67, 0.12);
+    border-bottom: 1px solid var(--ax-border-subtle);
     user-select: none;
     position: relative;
     transition: opacity 0.2s ease;
@@ -26595,10 +27356,10 @@ const TABLE_CSS_STYLES = `
 .table-header-cell--sticky {
     position: sticky;
     left: 0;
-    z-index: var(--z-table-sticky-header, 32);
+    z-index: var(--ax-z-table-sticky-header);
     text-align: left;
     background-color: inherit;
-    border-right: 1px solid rgba(0, 0, 0, 0.10);
+    border-right: 1px solid var(--ax-border-subtle);
 }
 
 .table-header-cell--sticky::after {
@@ -26608,18 +27369,18 @@ const TABLE_CSS_STYLES = `
     right: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to right, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0));
+    background: var(--ax-bg-sticky-fade);
     pointer-events: none;
 }
 
 .table-header-cell--sticky-right {
     position: sticky;
     right: 0;
-    z-index: var(--z-table-sticky-header, 32);
+    z-index: var(--ax-z-table-sticky-header);
     text-align: center;
     cursor: default;
     background-color: inherit;
-    border-left: 1px solid rgba(0, 0, 0, 0.10);
+    border-left: 1px solid var(--ax-border-subtle);
 }
 
 .table-header-cell--sticky-right::before {
@@ -26629,13 +27390,13 @@ const TABLE_CSS_STYLES = `
     left: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to left, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0));
+    background: var(--ax-bg-sticky-fade-reverse);
     pointer-events: none;
 }
 
 .table-header-cell--derived {
     font-weight: 500;
-    color: var(--ios-table-header);
+    color: var(--ax-table-head);
 }
 
 .table-header-cell--spacer {
@@ -26648,11 +27409,11 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-header-cell--drop-left {
-    box-shadow: inset 3px 0 0 0 var(--ios-blue);
+    box-shadow: inset 3px 0 0 0 var(--ax-blue);
 }
 
 .table-header-cell--drop-right {
-    box-shadow: inset -3px 0 0 0 var(--ios-blue);
+    box-shadow: inset -3px 0 0 0 var(--ax-blue);
 }
 
 .table-cell-symbol,
@@ -26670,11 +27431,11 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-cell-numeric--positive {
-    color: var(--ios-green);
+    color: var(--ax-positive);
 }
 
 .table-cell-numeric--negative {
-    color: var(--ios-red);
+    color: var(--ax-negative);
 }
 
 .table-cell-spacer {
@@ -26685,7 +27446,7 @@ const TABLE_CSS_STYLES = `
 .table-cell-symbol {
     text-align: left;
     font-weight: 700;
-    color: var(--ios-table-header);
+    color: var(--ax-table-head);
     position: relative;
 }
 
@@ -26723,21 +27484,21 @@ const TABLE_CSS_STYLES = `
 .table-cell-sticky {
     position: sticky;
     left: 0;
-    z-index: var(--z-table-sticky-cell, 30);
-    background-color: var(--ios-background);
-    border-right: 1px solid rgba(0, 0, 0, 0.10);
+    z-index: var(--ax-z-table-sticky-cell);
+    background-color: var(--ax-bg-table);
+    border-right: 1px solid var(--ax-border-subtle);
 }
 
 .table-row--child .table-cell-sticky {
-    background-color: var(--ios-secondary-bg);
+    background-color: var(--ax-bg-subtle);
 }
 
 .table-row--group .table-cell-sticky {
-    background-color: rgba(27, 95, 167, 0.08);
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group .table-cell-sticky {
-    background-color: rgba(27, 95, 167, 0.15);
+    background-color: var(--ax-bg-group-strong);
 }
 
 .table-cell-sticky::after {
@@ -26747,28 +27508,28 @@ const TABLE_CSS_STYLES = `
     right: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to right, rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0));
+    background: var(--ax-bg-sticky-shadow);
     pointer-events: none;
 }
 
 .table-cell-sticky-right {
     position: sticky;
     right: 0;
-    z-index: var(--z-table-sticky-cell, 30);
-    background-color: var(--ios-background);
-    border-left: 1px solid rgba(0, 0, 0, 0.10);
+    z-index: var(--ax-z-table-sticky-cell);
+    background-color: var(--ax-bg-table);
+    border-left: 1px solid var(--ax-border-subtle);
 }
 
 .table-row--child .table-cell-sticky-right {
-    background-color: var(--ios-secondary-bg);
+    background-color: var(--ax-bg-subtle);
 }
 
 .table-row--group .table-cell-sticky-right {
-    background-color: rgba(27, 95, 167, 0.08);
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group .table-cell-sticky-right {
-    background-color: rgba(27, 95, 167, 0.15);
+    background-color: var(--ax-bg-group-strong);
 }
 
 .table-cell-sticky-right::before {
@@ -26778,18 +27539,18 @@ const TABLE_CSS_STYLES = `
     left: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to left, rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0));
+    background: var(--ax-bg-sticky-shadow-reverse);
     pointer-events: none;
 }
 
 .table-action-btn {
-    font-size: 11px;
+    font-size: var(--ax-fs-sm);
     padding: 3px 8px;
-    border-radius: 6px;
+    border-radius: var(--ax-radius-sm);
     cursor: pointer;
-    border: 1px solid rgba(0, 0, 0, 0.13);
-    background: rgba(255, 255, 255, 0.85);
-    font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, sans-serif);
+    border: 1px solid var(--ax-border);
+    background: var(--ax-bg-glass-inset);
+    font-family: var(--ax-font-body);
     white-space: nowrap;
     line-height: 1.4;
     vertical-align: middle;
@@ -26797,21 +27558,21 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-action-btn:hover {
-    background: var(--ios-background);
-    border-color: rgba(0, 0, 0, 0.22);
+    background: var(--ax-bg-row-hover);
+    border-color: var(--ax-border-strong);
 }
 
 .table-action-btn--info {
-    color: var(--ios-teal, #5AC8FA);
+    color: var(--ax-cyan);
 }
 
 .table-action-btn--news {
-    color: var(--ios-blue, #007AFF);
+    color: var(--ax-blue);
     margin-left: 4px;
 }
 
 .table-action-btn--ai {
-    color: var(--ios-purple, #AF52DE);
+    color: var(--ax-purple);
     margin-left: 4px;
 }
 
@@ -26829,7 +27590,7 @@ const TABLE_CSS_STYLES = `
 
 .table-group-title {
     font-weight: 700;
-    color: var(--ios-text-primary);
+    color: var(--ax-fg);
 }
 
 .table-asset-badges {
@@ -26856,7 +27617,7 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-badge-letter {
-    color: var(--ios-text-primary);
+    color: var(--ax-fg);
     line-height: 1;
 }
 
@@ -26870,15 +27631,15 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-badge-count--positive {
-    color: var(--ios-green);
+    color: var(--ax-positive);
 }
 
 .table-badge-count--negative {
-    color: var(--ios-red);
+    color: var(--ax-negative);
 }
 
 .table-row-border-top {
-    border-top: 3px solid var(--ios-border);
+    border-top: 3px solid var(--ax-border);
 }
 
 .table-cell-symbol--has-sparkline {
@@ -26900,13 +27661,13 @@ const TABLE_CSS_STYLES = `
 .table-header-cell[data-sort="desc"]::after {
     content: ' ▼';
     font-size: 0.75em;
-    color: var(--ios-blue, #007AFF);
+    color: var(--ax-blue);
 }
 
 .table-header-cell[data-sort="asc"]::after {
     content: ' ▲';
     font-size: 0.75em;
-    color: var(--ios-blue, #007AFF);
+    color: var(--ax-blue);
 }
 `;
 function injectTableStyles() {
@@ -27000,35 +27761,35 @@ function ui_formRow(opts) {
 function ui_badge(text, variant = "muted") {
   const colors = {
     positive: {
-      bg: "rgba(32,169,69,0.06)",
-      text: "#20a945",
-      border: "rgba(32,169,69,0.25)"
+      bg: "var(--ax-tone-positive-soft-bg)",
+      text: "var(--ax-positive)",
+      border: "var(--ax-tone-positive-border)"
     },
     negative: {
-      bg: "rgba(215,49,38,0.06)",
-      text: "#d73126",
-      border: "rgba(215,49,38,0.25)"
+      bg: "var(--ax-tone-negative-soft-bg)",
+      text: "var(--ax-negative)",
+      border: "var(--ax-tone-negative-border)"
     },
     neutral: {
-      bg: "rgba(215,129,0,0.06)",
-      text: "#D78100",
-      border: "rgba(215,129,0,0.25)"
+      bg: "var(--ax-tone-neutral-soft-bg)",
+      text: "var(--ax-orange)",
+      border: "var(--ax-tone-neutral-border)"
     },
     info: {
-      bg: "rgba(0,122,255,0.06)",
-      text: "#007AFF",
-      border: "rgba(0,122,255,0.25)"
+      bg: "var(--ax-tone-info-soft-bg)",
+      text: "var(--ax-blue)",
+      border: "var(--ax-tone-info-border)"
     },
     muted: {
-      bg: "rgba(142,142,147,0.06)",
-      text: "#8E8E93",
-      border: "rgba(142,142,147,0.25)"
+      bg: "var(--ax-tone-muted-soft-bg)",
+      text: "var(--ax-fg-muted)",
+      border: "var(--ax-tone-muted-border)"
     }
   };
   const c = colors[variant];
   return ui_createElement("span", {
     text,
-    styleString: `display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px;` + ` font-size: 10px; font-weight: 600; line-height: 1.2;` + ` background: ${c.bg}; color: ${c.text}; border: 1px solid ${c.border};`
+    styleString: `display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--ax-radius-sm);` + ` font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); line-height: 1.2;` + ` background: ${c.bg}; color: ${c.text}; border: 1px solid ${c.border};`
   });
 }
 
@@ -28115,7 +28876,7 @@ function buildPeople(b) {
     col.appendChild(subLabel(title));
     for (const p of people.slice(0, 6)) {
       col.appendChild(createElement_ui_createElement("div", {
-        styleString: `display: flex; align-items: center; gap: 6px; padding: 5px 10px;` + ` ${theme_DS_COMPONENTS.metricCell} flex-direction: row; background: rgba(0,0,0,0.025);`,
+        styleString: `display: flex; align-items: center; gap: 6px; padding: 5px 10px;` + ` ${theme_DS_COMPONENTS.metricCell} flex-direction: row; background: var(--ax-bg-glass-inset);`,
         children: [createElement_ui_createElement("span", {
           text: p.name,
           styleString: "font-size: 11px; font-weight: 600; color: var(--ios-text-primary);" + " flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
@@ -28124,7 +28885,7 @@ function buildPeople(b) {
           styleString: "font-size: 10px; color: var(--ios-text-secondary);" + " flex-shrink: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
         }), ...(p.age ? [createElement_ui_createElement("span", {
           text: `${p.age}`,
-          styleString: `font-size: 10px; color: ${DS_COLORS.muted}; flex-shrink: 0;` + ` background: rgba(0,0,0,0.04); border-radius: 4px; padding: 1px 5px;`
+          styleString: `font-size: 10px; color: ${DS_COLORS.muted}; flex-shrink: 0;` + ` background: var(--ax-bg-glass-inset); border-radius: 4px; padding: 1px 5px;`
         })] : [])]
       }));
     }
@@ -28333,15 +29094,20 @@ function openCompanyDetailsPanel(symbol) {
     props: {
       id: PANEL_ID
     },
-    styleString: "position: fixed; inset: 0; z-index: var(--z-modal-backdrop, 100500); background: rgba(0,0,0,0.4);" + " display: flex; align-items: center; justify-content: center;" + " -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);"
+    styleString: "position: fixed; inset: 0; z-index: var(--ax-z-modal-backdrop); background: var(--ax-modal-backdrop-bg);" + " display: flex; align-items: center; justify-content: center;" + " -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);"
   });
+
+  // Tier-3 glass + rim — gives the company-details modal the same floating
+  // weight as the news / settings overlays. Inline shadow/bg/blur removed
+  // because the class supplies them and rim mouse tracking auto-attaches.
   const modal = createElement_ui_createElement("div", {
-    styleString: "background: rgba(248,248,252,0.97); border-radius: 20px; width: min(880px, 94vw);" + " max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;" + " box-shadow: var(--ios-shadow), 0 0 0 1px rgba(255,255,255,0.5);" + " transform: scale(0.95); opacity: 0; transition: transform 0.3s cubic-bezier(.2,.9,.3,1), opacity 0.25s ease;"
+    className: "ax-glass-3 ax-glass-rim",
+    styleString: "border-radius: var(--ax-radius-2xl); width: min(880px, 94vw);" + " max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;" + " color: var(--ax-fg);" + " transform: scale(0.95); opacity: 0; transition: transform 0.3s cubic-bezier(.2,.9,.3,1), opacity 0.25s ease;"
   });
 
   // Header row
   const header = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; padding: 16px 24px;" + " border-bottom: 1px solid var(--ios-border); flex-shrink: 0;" + " background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.3));"
+    styleString: "display: flex; align-items: center; padding: 16px 24px;" + " border-bottom: 1px solid var(--ax-border); flex-shrink: 0;" + " background: var(--ax-glass-2-bg);"
   });
   header.appendChild(createElement_ui_createElement("span", {
     text: "COMPANY",
@@ -28349,7 +29115,7 @@ function openCompanyDetailsPanel(symbol) {
   }));
   const titleEl = createElement_ui_createElement("span", {
     text: symbol,
-    styleString: "font-size: 18px; font-weight: 700; color: var(--ios-text-primary);" + " flex: 1; letter-spacing: -0.3px;"
+    styleString: "font-size: 18px; font-weight: var(--ax-fw-bold); color: var(--ax-fg);" + " flex: 1; letter-spacing: -0.3px;"
   });
   header.appendChild(titleEl);
 
@@ -28365,13 +29131,13 @@ function openCompanyDetailsPanel(symbol) {
 
   // Small inline spinner for background refresh
   const refreshIndicator = createElement_ui_createElement("div", {
-    styleString: "width: 14px; height: 14px; border: 1.5px solid var(--ios-border);" + ` border-top-color: ${DS_COLORS.info}; border-radius: ${DS_RADIUS.full};` + " animation: alexquant-spin 0.8s linear infinite; display: none; flex-shrink: 0;"
+    styleString: "width: 14px; height: 14px; border: 1.5px solid var(--ax-border);" + ` border-top-color: ${DS_COLORS.info}; border-radius: ${DS_RADIUS.full};` + " animation: alexquant-spin 0.8s linear infinite; display: none; flex-shrink: 0;"
   });
   statusArea.appendChild(refreshIndicator);
   header.appendChild(statusArea);
   const closeBtn = createElement_ui_createElement("button", {
     text: "\u00d7",
-    styleString: "background: rgba(0,0,0,0.05); border: none; font-size: 18px; cursor: pointer;" + ` color: var(--ios-text-secondary); width: 28px; height: 28px; border-radius: ${DS_RADIUS.full};` + " display: flex; align-items: center; justify-content: center; line-height: 1;" + " transition: background 0.15s;"
+    styleString: "background: var(--ax-bg-glass-inset); border: none; font-size: 18px; cursor: pointer;" + ` color: var(--ax-fg-2); width: 28px; height: 28px; border-radius: ${DS_RADIUS.full};` + " display: flex; align-items: center; justify-content: center; line-height: 1;" + " transition: background 0.15s;"
   });
   header.appendChild(closeBtn);
 
@@ -28515,7 +29281,7 @@ function consumePendingSymbol() {
 
 function createSymbolInput(initialSymbol) {
   const symbolRow = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" + " padding: 12px 16px; border: 1px solid var(--ios-border); border-radius: 14px;" + " background: rgba(255,255,255,0.5);"
+    styleString: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" + " padding: 12px 16px; border: 1px solid var(--ax-border); border-radius: 14px;" + " background: var(--ax-glass-2-bg);"
   });
   symbolRow.appendChild(createElement_ui_createElement("span", {
     text: "Symbol",
@@ -28526,7 +29292,7 @@ function createSymbolInput(initialSymbol) {
       type: "text",
       placeholder: "e.g. AAPL"
     },
-    styleString: "padding: 5px 10px; font-size: 12px; font-weight: 700; border: 1px solid var(--ios-border);" + " border-radius: 8px; outline: none; width: 130px; font-family: var(--ios-font);" + " background: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.5px;"
+    styleString: "padding: 5px 10px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-bold); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-md); outline: none; width: 130px; font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); text-transform: uppercase; letter-spacing: 0.5px;"
   });
   symbolInput.value = initialSymbol;
   symbolRow.appendChild(symbolInput);
@@ -28572,16 +29338,16 @@ async function ui_copyTextToClipboard(text) {
 ;// ./src/frontend/components/core/pillGroup.ts
 
 
-const pillGroup_PILL_STYLE = "padding: 5px 12px; font-size: 11px; font-weight: 600; border-radius: 8px;" + " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " font-family: var(--ios-font, inherit); transition: all 0.15s; white-space: nowrap;";
+const pillGroup_PILL_STYLE = "padding: 5px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md);" + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); transition: all 0.15s; white-space: nowrap;";
 function setActive(btn) {
   btn.style.background = DS_COLORS.info;
   btn.style.color = "#fff";
   btn.style.borderColor = DS_COLORS.info;
 }
 function setInactive(btn) {
-  btn.style.background = "rgba(255,255,255,0.6)";
-  btn.style.color = "var(--ios-text-primary)";
-  btn.style.borderColor = "var(--ios-border, rgba(230,230,230,0.7))";
+  btn.style.background = "var(--ax-bg-input)";
+  btn.style.color = "var(--ax-fg)";
+  btn.style.borderColor = "var(--ax-border)";
 }
 function createPillGroup(options, defaultValue, onChange, groupLabel) {
   let currentValue = defaultValue;
@@ -28625,6 +29391,9 @@ function createPillGroup(options, defaultValue, onChange, groupLabel) {
 }
 ;// ./src/frontend/news_page/shared/newsConstants.ts
 // ── Source Colors (visual — stays in frontend) ─────────────────────────────
+// Saturated brand backgrounds use 0.10 alpha and read on both themes.
+// The neutral "press" tag uses the muted tone token so it remains visible
+// against the dark canvas (a flat 0.10 gray tint disappears on dark bg).
 
 const SOURCE_COLORS = {
   yahoo: {
@@ -28640,7 +29409,7 @@ const SOURCE_COLORS = {
     text: "#009688"
   },
   press: {
-    bg: "rgba(142, 142, 147, 0.10)",
+    bg: "var(--ax-tone-muted-soft-bg)",
     text: "#8E8E93"
   },
   financialjuice: {
@@ -28654,8 +29423,8 @@ const SOURCE_COLORS = {
 };
 function sourceColor(type) {
   return SOURCE_COLORS[type] ?? {
-    bg: "rgba(0,0,0,0.06)",
-    text: "#3a3a3c"
+    bg: "var(--ax-tone-muted-soft-bg)",
+    text: "var(--ax-fg-2)"
   };
 }
 
@@ -28720,12 +29489,12 @@ function tagBadge(tag) {
 
 function renderNewsCard(item, options) {
   const hlBorder = item.isHeadline ? ` border-left: 3px solid ${DS_COLORS.raw.neutral};` : "";
-  const hlBg = item.isHeadline ? " background: rgba(215, 129, 0, 0.04);" : " background: rgba(255,255,255,0.4);";
+  const hlBg = item.isHeadline ? " background: rgba(215, 129, 0, 0.04);" : " background: var(--ax-glass-2-bg);";
   const card = createElement_ui_createElement("div", {
-    styleString: "border: 1px solid var(--ios-border); border-radius: 10px; padding: 11px 14px;" + hlBg + " display: flex; flex-direction: column; gap: 6px;" + " transition: background 0.15s;" + hlBorder + (item.url ? " cursor: pointer;" : "")
+    styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 11px 14px;" + hlBg + " display: flex; flex-direction: column; gap: 6px;" + " transition: background 0.15s;" + hlBorder + (item.url ? " cursor: pointer;" : "")
   });
-  const defaultBg = item.isHeadline ? "rgba(215, 129, 0, 0.04)" : "rgba(255,255,255,0.4)";
-  const hoverBg = item.isHeadline ? "rgba(215, 129, 0, 0.08)" : "rgba(255,255,255,0.75)";
+  const defaultBg = item.isHeadline ? "rgba(215, 129, 0, 0.04)" : "var(--ax-glass-2-bg)";
+  const hoverBg = item.isHeadline ? "rgba(215, 129, 0, 0.08)" : "var(--ax-bg-card)";
   if (item.url) {
     card.addEventListener("mouseenter", () => {
       card.style.background = hoverBg;
@@ -28786,7 +29555,7 @@ function renderNewsCard(item, options) {
   for (const symbol of symbols) {
     metaRow.appendChild(createElement_ui_createElement("span", {
       text: symbol,
-      styleString: "font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px;" + " background: rgba(0,0,0,0.05); color: var(--ios-text-secondary);"
+      styleString: "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); padding: 1px 5px; border-radius: var(--ax-radius-xs);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);"
     }));
   }
   if (item.tags && item.tags.length > 0) {
@@ -28810,14 +29579,14 @@ function renderNewsCard(item, options) {
 
 function toolbarBtn(label, icon) {
   const btn = createElement_ui_createElement("button", {
-    styleString: "background: rgba(255,255,255,0.6); border: 1px solid var(--ios-border); border-radius: 8px;" + " padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer;" + " color: var(--ios-text-secondary); display: flex; align-items: center; gap: 4px;" + " transition: all 0.15s; white-space: nowrap;"
+    styleString: "background: var(--ax-glass-2-bg); border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " padding: 4px 10px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); cursor: pointer;" + " color: var(--ax-fg-2); display: flex; align-items: center; gap: 4px;" + " transition: all 0.15s; white-space: nowrap;"
   });
   btn.innerHTML = `<span style="font-size:13px">${icon}</span><span>${label}</span>`;
   btn.addEventListener("mouseenter", () => {
-    btn.style.background = "rgba(255,255,255,0.9)";
+    btn.style.background = "var(--ax-bg-card)";
   });
   btn.addEventListener("mouseleave", () => {
-    btn.style.background = "rgba(255,255,255,0.6)";
+    btn.style.background = "var(--ax-glass-2-bg)";
   });
   return btn;
 }
@@ -28889,7 +29658,7 @@ function buildAISummaryMenu(deps) {
   btnRow.appendChild(closeAiBtn);
   aiSummaryArea.appendChild(btnRow);
   const resultArea = createElement_ui_createElement("div", {
-    styleString: "font-size: 12px; color: var(--ios-text-primary); line-height: 1.5;" + " max-height: 200px; overflow-y: auto; white-space: pre-wrap; display: none;" + " background: rgba(0,0,0,0.02); border-radius: 8px; padding: 10px 12px;"
+    styleString: "font-size: var(--ax-fs-md); color: var(--ax-fg); line-height: 1.5;" + " max-height: 200px; overflow-y: auto; white-space: pre-wrap; display: none;" + " background: var(--ax-bg-glass-inset); border-radius: var(--ax-radius-md); padding: 10px 12px;"
   });
   aiSummaryArea.appendChild(resultArea);
   const runSummary = async mode => {
@@ -28947,10 +29716,14 @@ function openNewsPanel(symbol) {
     props: {
       id: "alexquant-news-panel"
     },
-    styleString: "position: fixed; inset: 0; z-index: var(--z-modal-backdrop, 100500); background: rgba(0,0,0,0.45);" + " display: flex; align-items: center; justify-content: center;" + " -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);"
+    styleString: "position: fixed; inset: 0; z-index: var(--ax-z-modal-backdrop); background: var(--ax-modal-backdrop-bg);" + " display: flex; align-items: center; justify-content: center;" + " -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);"
   });
+
+  // Glass tier-3 + rim makes the modal float properly on top of Schwab's
+  // dimmed/inverted backdrop.
   const modal = createElement_ui_createElement("div", {
-    styleString: "background: rgba(248,248,252,0.96); border-radius: 18px; width: min(650px, 93vw);" + " max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;" + " box-shadow: var(--ios-shadow); border: 1px solid rgba(255,255,255,0.5);" + " transform: scale(0.96); opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease;"
+    className: "ax-glass-3 ax-glass-rim",
+    styleString: "border-radius: var(--ax-radius-2xl); width: min(650px, 93vw);" + " max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;" + " color: var(--ax-fg);" + " transform: scale(0.96); opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease;"
   });
 
   // ── Header ──────────────────────────────────────────────────────────────
@@ -29351,8 +30124,8 @@ const MAX_REBALANCE_PROFILES = 60;
 const thStyle = theme_DS_COMPONENTS.tableHeader;
 const tdStyle = theme_DS_COMPONENTS.tableCell + " font-variant-numeric: tabular-nums;";
 const tableStyle = theme_DS_COMPONENTS.table;
-const cellInputStyle = "padding:1px 3px; font-size:12px; border:1px solid var(--ios-border); border-radius:3px;" + " font-family:var(--ios-font); background:rgba(255,255,255,0.86); color:var(--ios-text-primary);" + " outline:none; width:60px; text-align:right;";
-const emptyStateStyle = "padding:10px; font-size:12px; color:var(--ios-text-secondary); border-radius:8px;" + " border:1px dashed rgba(0,0,0,0.14); text-align:center;";
+const cellInputStyle = "padding:1px 3px; font-size:var(--ax-fs-md); border:1px solid var(--ax-border); border-radius:3px;" + " font-family:var(--ax-font-body); background:var(--ax-bg-input); color:var(--ax-fg);" + " outline:none; width:60px; text-align:right;";
+const emptyStateStyle = "padding:10px; font-size:12px; color:var(--ios-text-secondary); border-radius:8px;" + " border:1px dashed var(--ax-border); text-align:center;";
 
 // ── Utility functions ──
 
@@ -29589,7 +30362,7 @@ function renderTradeSuggestions(result, privacyHidden = false, displayMultiplier
     });
     top.appendChild(createElement_ui_createElement("span", {
       text: suggestion.action,
-      styleString: `font-size:10px; font-weight:700; color:${accent}; border:1px solid ${accent};` + " background:rgba(255,255,255,0.72); padding:2px 6px; border-radius:999px; min-width:52px; text-align:center;"
+      styleString: `font-size:var(--ax-fs-xs); font-weight:var(--ax-fw-bold); color:${accent}; border:1px solid ${accent};` + " background:var(--ax-glass-2-bg); padding:2px 6px; border-radius:999px; min-width:52px; text-align:center;"
     }));
     top.appendChild(createElement_ui_createElement("span", {
       text: suggestion.underlyingKey,
@@ -29626,7 +30399,7 @@ function renderTradeSuggestions(result, privacyHidden = false, displayMultiplier
     container.appendChild(row);
   });
   const summaryRow = createElement_ui_createElement("div", {
-    styleString: "display:flex; flex-wrap:wrap; gap:10px; padding:6px 8px; margin-top:3px; border-radius:6px; background:rgba(0,0,0,0.025);"
+    styleString: "display:flex; flex-wrap:wrap; gap:10px; padding:6px 8px; margin-top:3px; border-radius:6px; background:var(--ax-bg-glass-inset);"
   });
   const addItem = (label, value) => {
     const item = createElement_ui_createElement("div", {
@@ -30027,7 +30800,7 @@ function renderRebalanceIdeasPanel(payload) {
     props: {
       title: "Rebalance profile list"
     },
-    styleString: "width:clamp(240px, 28vw, 360px); max-width:100%; flex:0 1 340px; height:30px; padding:0 8px;" + " font-size:12px; border:1px solid var(--ios-border); border-radius:8px;" + " background:rgba(255,255,255,0.92); color:var(--ios-text-primary);"
+    styleString: "width:clamp(240px, 28vw, 360px); max-width:100%; flex:0 1 340px; height:30px; padding:0 8px;" + " font-size:var(--ax-fs-md); border:1px solid var(--ax-border); border-radius:var(--ax-radius-md);" + " background:var(--ax-bg-input); color:var(--ax-fg);"
   });
   const importFileBtn = createElement_ui_createElement("button", {
     text: "Import",
@@ -30087,7 +30860,7 @@ function renderRebalanceIdeasPanel(payload) {
       type: "text",
       placeholder: "Add to watchlist\u2026"
     },
-    styleString: "width:100px; padding:4px 8px; font-size:12px; border:1px solid var(--ios-border); border-radius:6px; background:rgba(255,255,255,0.92); color:var(--ios-text-primary); font-family:inherit; outline:none;"
+    styleString: "width:100px; padding:4px 8px; font-size:var(--ax-fs-md); border:1px solid var(--ax-border); border-radius:6px; background:var(--ax-bg-input); color:var(--ax-fg); font-family:inherit; outline:none;"
   });
   const watchlistAddBtn = createElement_ui_createElement("button", {
     text: "+",
@@ -30138,7 +30911,7 @@ function renderRebalanceIdeasPanel(payload) {
     styleString: `${showTradeSuggestions ? "flex:4;" : "flex:1;"} min-width:0; display:flex; flex-direction:column; gap:8px;`
   });
   const controlsBar = createElement_ui_createElement("div", {
-    styleString: "display:flex; flex-direction:column; gap:6px; padding:8px; border-radius:8px;" + " border:1px solid var(--ios-border); background:rgba(255,255,255,0.55);"
+    styleString: "display:flex; flex-direction:column; gap:6px; padding:8px; border-radius:var(--ax-radius-md);" + " border:1px solid var(--ax-border); background:var(--ax-glass-2-bg);"
   });
   const controlsRow = createElement_ui_createElement("div", {
     styleString: "display:flex; flex-wrap:nowrap; gap:6px; align-items:center; min-width:0;" + " overflow-x:auto; scrollbar-width:thin;"
@@ -30184,7 +30957,7 @@ function renderRebalanceIdeasPanel(payload) {
     styleString: "font-size:12px; color:var(--ios-text-secondary); font-weight:600;"
   }));
   const horizonSelect = createElement_ui_createElement("select", {
-    styleString: "padding:3px 6px; font-size:12px; font-weight:700; border:1px solid var(--ios-border);" + " border-radius:6px; background:rgba(255,255,255,0.92); color:var(--ios-text-primary);" + " font-family:inherit; cursor:pointer; outline:none;"
+    styleString: "padding:3px 6px; font-size:var(--ax-fs-md); font-weight:var(--ax-fw-bold); border:1px solid var(--ax-border);" + " border-radius:6px; background:var(--ax-bg-input); color:var(--ax-fg);" + " font-family:inherit; cursor:pointer; outline:none;"
   });
   for (const opt of BETA_HORIZONS) {
     const option = document.createElement("option");
@@ -30673,7 +31446,7 @@ function renderRebalanceIdeasPanel(payload) {
     const hasWatchlist = watchlistKeys.length > 0;
     function appendDataRow(key, zebraIdx) {
       const tr = document.createElement("tr");
-      if (zebraIdx % 2 === 1) tr.style.background = "rgba(0,0,0,0.02)";
+      if (zebraIdx % 2 === 1) tr.style.background = "var(--ax-bg-glass-inset)";
 
       // Ticker cell
       const tdSym = document.createElement("td");
@@ -30806,7 +31579,7 @@ function renderRebalanceIdeasPanel(payload) {
           tbody.appendChild(repeatSubRow);
         }
         sectionKeys.forEach((key, i) => appendDataRow(key, i));
-        tbody.appendChild(buildSummaryRow(summaryLabel, sectionKeys, curValues, linked, "border-top:2px solid var(--ios-border); background:rgba(0,0,0,0.05); font-weight:700;", curRefMap, tgtRefMap, devRefMap, maskConfig, visibleMetrics, visibleGreeks));
+        tbody.appendChild(buildSummaryRow(summaryLabel, sectionKeys, curValues, linked, "border-top:2px solid var(--ios-border); background:var(--ax-bg-glass-inset); font-weight:700;", curRefMap, tgtRefMap, devRefMap, maskConfig, visibleMetrics, visibleGreeks));
         hasRenderedSection = true;
       };
       if (equityKeys.length > 0) {
@@ -31181,7 +31954,7 @@ function createMobileCardView(opts) {
     if (badgeParts.length) {
       const badgeEl = createElement_ui_createElement("span", {
         text: badgeParts.join(" "),
-        styleString: "font-size: 10px; color: var(--ios-text-secondary); font-weight: 500;" + ` background: rgba(0,0,0,0.04); padding: 1px 5px; border-radius: ${DS_RADIUS.sm};`
+        styleString: "font-size: var(--ax-fs-xs); color: var(--ax-fg-2); font-weight: var(--ax-fw-medium);" + ` background: var(--ax-bg-glass-inset); padding: 1px 5px; border-radius: ${DS_RADIUS.sm};`
       });
       symWrap.appendChild(badgeEl);
     }
@@ -31236,7 +32009,7 @@ function createMobileCardView(opts) {
     // ── Expandable child positions ──
     if (ticker.holdings.length > 0) {
       const childContainer = createElement_ui_createElement("div", {
-        styleString: "display: none; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.06);"
+        styleString: "display: none; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--ax-border-subtle);"
       });
       for (const pos of ticker.holdings) {
         childContainer.appendChild(renderChildPosition(pos));
@@ -31335,21 +32108,21 @@ function extractEtfUnderlyingKeysFromGroups(groupedPositions) {
 
 
 const SETTINGS_GEAR_ICON_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' + '<circle cx="12" cy="12" r="3"></circle>' + '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>' + "</svg>";
-const SETTINGS_BUTTON_STYLE = "width: 32px; height: 32px; border-radius: 10px; cursor: pointer;" + " border: 1px solid var(--ios-border); color: var(--ios-text-secondary);" + " background: rgba(255,255,255,0.75); display: flex; align-items: center; justify-content: center;" + " transition: all 0.15s;";
-const SETTINGS_PANEL_STYLE = "position: absolute; top: 38px; right: 0; z-index: var(--z-page-popover, 210);" + " width: min(640px, calc(100vw - 28px)); max-height: min(86vh, 900px); overflow-y: auto;" + " padding: 14px; border: 1px solid var(--ios-border); border-radius: 14px;" + " background: rgba(248,248,250,0.97); box-shadow: var(--ios-shadow);" + " display: none; flex-direction: column; gap: 10px;";
-const SECTION_HEADER_STYLE = "padding: 12px 16px; border-bottom: 1px solid rgba(60,60,67,0.10);" + " background: rgba(250,250,252,0.92);";
+const SETTINGS_BUTTON_STYLE = "width: 32px; height: 32px; border-radius: var(--ax-radius-lg); cursor: pointer;" + " border: 1px solid var(--ax-border); color: var(--ax-fg-2);" + " background: var(--ax-bg-input); display: flex; align-items: center; justify-content: center;" + " transition: all 0.15s;";
+const SETTINGS_PANEL_STYLE = "position: absolute; top: 38px; right: 0; z-index: var(--z-page-popover, 210);" + " width: min(640px, calc(100vw - 28px)); max-height: min(86vh, 900px); overflow-y: auto;" + " padding: 14px; border: 1px solid var(--ax-border); border-radius: 14px;" + " background: var(--ax-bg-card); box-shadow: var(--ax-shadow-lg);" + " display: none; flex-direction: column; gap: 10px;";
+const SECTION_HEADER_STYLE = "padding: 12px 16px; border-bottom: 1px solid var(--ax-border-subtle);" + " background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent);";
 const SECTION_BODY_STYLE = theme_DS_COMPONENTS.settingGroupBody + " padding: 4px 16px 8px;";
-const MATRIX_ROW_STYLE = "display: grid; grid-template-columns: minmax(160px, 1fr) 96px 72px 132px;" + " align-items: center; column-gap: 4px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid rgba(60,60,67,0.10);";
-const FORM_ROW_STYLE = "display: grid; grid-template-columns: minmax(160px, 1fr) 220px;" + " align-items: center; column-gap: 4px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid rgba(60,60,67,0.10);";
+const MATRIX_ROW_STYLE = "display: grid; grid-template-columns: minmax(160px, 1fr) 96px 72px 132px;" + " align-items: center; column-gap: 4px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid var(--ax-border-subtle);";
+const FORM_ROW_STYLE = "display: grid; grid-template-columns: minmax(160px, 1fr) 220px;" + " align-items: center; column-gap: 4px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid var(--ax-border-subtle);";
 const ROW_LABEL_STYLE = "font-size: 13px; font-weight: 600; color: var(--ios-text-primary);";
 const ROW_META_STYLE = "font-size: 12px; color: var(--ios-text-secondary); line-height: 1.2;";
 const ROW_TOGGLE_CELL_STYLE = "justify-self: center;";
 const ROW_PARAM_LABEL_STYLE = ROW_META_STYLE + " justify-self: end; padding-right: 2px;";
 const ROW_CONTROL_CELL_STYLE = "justify-self: end; display:flex; justify-content:flex-end; align-items:center;";
 const ROW_CONTROL_GROUP_STYLE = "display:inline-flex; align-items:center; justify-content:flex-end; gap:4px;";
-const TOGGLE_BUTTON_STYLE = "width: 84px; height: 28px; border-radius: 8px; border: 1px solid var(--ios-border);" + " font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(120,120,128,0.12);" + " color: var(--ios-text-secondary); transition: all 0.15s;";
-const NUMBER_INPUT_STYLE = "width: 10ch; padding: 4px 6px; text-align: right; font-size: 12px; border: 1px solid var(--ios-border);" + " border-radius: 8px; background: rgba(255,255,255,0.95); color: var(--ios-text-primary); outline: none;";
-const AUTO_VALUE_STYLE = "display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 10px;" + " border:1px solid var(--ios-border); border-radius:999px; background:rgba(120,120,128,0.10);" + " font-size:12px; color:var(--ios-text-secondary); font-weight:500; text-transform:capitalize;";
+const TOGGLE_BUTTON_STYLE = "width: 84px; height: 28px; border-radius: 8px; border: 1px solid var(--ax-border);" + " font-size: 12px; font-weight: 600; cursor: pointer; background: var(--ax-bg-chip);" + " color: var(--ax-fg-2); transition: all 0.15s;";
+const NUMBER_INPUT_STYLE = "width: 10ch; padding: 4px 6px; text-align: right; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-md); background: var(--ax-bg-input); color: var(--ax-fg); outline: none;";
+const AUTO_VALUE_STYLE = "display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 10px;" + " border:1px solid var(--ax-border); border-radius:999px; background:var(--ax-bg-chip);" + " font-size:12px; color:var(--ax-fg-2); font-weight:500; text-transform:capitalize;";
 function createSettingsPopoverScaffold(opts) {
   const wrap = createElement_ui_createElement("div", {
     styleString: "position: relative; flex-shrink: 0;"
@@ -31377,9 +32150,9 @@ function createSettingsPopoverScaffold(opts) {
 }
 function applyGearButtonState(button, open) {
   button.setAttribute("aria-expanded", open ? "true" : "false");
-  button.style.background = open ? "rgba(0,122,255,0.12)" : "rgba(255,255,255,0.75)";
-  button.style.borderColor = open ? "rgba(0,122,255,0.4)" : "var(--ios-border)";
-  button.style.color = open ? "var(--ios-blue)" : "var(--ios-text-secondary)";
+  button.style.background = open ? "rgba(0,122,255,0.12)" : "var(--ax-bg-input)";
+  button.style.borderColor = open ? "rgba(0,122,255,0.4)" : "var(--ax-border)";
+  button.style.color = open ? "var(--ax-blue)" : "var(--ax-fg-2)";
 }
 function createSettingsPopoverController(opts) {
   let open = false;
@@ -31462,9 +32235,9 @@ function createSettingsToggleButton(initial, onChange) {
   let current = initial;
   const applyState = () => {
     button.textContent = current ? "On" : "Off";
-    button.style.background = current ? "rgba(0,122,255,0.14)" : "rgba(120,120,128,0.12)";
-    button.style.borderColor = current ? "rgba(0,122,255,0.35)" : "var(--ios-border)";
-    button.style.color = current ? "var(--ios-blue)" : "var(--ios-text-secondary)";
+    button.style.background = current ? "rgba(0,122,255,0.14)" : "var(--ax-bg-chip)";
+    button.style.borderColor = current ? "rgba(0,122,255,0.35)" : "var(--ax-border)";
+    button.style.color = current ? "var(--ax-blue)" : "var(--ax-fg-2)";
   };
   const setOn = (next, opts) => {
     current = next;
@@ -31561,17 +32334,17 @@ function appendSettingsFormRow(opts) {
 }
 function createSettingsJsonEditorModal(opts) {
   const backdrop = createElement_ui_createElement("div", {
-    styleString: "position: fixed; inset: 0; z-index: var(--z-page-popover, 260);" + " background: rgba(0,0,0,0.26); display: none; align-items: center; justify-content: center;" + " padding: 24px;"
+    styleString: "position: fixed; inset: 0; z-index: var(--ax-z-page-popover);" + " background: var(--ax-modal-backdrop-light); display: none; align-items: center; justify-content: center;" + " padding: 24px;"
   });
   const modal = createElement_ui_createElement("div", {
-    styleString: "width: min(900px, calc(100vw - 48px)); height: min(70vh, 720px); min-height: 420px;" + " border: 1px solid var(--ios-border); border-radius: 14px; overflow: hidden;" + " background: rgba(255,255,255,0.99); box-shadow: var(--ios-shadow);" + " display: flex; flex-direction: column;"
+    styleString: "width: min(900px, calc(100vw - 48px)); height: min(70vh, 720px); min-height: 420px;" + " border: 1px solid var(--ax-border); border-radius: 14px; overflow: hidden;" + " background: var(--ax-bg-card); box-shadow: var(--ax-shadow-lg);" + " display: flex; flex-direction: column;"
   });
   backdrop.appendChild(modal);
   const textarea = createElement_ui_createElement("textarea", {
     props: {
       rows: 14
     },
-    styleString: theme_DS_COMPONENTS.settingTextarea + " height: 100%; min-height: 0; resize: none; background: rgba(255,255,255,0.96);"
+    styleString: theme_DS_COMPONENTS.settingTextarea + " height: 100%; min-height: 0; resize: none; background: var(--ax-bg-card);"
   });
   const refreshValue = () => {
     textarea.value = opts.getValue();
@@ -31583,7 +32356,7 @@ function createSettingsJsonEditorModal(opts) {
       type: "button",
       "aria-label": `Close ${opts.title}`
     },
-    styleString: "width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--ios-border);" + " background: rgba(120,120,128,0.12); color: var(--ios-text-secondary); cursor: pointer;" + " font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;"
+    styleString: "width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--ax-border);" + " background: var(--ax-bg-chip); color: var(--ax-fg-2); cursor: pointer;" + " font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;"
   });
   const formatBtn = createSettingsActionButton("Format");
   formatBtn.addEventListener("click", () => {
@@ -31609,7 +32382,7 @@ function createSettingsJsonEditorModal(opts) {
     opts.onApply(raw);
   });
   modal.appendChild(createElement_ui_createElement("div", {
-    styleString: "display:flex; align-items:center; justify-content:space-between; gap:8px;" + " padding: 12px 14px; border-bottom: 1px solid rgba(60,60,67,0.12); background: rgba(250,250,252,0.96);",
+    styleString: "display:flex; align-items:center; justify-content:space-between; gap:8px;" + " padding: 12px 14px; border-bottom: 1px solid var(--ax-border-subtle); background: var(--ax-bg-toolbar);",
     children: [createElement_ui_createElement("span", {
       text: opts.title,
       styleString: "font-size: 15px; font-weight: 600; color: var(--ios-text-primary);"
@@ -31628,7 +32401,7 @@ function createSettingsJsonEditorModal(opts) {
     children: bodyChildren
   }));
   modal.appendChild(createElement_ui_createElement("div", {
-    styleString: "display:flex; align-items:center; justify-content:space-between; gap:8px;" + " padding: 10px 14px; border-top: 1px solid rgba(60,60,67,0.12); background: rgba(250,250,252,0.96);",
+    styleString: "display:flex; align-items:center; justify-content:space-between; gap:8px;" + " padding: 10px 14px; border-top: 1px solid var(--ax-border-subtle); background: var(--ax-bg-toolbar);",
     children: [formatBtn, createElement_ui_createElement("div", {
       styleString: "display:flex; justify-content:flex-end; gap:8px;",
       children: [applyBtn]
@@ -31736,9 +32509,9 @@ const PHASE_LABELS = [{
   phase: "closed",
   label: "CL"
 }];
-const PHASE_MATRIX_ROW_STYLE = "display: grid; grid-template-columns: minmax(130px, 1fr) auto 132px;" + " align-items: center; column-gap: 8px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid rgba(60,60,67,0.10);";
+const PHASE_MATRIX_ROW_STYLE = "display: grid; grid-template-columns: minmax(130px, 1fr) auto 132px;" + " align-items: center; column-gap: 8px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid var(--ax-border-subtle);";
 const PHASE_CELL_BASE_STYLE = "width: 30px; height: 22px; border: 1px solid var(--ios-border); cursor: pointer;" + " font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;" + " transition: all 0.15s; padding: 0;";
-const STATUS_DOT_STYLE = "width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0;" + " transition: background 0.3s;";
+const STATUS_DOT_STYLE = "width: 8px; height: 8px; border-radius: 50%; background: var(--ax-gray); flex-shrink: 0;" + " transition: background 0.3s;";
 
 /** Apply visual styling to a phase cell button based on override state and default. */
 function applyPhaseCellStyle(btn, override, defaultOn, isCurrentPhase) {
@@ -31893,14 +32666,14 @@ function createPhaseBadge(phase) {
       text: "var(--ios-blue)"
     },
     overnight: {
-      bg: "rgba(120,120,128,0.08)",
-      border: "rgba(120,120,128,0.20)",
-      text: "var(--ios-text-secondary)"
+      bg: "var(--ax-tone-muted-soft-bg)",
+      border: "var(--ax-tone-muted-border)",
+      text: "var(--ax-fg-2)"
     },
     closed: {
-      bg: "rgba(120,120,128,0.06)",
-      border: "rgba(120,120,128,0.15)",
-      text: "var(--ios-text-secondary)"
+      bg: "var(--ax-tone-muted-soft-bg)",
+      border: "var(--ax-tone-muted-border)",
+      text: "var(--ax-fg-2)"
     }
   };
   const element = createElement_ui_createElement("span", {
@@ -32438,7 +33211,7 @@ function holdings_renderPage(ctx) {
       styleString: DS_TYPOGRAPHY.controlLabel
     }));
     const select = createElement_ui_createElement("select", {
-      styleString: "padding: 6px 10px; border: 1px solid var(--ios-border); border-radius: 10px; font-size: 12px;" + " font-family: var(--ios-font); background: rgba(255,255,255,0.6); cursor: pointer;" + " outline: none; transition: border-color 0.2s, box-shadow 0.2s;"
+      styleString: "padding: 6px 10px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); font-size: var(--ax-fs-md);" + " font-family: var(--ax-font-body); background: var(--ax-bg-input); cursor: pointer;" + " outline: none; transition: border-color 0.2s, box-shadow 0.2s;"
     });
     for (const m of visibleModes) {
       const opt = document.createElement("option");
@@ -32551,11 +33324,11 @@ function holdings_renderPage(ctx) {
       "aria-expanded": "false",
       innerHTML: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' + '<path d="M12 3v18M3 12h18M6 6l12 12M18 6L6 18"></path>' + "</svg>"
     },
-    styleString: "width: 32px; height: 32px; border-radius: 10px; cursor: pointer;" + " border: 1px solid var(--ios-border); color: var(--ios-text-secondary);" + " background: rgba(255,255,255,0.75); display: flex; align-items: center; justify-content: center;" + " transition: all 0.15s;"
+    styleString: "width: 32px; height: 32px; border-radius: var(--ax-radius-lg); cursor: pointer;" + " border: 1px solid var(--ax-border); color: var(--ax-fg-2);" + " background: var(--ax-bg-input); display: flex; align-items: center; justify-content: center;" + " transition: all 0.15s;"
   });
   rebalanceWrap.appendChild(rebalanceBtn);
   const rebalancePopover = createElement_ui_createElement("div", {
-    styleString: "position: absolute; top: 38px; right: 0; z-index: var(--z-page-popover, 210);" + " width: min(max-content, calc(100vw - 24px)); max-width: calc(100vw - 24px);" + " max-height: 80vh; overflow-y: auto;" + " border: 1px solid var(--ios-border); border-radius: 12px;" + " background: rgba(255,255,255,0.96); box-shadow: var(--ios-shadow);" + " display: none;"
+    styleString: "position: absolute; top: 38px; right: 0; z-index: var(--z-page-popover, 210);" + " width: min(max-content, calc(100vw - 24px)); max-width: calc(100vw - 24px);" + " max-height: 80vh; overflow-y: auto;" + " border: 1px solid var(--ax-border); border-radius: var(--ax-radius-xl);" + " background: var(--ax-bg-card); box-shadow: var(--ax-shadow-lg);" + " display: none;"
   });
   rebalanceWrap.appendChild(rebalancePopover);
   let rebalancePanelRef = null;
@@ -32622,9 +33395,9 @@ function holdings_renderPage(ctx) {
     isRebalanceOpen = open;
     rebalancePopover.style.display = open ? "block" : "none";
     rebalanceBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    rebalanceBtn.style.background = open ? "rgba(0,122,255,0.12)" : "rgba(255,255,255,0.75)";
-    rebalanceBtn.style.borderColor = open ? "rgba(0,122,255,0.4)" : "var(--ios-border)";
-    rebalanceBtn.style.color = open ? "var(--ios-blue)" : "var(--ios-text-secondary)";
+    rebalanceBtn.style.background = open ? "rgba(0,122,255,0.12)" : "var(--ax-bg-input)";
+    rebalanceBtn.style.borderColor = open ? "rgba(0,122,255,0.4)" : "var(--ax-border)";
+    rebalanceBtn.style.color = open ? "var(--ax-blue)" : "var(--ios-text-secondary)";
     if (open) {
       const latestData = headerController?.getLatestFrame?.();
       if (latestData) renderRebalancePopoverContent(latestData);
@@ -33377,11 +34150,11 @@ function createSectionLayout(options) {
   // ── Style builders ───────────────────────────────────────────────────────
 
   const rootStyle = `display: flex; flex-direction: column; gap: ${rootGap}; width: 100%;`;
-  const navBarStyle = `display: flex; align-items: center; gap: ${navGap}; padding: ${navPadding};` + " min-width: 0;" + " background: rgba(255, 255, 255, 0.7);" + " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" + " border-bottom: 1px solid rgba(0, 0, 0, 0.06);" + ` position: sticky; top: ${navBarStickyTop}; z-index: var(--z-sticky-nav, 100); border-radius: 8px;`;
+  const navBarStyle = `display: flex; align-items: center; gap: ${navGap}; padding: ${navPadding};` + " min-width: 0;" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border-bottom: 1px solid var(--ax-border-subtle);" + ` position: sticky; top: ${navBarStickyTop}; z-index: var(--z-sticky-nav, 100); border-radius: var(--ax-radius-md);`;
   const navTabsStyle = "display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0;";
   const navInfoStyle = "display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;" + " margin-left: auto; min-width: 0;";
-  const navPillBase = `padding: ${pillPadding}; font-size: 11px; font-weight: 600; border-radius: 10px;` + " cursor: pointer; border: 1px solid var(--ios-border);" + " font-family: var(--ios-font); transition: all 0.15s;" + " white-space: nowrap; background: rgba(255, 255, 255, 0.6);" + " color: var(--ios-text-primary);";
-  const sectionWrapperStyle = "border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.06);" + " background: rgba(255, 255, 255, 0.5); overflow: visible;";
+  const navPillBase = `padding: ${pillPadding}; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-lg);` + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); transition: all 0.15s;" + " white-space: nowrap; background: var(--ax-bg-input);" + " color: var(--ax-fg);";
+  const sectionWrapperStyle = "border-radius: var(--ax-radius-xl); border: 1px solid var(--ax-border-subtle);" + " background: var(--ax-glass-2-bg); overflow: visible;";
   const buildHeaderStyle = cfg => "display: flex; align-items: center; justify-content: space-between;" + ` padding: ${headerPadding}; cursor: pointer; user-select: none;` + ` background: ${cfg.accentBg};` + " border-radius: 12px 12px 0 0;" + " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" + " transition: background 0.15s ease;";
   const headerLeftStyle = "display: flex; align-items: center; gap: 10px; min-width: 0;";
   const headerTitleStyle = cfg => {
@@ -33467,9 +34240,9 @@ function createSectionLayout(options) {
         pill.style.color = "#fff";
         pill.style.borderColor = cfg.accentColor;
       } else {
-        pill.style.background = "rgba(255, 255, 255, 0.6)";
-        pill.style.color = "var(--ios-text-primary)";
-        pill.style.borderColor = "var(--ios-border)";
+        pill.style.background = "var(--ax-bg-input)";
+        pill.style.color = "var(--ax-fg)";
+        pill.style.borderColor = "var(--ax-border)";
       }
     }
   };
@@ -33694,7 +34467,7 @@ const SECTIONS = [{
   tabLabel: "Govern",
   defaultExpanded: true,
   accentColor: DS_COLORS.raw.muted,
-  accentBg: "rgba(142, 142, 147, 0.08)"
+  accentBg: "var(--ax-tone-muted-soft-bg)"
 }];
 function renderPortfolioSectionLayout(onToggle) {
   return createSectionLayout({
@@ -33776,7 +34549,7 @@ function renderPortfolioHealthScore(payload) {
     styleString: "width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center;" + ` background: conic-gradient(${DS_COLORS.raw.positive} 0deg, rgba(0,0,0,0.08) 0deg);`
   });
   const ringInner = createElement_ui_createElement("div", {
-    styleString: "width: 68px; height: 68px; border-radius: 50%; background: rgba(255,255,255,0.92);" + " display: flex; flex-direction: column; align-items: center; justify-content: center;"
+    styleString: "width: 68px; height: 68px; border-radius: 50%; background: var(--ax-bg-card);" + " display: flex; flex-direction: column; align-items: center; justify-content: center;"
   });
   const scoreEl = createElement_ui_createElement("div", {
     styleString: DS_TYPOGRAPHY.largeValue
@@ -33827,7 +34600,7 @@ function renderPortfolioHealthScore(payload) {
     health.drivers.forEach(driver => {
       driverList.appendChild(createElement_ui_createElement("div", {
         text: driver,
-        styleString: "padding: 6px 10px; border-radius: 8px; font-size: 11px; line-height: 1.35;" + " background: rgba(0,0,0,0.03); color: var(--ios-text-secondary); border: 1px solid rgba(0,0,0,0.06);"
+        styleString: "padding: 6px 10px; border-radius: 8px; font-size: 11px; line-height: 1.35;" + " background: var(--ax-bg-glass-inset); color: var(--ios-text-secondary); border: 1px solid var(--ax-border-subtle);"
       }));
     });
   };
@@ -33891,7 +34664,7 @@ function formatAsOfLabel(timestamp) {
 }
 function renderPortfolioStateVector(payload) {
   const bar = createElement_ui_createElement("div", {
-    styleString: "position: sticky; top: 0; z-index: var(--z-sticky-state, 120);" + " background: rgba(255, 255, 255, 0.82);" + " -webkit-backdrop-filter: blur(16px) saturate(140%);" + " backdrop-filter: blur(16px) saturate(140%);" + " border-bottom: 1px solid rgba(0, 0, 0, 0.08);" + " padding: 8px 16px 6px; font-family: var(--ios-font);"
+    styleString: "position: sticky; top: 0; z-index: var(--z-sticky-state, 120);" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border-bottom: 1px solid var(--ax-border-subtle);" + " padding: 8px 16px 6px; font-family: var(--ax-font-body);"
   });
   const titleRow = createElement_ui_createElement("div", {
     styleString: "display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; flex-wrap: wrap;"
@@ -33991,7 +34764,7 @@ function renderGreeksRiskPanel(riskMetrics, derived) {
   });
   const createStatItem = (label, value, color = "var(--ios-text-primary)") => {
     const item = createElement_ui_createElement("div", {
-      styleString: "display: flex; flex-direction: column; padding: 10px 14px; border-radius: 12px;" + " background: rgba(255,255,255,0.5); border: 1px solid var(--ios-border);" + " min-width: 100px; flex: 1;"
+      styleString: "display: flex; flex-direction: column; padding: 10px 14px; border-radius: var(--ax-radius-xl);" + " background: var(--ax-glass-2-bg); border: 1px solid var(--ax-border);" + " min-width: 100px; flex: 1;"
     });
     item.appendChild(createElement_ui_createElement("span", {
       text: label,
@@ -34040,7 +34813,7 @@ function renderGreeksRiskPanel(riskMetrics, derived) {
     const tbody = document.createElement("tbody");
     underlyings.forEach((u, idx) => {
       const row = document.createElement("tr");
-      row.style.cssText = idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+      row.style.cssText = idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
       const cells = [{
         text: u.key,
         color: "var(--ios-text-primary)",
@@ -34108,7 +34881,7 @@ function renderGreeksRiskPanel(riskMetrics, derived) {
         tbody.innerHTML = "";
         updatedUnderlyings.forEach((u, idx) => {
           const row = document.createElement("tr");
-          row.style.cssText = idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+          row.style.cssText = idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
           const cells = [{
             text: u.key,
             color: "var(--ios-text-primary)",
@@ -34229,8 +35002,8 @@ function betaBgColor(beta) {
   if (beta == null) return "transparent";
   if (beta < 0) return "rgba(74,144,217,0.12)";
   if (beta < 0.5) return "rgba(124,181,236,0.10)";
-  if (beta < 0.8) return "rgba(142,142,147,0.06)";
-  if (beta <= 1.2) return "rgba(0,0,0,0.03)";
+  if (beta < 0.8) return "var(--ax-tone-muted-soft-bg)";
+  if (beta <= 1.2) return "var(--ax-bg-glass-inset)";
   if (beta <= 1.5) return "rgba(215,129,0,0.10)";
   if (beta <= 2.0) return "rgba(226,92,62,0.12)";
   return "rgba(215,49,38,0.15)";
@@ -34330,14 +35103,14 @@ function sortEntries(ents, key, asc) {
 
 function buildSegmentControl(options, active, onChange) {
   const wrap = createElement_ui_createElement("div", {
-    styleString: "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 8px; overflow: hidden; background: rgba(0,0,0,0.03);"
+    styleString: "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 8px; overflow: hidden; background: var(--ax-bg-glass-inset);"
   });
   const buttons = {};
   const sync = ak => {
     for (const [k, btn] of Object.entries(buttons)) {
       const isActive = k === ak;
-      btn.style.background = isActive ? "var(--ios-blue)" : "transparent";
-      btn.style.color = isActive ? "#fff" : "var(--ios-text-secondary)";
+      btn.style.background = isActive ? "var(--ax-blue)" : "transparent";
+      btn.style.color = isActive ? "#fff" : "var(--ax-fg-2)";
     }
   };
   for (const opt of options) {
@@ -34474,7 +35247,7 @@ function buildBenchmarkDetailTable(entries, activeBenchmark, privacyMode, makeHe
   const tbody = document.createElement("tbody");
   entries.forEach((entry, idx) => {
     const row = document.createElement("tr");
-    row.style.cssText = idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+    row.style.cssText = idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
     const bmData = entry.benchmarks[bm];
 
     // Ticker
@@ -34674,7 +35447,7 @@ function buildCrossBenchmarkTable(entries, rightMode, privacyMode, makeHeaderCel
   const maxExp = table.__maxExp ?? getMaxAbsExposureAll(entries);
   entries.forEach((entry, idx) => {
     const row = document.createElement("tr");
-    row.style.cssText = idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+    row.style.cssText = idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
 
     // Ticker
     const tickerTd = document.createElement("td");
@@ -34946,7 +35719,7 @@ function renderBetaExposurePanel(payload) {
       type: "text",
       placeholder: "Add ticker\u2026"
     },
-    styleString: "flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 6px; background: var(--ios-bg-secondary, #f5f5f5); color: var(--ios-text-primary); font-family: inherit; outline: none;"
+    styleString: "flex: 1; min-width: 0; padding: 4px 8px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border); border-radius: var(--ax-radius-sm); background: var(--ax-bg-input); color: var(--ax-fg); font-family: var(--ax-font-body); outline: none;"
   });
   const tickerAddBtn = createElement_ui_createElement("button", {
     text: "+",
@@ -35216,7 +35989,7 @@ function createCustomScenarioBuilder(payload) {
   const isAnchorModel = payload.modelType === "anchor";
   let inputMode = "manual";
   const wrap = createElement_ui_createElement("div", {
-    styleString: "padding: 10px 12px; border-radius: 10px; border: 1px solid var(--ios-border);" + " background: rgba(0,0,0,0.02);"
+    styleString: "padding: 10px 12px; border-radius: 10px; border: 1px solid var(--ios-border);" + " background: var(--ax-bg-glass-inset);"
   });
 
   // Title row with mode pills
@@ -35251,7 +36024,7 @@ function createCustomScenarioBuilder(payload) {
         type: "button",
         title: m.title
       },
-      styleString: "padding: 2px 8px; font-size: 9px; font-weight: 600; border-radius: 5px; cursor: pointer;" + " border: 1px solid var(--ios-border); transition: all 0.15s;" + (m.key === inputMode ? " background: var(--ios-blue); color: #fff; border-color: var(--ios-blue);" : " background: transparent; color: var(--ios-text-secondary);")
+      styleString: "padding: 2px 8px; font-size: 9px; font-weight: 600; border-radius: 5px; cursor: pointer;" + " border: 1px solid var(--ios-border); transition: all 0.15s;" + (m.key === inputMode ? " background: var(--ax-blue); color: #fff; border-color: var(--ax-blue);" : " background: transparent; color: var(--ios-text-secondary);")
     });
     btn.addEventListener("click", () => {
       if (isAnchorModel) return;
@@ -35269,7 +36042,7 @@ function createCustomScenarioBuilder(payload) {
   const inputRow = createElement_ui_createElement("div", {
     styleString: "display: flex; align-items: center; gap: 12px; flex-wrap: wrap;"
   });
-  const inputStyle = "width: 56px; padding: 4px 6px; font-size: 11px; font-weight: 600;" + " border: 1px solid var(--ios-border); border-radius: 6px; text-align: right;" + " font-variant-numeric: tabular-nums; background: rgba(255,255,255,0.8);" + " outline: none; transition: border-color 0.15s;";
+  const inputStyle = "width: 56px; padding: 4px 6px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold);" + " border: 1px solid var(--ax-border); border-radius: 6px; text-align: right;" + " font-variant-numeric: tabular-nums; background: var(--ax-bg-input);" + " outline: none; transition: border-color 0.15s;";
   const createField = (label, defaultVal, suffix) => {
     const group = createElement_ui_createElement("div", {
       styleString: "display: flex; align-items: center; gap: 4px;"
@@ -35334,7 +36107,7 @@ function createCustomScenarioBuilder(payload) {
     // Update mode buttons
     for (let i = 0; i < modes.length; i++) {
       const active = modes[i].key === effectiveMode;
-      modeBtns[i].style.cssText = "padding: 2px 8px; font-size: 9px; font-weight: 600; border-radius: 5px; cursor: pointer;" + " border: 1px solid var(--ios-border); transition: all 0.15s;" + (active ? " background: var(--ios-blue); color: #fff; border-color: var(--ios-blue);" : " background: transparent; color: var(--ios-text-secondary);") + (isAnchorModel ? " opacity: 0.55; cursor: not-allowed;" : "");
+      modeBtns[i].style.cssText = "padding: 2px 8px; font-size: 9px; font-weight: 600; border-radius: 5px; cursor: pointer;" + " border: 1px solid var(--ios-border); transition: all 0.15s;" + (active ? " background: var(--ax-blue); color: #fff; border-color: var(--ax-blue);" : " background: transparent; color: var(--ios-text-secondary);") + (isAnchorModel ? " opacity: 0.55; cursor: not-allowed;" : "");
       modeBtns[i].disabled = isAnchorModel;
     }
     if (isAnchorModel) {
@@ -35369,7 +36142,7 @@ function createCustomScenarioBuilder(payload) {
     props: {
       type: "button"
     },
-    styleString: "padding: 5px 16px; font-size: 11px; font-weight: 700; border-radius: 8px;" + " border: none; background: var(--ios-blue); color: #fff; cursor: pointer;" + " transition: opacity 0.15s;"
+    styleString: "padding: 5px 16px; font-size: 11px; font-weight: 700; border-radius: 8px;" + " border: none; background: var(--ax-blue); color: #fff; cursor: pointer;" + " transition: opacity 0.15s;"
   });
   runBtn.addEventListener("mouseenter", () => {
     runBtn.style.opacity = "0.85";
@@ -35441,7 +36214,7 @@ function createPositionDrillDown(positions) {
   for (const pos of positions) {
     if (pos.modelUsed === "none" && pos.totalPnl === 0) continue;
     const tr = document.createElement("tr");
-    tr.style.cssText = "border-bottom: 1px solid rgba(0,0,0,0.04);";
+    tr.style.cssText = "border-bottom: 1px solid var(--ax-border-subtle);";
     const cells = [{
       text: pos.underlyingKey,
       align: "left"
@@ -35512,7 +36285,7 @@ function createModelExplanation(scenarios, modelType, threeFactorData) {
   const ancUsed = positions.filter(p => p.modelUsed === "anchor").length;
   const allFallback = modelType === "threeFactor" && tfUsed === 0;
   const container = createElement_ui_createElement("div", {
-    styleString: "font-size: 11px; color: var(--ios-text-secondary); line-height: 1.5;" + " padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.02);" + " border: 1px dashed rgba(0,0,0,0.08); margin-top: 10px;"
+    styleString: "font-size: 11px; color: var(--ios-text-secondary); line-height: 1.5;" + " padding: 8px 10px; border-radius: 8px; background: var(--ax-bg-glass-inset);" + " border: 1px dashed var(--ax-border); margin-top: 10px;"
   });
   if (modelType === "threeFactor") {
     container.appendChild(createElement_ui_createElement("div", {
@@ -35652,7 +36425,7 @@ const CONFIDENCE_LABELS = {
   }
 };
 const ScenarioCardPanel_PILL_STYLE = "padding: 3px 10px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer;" + " border: 1px solid var(--ios-border); transition: all 0.15s;";
-const PILL_ACTIVE = " background: var(--ios-blue); color: #fff; border-color: var(--ios-blue);";
+const PILL_ACTIVE = " background: var(--ax-blue); color: #fff; border-color: var(--ax-blue);";
 const PILL_INACTIVE = " background: transparent; color: var(--ios-text-secondary);";
 function getScenarioCardsInDisplayOrder(scenarioResults) {
   const customIndex = scenarioResults.findIndex(scenario => {
@@ -35810,7 +36583,7 @@ function createScenarioCard(scenario, modelType) {
   const tfCount = scenario.positions.filter(p => p.modelUsed === "threeFactor").length;
   const ancCount = scenario.positions.filter(p => p.modelUsed === "anchor").length;
   const footerRow = createElement_ui_createElement("div", {
-    styleString: "display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px;" + " font-size: 11px; color: var(--ios-text-secondary);" + " margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(0,0,0,0.06);"
+    styleString: "display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px;" + " font-size: 11px; color: var(--ios-text-secondary);" + " margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--ax-border-subtle);"
   });
   footerRow.appendChild(createElement_ui_createElement("span", {
     text: `Coverage: ${scenario.coveredCount}/${scenario.totalCount} (${(scenario.coveredPct * 100).toFixed(0)}%)`
@@ -35899,7 +36672,7 @@ function renderScenarioCardPanel(payload) {
 
 function renderPortfolioControlBar(state, callbacks) {
   const bar = createElement_ui_createElement("div", {
-    styleString: "position: sticky; top: var(--portfolio-control-sticky-top, 44px); z-index: var(--z-sticky-control, 110);" + " display: flex; align-items: center; gap: 12px; flex-wrap: wrap;" + " padding: 10px 16px; background: rgba(255, 255, 255, 0.72);" + " border-bottom: 1px solid rgba(0, 0, 0, 0.06);" + " -webkit-backdrop-filter: blur(12px) saturate(130%);" + " backdrop-filter: blur(12px) saturate(130%);" + " font-family: var(--ios-font);"
+    styleString: "position: sticky; top: var(--portfolio-control-sticky-top, 44px); z-index: var(--z-sticky-control, 110);" + " display: flex; align-items: center; gap: 12px; flex-wrap: wrap;" + " padding: 10px 16px; background: var(--ax-glass-2-bg);" + " border-bottom: 1px solid var(--ax-border-subtle);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " font-family: var(--ax-font-body);"
   });
   let localState = {
     ...state
@@ -35907,7 +36680,7 @@ function renderPortfolioControlBar(state, callbacks) {
   const groupStyle = "display: inline-flex; align-items: center; gap: 8px;";
   const labelStyle = "font-size: 11px; font-weight: 700; color: var(--ios-text-secondary); letter-spacing: 0.2px;";
   const pauseBtn = createElement_ui_createElement("button", {
-    styleString: "padding: 6px 12px; border-radius: 10px; border: 1px solid var(--ios-border);" + " background: rgba(255,255,255,0.8); color: var(--ios-text-primary); cursor: pointer;" + " font-size: 12px; font-weight: 700; font-family: var(--ios-font);"
+    styleString: "padding: 6px 12px; border-radius: var(--ax-radius-lg); border: 1px solid var(--ax-border);" + " background: var(--ax-bg-input); color: var(--ax-fg); cursor: pointer;" + " font-size: var(--ax-fs-md); font-weight: var(--ax-fw-bold); font-family: var(--ax-font-body);"
   });
   const statusDot = createElement_ui_createElement("span", {
     text: "\u25CF",
@@ -35931,7 +36704,7 @@ function renderPortfolioControlBar(state, callbacks) {
     styleString: labelStyle
   }));
   const segmentWrap = createElement_ui_createElement("div", {
-    styleString: "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 10px;" + " overflow: hidden; background: rgba(0,0,0,0.03);"
+    styleString: "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 10px;" + " overflow: hidden; background: var(--ax-bg-glass-inset);"
   });
   const segmentButtons = {
     all: createElement_ui_createElement("button", {
@@ -35960,7 +36733,7 @@ function renderPortfolioControlBar(state, callbacks) {
     styleString: labelStyle
   }));
   const severitySelect = createElement_ui_createElement("select", {
-    styleString: "padding: 5px 8px; border-radius: 8px; border: 1px solid var(--ios-border);" + " background: rgba(255,255,255,0.8); font-size: 11px; font-weight: 600; cursor: pointer;"
+    styleString: "padding: 5px 8px; border-radius: var(--ax-radius-md); border: 1px solid var(--ax-border);" + " background: var(--ax-bg-input); font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); cursor: pointer;"
   });
   const severityOptions = [{
     value: "all",
@@ -35999,7 +36772,7 @@ function renderPortfolioControlBar(state, callbacks) {
   appetiteGroup.appendChild(appetiteSlider);
   appetiteGroup.appendChild(appetiteLabel);
   bar.appendChild(appetiteGroup);
-  const sectionBtnStyle = "padding: 5px 10px; border-radius: 8px; border: 1px solid var(--ios-border); background: rgba(255,255,255,0.8);" + " font-size: 11px; font-weight: 700; color: var(--ios-text-primary); cursor: pointer;";
+  const sectionBtnStyle = "padding: 5px 10px; border-radius: var(--ax-radius-md); border: 1px solid var(--ax-border); background: var(--ax-bg-input);" + " font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); color: var(--ax-fg); cursor: pointer;";
   const expandBtn = createElement_ui_createElement("button", {
     text: "Expand All",
     styleString: sectionBtnStyle
@@ -36014,11 +36787,11 @@ function renderPortfolioControlBar(state, callbacks) {
     Object.keys(segmentButtons).forEach(mode => {
       const btn = segmentButtons[mode];
       if (mode === focusMode) {
-        btn.style.background = "var(--ios-blue)";
+        btn.style.background = "var(--ax-blue)";
         btn.style.color = "#fff";
       } else {
         btn.style.background = "transparent";
-        btn.style.color = "var(--ios-text-secondary)";
+        btn.style.color = "var(--ax-fg-2)";
       }
     });
   };
@@ -36027,9 +36800,9 @@ function renderPortfolioControlBar(state, callbacks) {
       ...next
     };
     pauseBtn.textContent = localState.paused ? "Resume" : "Pause";
-    pauseBtn.style.background = localState.paused ? "var(--ios-blue)" : "rgba(255,255,255,0.8)";
-    pauseBtn.style.color = localState.paused ? "#fff" : "var(--ios-text-primary)";
-    pauseBtn.style.borderColor = localState.paused ? "var(--ios-blue)" : "var(--ios-border)";
+    pauseBtn.style.background = localState.paused ? "var(--ax-blue)" : "var(--ax-bg-input)";
+    pauseBtn.style.color = localState.paused ? "#fff" : "var(--ax-fg)";
+    pauseBtn.style.borderColor = localState.paused ? "var(--ax-blue)" : "var(--ax-border)";
     statusDot.style.color = localState.paused ? "var(--ios-gray)" : "var(--ios-green)";
     statusLabel.textContent = localState.paused ? "Paused" : "Live";
     statusLabel.style.color = localState.paused ? "var(--ios-gray)" : "var(--ios-green)";
@@ -36459,7 +37232,7 @@ function riskManagement_renderPage(ctx) {
   const makeChip = text => {
     return createElement_ui_createElement("span", {
       text,
-      styleString: "font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 4px;" + " background: rgba(0, 0, 0, 0.04); color: var(--ios-text-secondary); white-space: nowrap;"
+      styleString: "font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 4px;" + " background: var(--ax-bg-chip); color: var(--ios-text-secondary); white-space: nowrap;"
     });
   };
   const updateSectionChips = riskMetrics => {
@@ -52557,6 +53330,23 @@ class ChartManager {
     };
     window.addEventListener("resize", handler);
     window.addEventListener("orientationchange", handler);
+
+    // Re-render every active chart when the theme switches so palette /
+    // tooltip / grid / text colors pick up the new variants. Chart.js options
+    // are snapshotted at creation, so a `chart.update()` is enough — themed
+    // helpers (yAxis / themedChartOptions / niceLinearScale) re-resolve on
+    // each draw.
+    window.addEventListener("themeChanged", () => {
+      for (const canvas of this.activeCanvases) {
+        const chart = this.charts.get(canvas);
+        if (!chart) continue;
+        try {
+          chart.update("none");
+        } catch {
+          /* non-critical */
+        }
+      }
+    });
   }
   createOrUpdate(canvas, config, animate = true) {
     const existing = this.charts.get(canvas);
@@ -52892,7 +53682,7 @@ const SectionLayout_SECTIONS = [{
   tabLabel: "Diag",
   defaultExpanded: true,
   accentColor: "#8E8E93",
-  accentBg: "rgba(142, 142, 147, 0.08)"
+  accentBg: "var(--ax-tone-muted-soft-bg)"
 }];
 function renderSectionLayout(onToggle) {
   return createSectionLayout({
@@ -52917,12 +53707,12 @@ const COLORS = {
   flip: "#8E44AD",
   positive: "#20a945",
   negative: "#d73126",
-  dimmed: "rgba(142, 142, 147, 0.6)",
+  dimmed: "var(--ax-fg-muted)",
   delayed: "#d73126",
   label: "var(--ios-text-secondary)",
   value: "var(--ios-text-primary)"
 };
-const barStyle = "position: sticky; top: 0; z-index: var(--z-sticky-state, 120);" + " background: rgba(255, 255, 255, 0.82);" + " -webkit-backdrop-filter: blur(16px) saturate(140%);" + " backdrop-filter: blur(16px) saturate(140%);" + " border-bottom: 1px solid rgba(0, 0, 0, 0.08);" + " padding: 6px 12px 4px;" + " font-family: var(--ios-font);";
+const barStyle = "position: sticky; top: 0; z-index: var(--z-sticky-state, 120);" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border-bottom: 1px solid var(--ax-border-subtle);" + " padding: 6px 12px 4px;" + " font-family: var(--ax-font-body);";
 const groupRowStyle = "display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap;";
 const groupBoxStyle = "display: flex; flex-direction: column; gap: 2px; padding: 2px 0;";
 const groupTitleStyle = "font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px;" + " color: var(--ios-text-secondary); opacity: 0.7; line-height: 1; margin-bottom: 2px;"; /* DS_OPACITY.muted */
@@ -52931,8 +53721,8 @@ const groupFieldsStyle = "display: flex; align-items: stretch; gap: 10px; flex-w
 const fieldBoxStyle = "display: flex; flex-direction: column; gap: 1px; min-width: 0;";
 const fieldLabelStyle = "font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px;" + ` color: ${COLORS.label}; line-height: 1.2; white-space: nowrap;`;
 const fieldValueStyle = DS_TYPOGRAPHY.heading + " font-variant-numeric: tabular-nums lining-nums;" + " white-space: nowrap;";
-const groupDividerStyle = "width: 1px; align-self: stretch; background: rgba(0, 0, 0, 0.1); margin: 4px 2px;";
-const fieldDividerStyle = "width: 1px; align-self: stretch; background: rgba(0, 0, 0, 0.06); margin: 2px 0;";
+const groupDividerStyle = "width: 1px; align-self: stretch; background: var(--ax-border); margin: 4px 2px;";
+const fieldDividerStyle = "width: 1px; align-self: stretch; background: var(--ax-border-subtle); margin: 2px 0;";
 const badgeBaseStyle = "display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px;" + " font-size: 9px; font-weight: 700; letter-spacing: 0.3px; line-height: 1.5; white-space: nowrap;";
 const eventBadgeColors = {
   earnings: {
@@ -52948,12 +53738,12 @@ const eventBadgeColors = {
     fg: "#007AFF"
   },
   custom: {
-    bg: "rgba(142, 142, 147, 0.15)",
+    bg: "var(--ax-tone-muted-soft-bg)",
     fg: "#8E8E93"
   }
 };
 const filterTagStyle = "display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px;" + " font-size: 10px; font-weight: 600; cursor: pointer; transition: all 0.15s;" + " background: rgba(0, 122, 255, 0.08); color: #007AFF; border: 1px solid rgba(0, 122, 255, 0.15);" + " font-family: var(--ios-font); white-space: nowrap;";
-const filterRowStyle = "display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0 0 0;" + " border-top: 1px solid rgba(0, 0, 0, 0.06); margin-top: 6px;";
+const filterRowStyle = "display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0 0 0;" + " border-top: 1px solid var(--ax-border-subtle); margin-top: 6px;";
 const filterInlineStyle = "display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;" + " min-width: 0;";
 function fmtPrice(v, decimals = 2) {
   if (v == null) return "--";
@@ -53372,11 +54162,11 @@ const GAMMA_SOURCE_LABELS = {
 
 
 
-const OptionsViewControls_barStyle = "display: flex; flex-direction: column; gap: 4px; padding: 4px 8px;" + " border-bottom: 1px solid rgba(0,0,0,0.06);" + " background: rgba(255,255,255,0.55);" + " font-family: var(--ios-font);";
+const OptionsViewControls_barStyle = "display: flex; flex-direction: column; gap: 4px; padding: 4px 8px;" + " border-bottom: 1px solid var(--ax-border-subtle);" + " background: var(--ax-glass-2-bg);" + " font-family: var(--ax-font-body);";
 const controlsRowStyle = "display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;" + " overflow-x: auto; overflow-y: hidden;";
 const groupStyle = "display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap;";
 const groupLabelStyle = "font-size: 11px; font-weight: 600; color: var(--ios-text-secondary);" + " letter-spacing: 0.2px; white-space: nowrap;";
-const selectBaseStyle = "padding: 3px 6px; border: 1px solid var(--ios-border); border-radius: 8px;" + " font-size: 11px; font-weight: 600; color: var(--ios-text-primary);" + " background: rgba(255,255,255,0.86); font-family: var(--ios-font);" + " min-height: 24px; outline: none;";
+const selectBaseStyle = "padding: 3px 6px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); color: var(--ax-fg);" + " background: var(--ax-bg-input); font-family: var(--ax-font-body);" + " min-height: 24px; outline: none;";
 const selectSmallStyle = selectBaseStyle + " min-width: 94px;";
 const selectWideStyle = selectBaseStyle + " min-width: 228px;";
 const selectMultiStyle = selectBaseStyle + " min-width: 228px; min-height: 82px; font-weight: 500;";
@@ -53823,21 +54613,34 @@ function renderScopeLock(stateSlice, expirations, callbacks) {
 }
 ;// ./src/frontend/analysis_options/components/panels/AlertPanel.ts
 
-const containerStyle = "position: fixed; bottom: 20px; right: 20px; z-index: var(--z-alert, 100000);" + " display: flex; flex-direction: column; gap: 8px;" + " pointer-events: none; max-width: 340px;" + " font-family: var(--ios-font);";
-const alertRowBase = "pointer-events: auto; padding: 8px 12px; border-radius: 8px;" + " box-shadow: var(--ios-shadow-md);" + " color: #fff; font-size: 12px; cursor: pointer;" + " display: flex; align-items: center; gap: 8px;" + " opacity: 0; transform: translateX(100px);" + " transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);";
+
+const containerStyle = "position: fixed; bottom: 20px; right: 20px; z-index: var(--z-alert, 100000);" + " display: flex; flex-direction: column; gap: 8px;" + " pointer-events: none; max-width: 340px;" + " font-family: var(--ax-font-body);";
+
+// Severity rows ride glass tier-2 + a tone-tinted left bar so they tone-match
+// dark and light themes automatically. Solid-colour blocks (the original
+// design) read as bright slabs against dark chrome and white slabs against
+// light chrome \u2014 neither felt liquid. The tinted-glass approach is what
+// recorder.user.js does for its `.match-info` / `.footer button.warn`.
+const alertRowBase = "pointer-events: auto; padding: 9px 12px 9px 14px; border-radius: var(--ax-radius-lg);" + " border: 1px solid var(--ax-glass-2-border);" + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " color: var(--ax-fg); font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); cursor: pointer;" + " display: flex; align-items: center; gap: 8px;" + " position: relative; overflow: hidden;" + " opacity: 0; transform: translateX(100px);" + " transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)," + " transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)," + " box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1);";
+
+// Per-severity layer: a tone-tinted gradient over the glass + a solid colour
+// for the left accent bar (drawn via inline-html ::before equivalent).
 const severityConfig = {
   P0: {
-    bg: "rgba(215, 49, 38, 0.95)",
+    tint: "linear-gradient(180deg," + " color-mix(in srgb, var(--ax-critical) 18%, transparent)," + " color-mix(in srgb, var(--ax-critical) 7%, transparent))," + " var(--ax-glass-2-bg)",
+    accent: "var(--ax-critical)",
     icon: "\u26A0"
   },
   P1: {
-    bg: "rgba(215, 129, 0, 0.95)",
+    tint: "linear-gradient(180deg," + " color-mix(in srgb, var(--ax-orange) 16%, transparent)," + " color-mix(in srgb, var(--ax-orange) 6%, transparent))," + " var(--ax-glass-2-bg)",
+    accent: "var(--ax-orange)",
     icon: "\u25C6"
   }
 };
-const badgeStyle = "pointer-events: auto; padding: 4px 10px; border-radius: 8px;" + " background: rgba(60, 60, 67, 0.9); color: #fff;" + " font-size: 11px; font-weight: 600; cursor: pointer;" + " box-shadow: var(--ios-shadow-sm);" + " display: flex; align-items: center; gap: 6px;" + " opacity: 0; transform: translateX(100px);" + " transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);";
+const badgeStyle = "pointer-events: auto; padding: 4px 10px; border-radius: var(--ax-radius-lg);" + " background: var(--ax-glass-1-bg); color: var(--ax-fg);" + " border: 1px solid var(--ax-glass-1-border);" + " font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); cursor: pointer;" + " box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);" + " -webkit-backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate));" + " backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate));" + " display: flex; align-items: center; gap: 6px;" + " opacity: 0; transform: translateX(100px);" + " transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)," + " transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);";
 function renderAlertPanel(onJump) {
   const container = createElement_ui_createElement("div", {
+    className: "ax-shell-element",
     styleString: containerStyle
   });
   document.body.appendChild(container);
@@ -53878,14 +54681,16 @@ function renderAlertPanel(onJump) {
       const alert = visible[i];
       const cfg = severityConfig[alert.severity];
       const row = createElement_ui_createElement("div", {
-        styleString: alertRowBase + ` background: ${cfg.bg};`,
+        className: "ax-glass-rim",
+        styleString: alertRowBase + ` background: ${cfg.tint};` + ` --alert-accent: ${cfg.accent};` + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge)," + " inset 3px 0 0 var(--alert-accent);",
         events: {
           click: () => onJump(alert.sectionId, alert.cardId)
         }
       });
+      attachLiquidGlassRim(row);
       row.appendChild(createElement_ui_createElement("span", {
         text: cfg.icon,
-        styleString: "font-size: 12px; flex-shrink: 0;"
+        styleString: `font-size: var(--ax-fs-lg); flex-shrink: 0; color: ${cfg.accent};`
       }));
       row.appendChild(createElement_ui_createElement("span", {
         text: alert.reason,
@@ -53893,7 +54698,7 @@ function renderAlertPanel(onJump) {
       }));
       row.appendChild(createElement_ui_createElement("span", {
         text: "\u2192",
-        styleString: "font-size: 12px; opacity: 0.7; flex-shrink: 0;" /* DS_OPACITY.muted */
+        styleString: "font-size: var(--ax-fs-lg); opacity: 0.7; flex-shrink: 0; color: var(--ax-fg-2);"
       }));
       container.appendChild(row);
       timers.push(window.setTimeout(() => {
@@ -53921,7 +54726,7 @@ const IVPanelHeader_groupStyle = "display: flex; align-items: center; gap: 6px; 
 const IVPanelHeader_groupLabelStyle = "font-size: 11px; font-weight: 600; color: var(--ios-text-secondary);" + " text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;";
 const pillBaseStyle = "padding: 3px 10px; font-size: 11px; font-weight: 600; border-radius: 12px;" + " cursor: pointer; border: 1px solid var(--ios-border);" + " font-family: var(--ios-font); transition: all 0.15s; white-space: nowrap;";
 const pillActiveStyle = pillBaseStyle + ` background: ${DS_COLORS.raw.purple}; color: #fff; border-color: ${DS_COLORS.raw.purple};`;
-const pillInactiveStyle = pillBaseStyle + " background: rgba(255,255,255,0.6); color: var(--ios-text-primary); border-color: var(--ios-border);";
+const pillInactiveStyle = pillBaseStyle + " background: var(--ax-bg-input); color: var(--ax-fg); border-color: var(--ax-border);";
 const METRIC_LABELS = {
   iv: "IV",
   totalVariance: "\u03C3\u00B2T",
@@ -54930,7 +55735,7 @@ function renderContributorsTable(contributors, focusedStrike) {
   for (const c of contributors) {
     const isFocused = focusedStrike != null && Math.abs(focusedStrike - c.strike) < 0.01;
     const row = createElement_ui_createElement("button", {
-      styleString: "display: grid; grid-template-columns: 60px 1fr 1fr 1fr; gap: 4px; padding: 3px 6px; border: none;" + ` border-bottom: 1px solid rgba(0,0,0,0.03); width: 100%; text-align: left; cursor: pointer;` + ` background: ${isFocused ? "rgba(0,122,255,0.08)" : "transparent"}; font-family: var(--ios-font);`,
+      styleString: "display: grid; grid-template-columns: 60px 1fr 1fr 1fr; gap: 4px; padding: 3px 6px; border: none;" + ` border-bottom: 1px solid var(--ax-border-subtle); width: 100%; text-align: left; cursor: pointer;` + ` background: ${isFocused ? "rgba(0,122,255,0.08)" : "transparent"}; font-family: var(--ios-font);`,
       events: {
         click: () => setFocusedStrike(c.strike)
       }
@@ -55035,7 +55840,7 @@ function renderEnhancedGex(analytics, underlyingPrice, basis, oiTimestamp, ladde
     let isOpen = false;
     const toggleBtn = createElement_ui_createElement("button", {
       text: `\u25B6 Top ${a.topContributors.length} Contributors (click row to drill-down)`,
-      styleString: "padding: 4px 12px; font-size: 10px; font-weight: 600; border-radius: 8px; cursor: pointer;" + " border: 1px solid var(--ios-border); background: rgba(255,255,255,0.6);" + " color: var(--ios-text-secondary); font-family: var(--ios-font); margin-top: 6px;",
+      styleString: "padding: 4px 12px; font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md); cursor: pointer;" + " border: 1px solid var(--ax-border); background: var(--ax-bg-input);" + " color: var(--ax-fg-2); font-family: var(--ax-font-body); margin-top: 6px;",
       events: {
         click: () => {
           isOpen = !isOpen;
@@ -55189,13 +55994,15 @@ function renderEnhancedGex(analytics, underlyingPrice, basis, oiTimestamp, ladde
  */
 function createTooltipHost() {
   const host = document.createElement("alexquant-tip");
-  host.style.cssText = "position: fixed; z-index: var(--z-tooltip, 100700); pointer-events: none;";
+  host.style.cssText = "position: fixed; z-index: var(--ax-z-tooltip); pointer-events: none;";
   document.body.appendChild(host);
   const shadow = host.attachShadow({
     mode: "closed"
   });
   const tooltip = document.createElement("div");
-  tooltip.style.cssText = "position: fixed; background: rgba(255,255,255,0.97); border: 1px solid rgba(0,0,0,0.15);" + " border-radius: 8px; padding: 8px 12px; font-size: 12px; pointer-events: none;" + " display: none; box-shadow: 0 2px 12px rgba(0,0,0,0.18);" + ' font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;' + " max-width: 320px; color: #333; line-height: 1.4;";
+  // CSS custom properties inherit into shadow DOM, so --ax-* tokens resolve
+  // here against the document's current theme.
+  tooltip.style.cssText = "position: fixed;" + " background: var(--ax-bg-tooltip);" + " border: 1px solid var(--ax-border-tooltip);" + " border-radius: var(--ax-radius-md);" + " padding: 8px 12px; font-size: var(--ax-fs-md);" + " pointer-events: none; display: none;" + " box-shadow: var(--ax-shadow-tooltip);" + " font-family: var(--ax-font-body);" + " color: var(--ax-fg);" + " max-width: 320px; line-height: 1.4;" + " backdrop-filter: blur(12px) saturate(160%);" + " -webkit-backdrop-filter: blur(12px) saturate(160%);";
   shadow.appendChild(tooltip);
   return {
     host,
@@ -55805,7 +56612,7 @@ function renderExpectedMove(emData, rndData, straddleConeData, rndConeData, mode
   const updateModeButtons = () => {
     ["straddle", "rnd"].forEach(m => {
       const isActive = m === currentMode;
-      modeButtons[m].style.cssText = `padding: 4px 12px; font-size: 11px; font-weight: 700; border-radius: 12px; cursor: pointer;` + ` border: 1px solid ${isActive ? "var(--ios-blue)" : "var(--ios-border)"};` + ` background: ${isActive ? "var(--ios-blue)" : "rgba(255,255,255,0.6)"};` + ` color: ${isActive ? "#fff" : "var(--ios-text-primary)"}; font-family: var(--ios-font);`;
+      modeButtons[m].style.cssText = `padding: 4px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-xl); cursor: pointer;` + ` border: 1px solid ${isActive ? "var(--ax-blue)" : "var(--ax-border)"};` + ` background: ${isActive ? "var(--ax-blue)" : "var(--ax-bg-input)"};` + ` color: ${isActive ? "#fff" : "var(--ax-fg)"}; font-family: var(--ax-font-body);`;
     });
   };
   modeButtons.straddle.addEventListener("click", () => {
@@ -55851,7 +56658,7 @@ function renderExpectedMove(emData, rndData, straddleConeData, rndConeData, mode
     });
     const createChip = (label, value, sub, color) => {
       const chip = createElement_ui_createElement("span", {
-        styleString: "display: inline-flex; align-items: baseline; gap: 4px;" + " padding: 2px 8px; border-radius: 6px; background: rgba(0,0,0,0.03);" + " border: 1px solid rgba(0,0,0,0.05); white-space: nowrap;"
+        styleString: "display: inline-flex; align-items: baseline; gap: 4px;" + " padding: 2px 8px; border-radius: 6px; background: var(--ax-bg-glass-inset);" + " border: 1px solid var(--ax-border-subtle); white-space: nowrap;"
       });
       chip.appendChild(createElement_ui_createElement("span", {
         text: label + ":",
@@ -56506,7 +57313,7 @@ function renderGreeksExposure(data, underlyingPrice) {
   const updateTabStyles = () => {
     tabBtns.forEach((btn, i) => {
       const isActive = i === activeTab;
-      btn.style.cssText = `padding: 4px 10px; font-size: 10px; font-weight: 700; border-radius: 12px; cursor: pointer;` + ` border: 1px solid ${isActive ? "var(--ios-blue)" : "var(--ios-border)"};` + ` background: ${isActive ? "var(--ios-blue)" : "rgba(255,255,255,0.6)"};` + ` color: ${isActive ? "#fff" : "var(--ios-text-primary)"};` + ` font-family: var(--ios-font); transition: all 0.15s;`;
+      btn.style.cssText = `padding: 4px 10px; font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-xl); cursor: pointer;` + ` border: 1px solid ${isActive ? "var(--ax-blue)" : "var(--ax-border)"};` + ` background: ${isActive ? "var(--ax-blue)" : "var(--ax-bg-input)"};` + ` color: ${isActive ? "#fff" : "var(--ax-fg)"};` + ` font-family: var(--ax-font-body); transition: all 0.15s;`;
     });
   };
 
@@ -57885,10 +58692,10 @@ function renderBiasGauge(score, bias) {
   }));
   container.appendChild(labelRow);
   const barContainer = createElement_ui_createElement("div", {
-    styleString: "height: 6px; background: rgba(0,0,0,0.06); border-radius: 4px; position: relative; overflow: hidden;"
+    styleString: "height: 6px; background: var(--ax-bg-glass-inset); border-radius: 4px; position: relative; overflow: hidden;"
   });
   barContainer.appendChild(createElement_ui_createElement("div", {
-    styleString: "position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: rgba(0,0,0,0.15); transform: translateX(-50%);"
+    styleString: "position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: var(--ax-border); transform: translateX(-50%);"
   }));
   const normalizedScore = (score + 100) / 200;
   const fillLeft = Math.min(normalizedScore, 0.5);
@@ -57974,7 +58781,7 @@ function renderKeyLevelsBar(levels) {
     styleString: `position: relative; height: ${barHeight}px; margin: 0 24px;`
   });
   barWrapper.appendChild(createElement_ui_createElement("div", {
-    styleString: `position: absolute; top: ${lineTop}px; left: 0; right: 0; height: 2px; background: rgba(0,0,0,0.1); border-radius: 1px;`
+    styleString: `position: absolute; top: ${lineTop}px; left: 0; right: 0; height: 2px; background: var(--ax-border); border-radius: 1px;`
   }));
   for (const p of positioned) {
     const isSpot = p.label === "Spot";
@@ -58247,7 +59054,7 @@ function renderEventDecomposition(termStructure) {
   const tileLabelStyle = `${DS_TYPOGRAPHY.metricLabel} letter-spacing: 0.35px;`;
   const tileValueStyle = `margin-top:${DS_SPACING.xs}; font-size:15px; font-weight:700;` + ` color:${DS_COLORS.textPrimary}; font-variant-numeric:tabular-nums;`;
   const rowCardStyle = `border:1px solid var(--ios-border); border-radius:${DS_RADIUS.lg};` + ` padding:${DS_SPACING.md} ${DS_SPACING.lg}; background:${DS_COLORS.bgPanel};`;
-  const emptyStateStyle = `padding:${DS_SPACING.lg}; border-radius:${DS_RADIUS.lg};` + ` border:1px dashed rgba(60,60,67,0.18); background:${DS_COLORS.bgSubtle};` + ` font-size:12px; color:${DS_COLORS.textSecondary};`;
+  const emptyStateStyle = `padding:${DS_SPACING.lg}; border-radius:${DS_RADIUS.lg};` + ` border:1px dashed var(--ax-border); background:${DS_COLORS.bgSubtle};` + ` font-size:12px; color:${DS_COLORS.textSecondary};`;
   function renderContent(ts) {
     contentContainer.innerHTML = "";
     const root = createElement_ui_createElement("div", {
@@ -58412,7 +59219,7 @@ const GRADE_COLORS = {
 function DataQuality_gradeColor(grade) {
   return GRADE_COLORS[grade] || GRADE_COLORS["F"];
 }
-const sectionHeaderStyle = "font-size: 12px; font-weight: 700; color: var(--ios-text-primary); margin: 0 0 6px 0; padding-bottom: 4px;" + " border-bottom: 1px solid rgba(0,0,0,0.06);";
+const sectionHeaderStyle = "font-size: 12px; font-weight: 700; color: var(--ios-text-primary); margin: 0 0 6px 0; padding-bottom: 4px;" + " border-bottom: 1px solid var(--ax-border-subtle);";
 const metricRowStyle = "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 2px 0;" + " font-size: 11px; color: var(--ios-text-secondary);";
 const metricValueStyle = "font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; color: var(--ios-text-primary); overflow-wrap: anywhere;";
 const expandBtnStyle = "background: none; border: none; cursor: pointer; font-size: 11px; color: var(--ios-blue);" + " font-weight: 600; padding: 2px 4px; font-family: var(--ios-font);";
@@ -58447,7 +59254,7 @@ function renderDataQuality(quality, volDiag, liquidity) {
       })]
     });
     const barTrack = createElement_ui_createElement("div", {
-      styleString: "flex: 1; height: 6px; border-radius: 999px; background: rgba(0,0,0,0.06); overflow: hidden;"
+      styleString: "flex: 1; height: 6px; border-radius: 999px; background: var(--ax-bg-glass-inset); overflow: hidden;"
     });
     const barFill = createElement_ui_createElement("div", {
       styleString: `height: 100%; border-radius: 999px; width: ${pct}%; background: ${gc.text};` + " transition: width 0.4s ease;"
@@ -59024,7 +59831,7 @@ function options_renderPage(ctx) {
   symbolInput.type = "text";
   symbolInput.placeholder = "Enter symbol (e.g. NVDA)";
   symbolInput.value = "";
-  symbolInput.style.cssText = "padding: 8px 14px; font-size: 12px; font-weight: 600; border: 1px solid var(--ios-border);" + " border-radius: 10px; outline: none; width: 180px; font-family: var(--ios-font);" + " background: rgba(255,255,255,0.8); transition: border-color 0.2s;";
+  symbolInput.style.cssText = "padding: 8px 14px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-lg); outline: none; width: 180px; font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); transition: border-color 0.2s;";
   symbolInput.addEventListener("focus", () => {
     symbolInput.style.borderColor = "var(--ios-blue)";
   });
@@ -59032,10 +59839,10 @@ function options_renderPage(ctx) {
     symbolInput.style.borderColor = "var(--ios-border)";
   });
   const tickerSelect = document.createElement("select");
-  tickerSelect.style.cssText = "padding: 8px 12px; font-size: 13px; font-weight: 600; border: 1px solid var(--ios-border);" + " border-radius: 10px; outline: none; min-width: 130px; font-family: var(--ios-font);" + " background: rgba(255,255,255,0.8); color: var(--ios-text-primary);";
+  tickerSelect.style.cssText = "padding: 8px 12px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-semibold); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-lg); outline: none; min-width: 130px; font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg);";
   const loadBtn = createElement_ui_createElement("button", {
     text: "Load",
-    styleString: "padding: 8px 20px; font-size: 13px; font-weight: 700; border: none; border-radius: 10px;" + " background: var(--ios-blue); color: #fff; cursor: pointer; font-family: var(--ios-font);" + " transition: opacity 0.2s;"
+    styleString: "padding: 8px 20px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-bold); border: none; border-radius: var(--ax-radius-lg);" + " background: var(--ax-blue); color: #fff; cursor: pointer; font-family: var(--ax-font-body);" + " transition: opacity 0.2s;"
   });
   const statusLabel = createElement_ui_createElement("span", {
     styleString: "font-size: 12px; color: var(--ios-text-secondary);"
@@ -59085,7 +59892,7 @@ function options_renderPage(ctx) {
       tickerSelect.appendChild(customOpt);
     }
   };
-  const buttonStyle = "padding: 7px 12px; font-size: 11px; font-weight: 700; border-radius: 10px; cursor: pointer;" + " border: 1px solid var(--ios-border); background: rgba(255,255,255,0.75); color: var(--ios-text-primary);" + " font-family: var(--ios-font);";
+  const buttonStyle = "padding: 7px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-lg); cursor: pointer;" + " border: 1px solid var(--ax-border); background: var(--ax-bg-input); color: var(--ax-fg);" + " font-family: var(--ax-font-body);";
   const getCurrentSymbol = () => symbolInput.value.trim().toUpperCase() || store.getState().response?.underlying.symbol?.toUpperCase() || "";
   const optionsStatusDot = ctx?.optionsStatus ?? null;
   const updateStatusDot = (dot, status) => {
@@ -60096,9 +60903,9 @@ async function loadMultiSymbolHistory(symbols) {
 
 function renderControlBar(currentSymbol, callbacks, symbols) {
   const bar = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap;" + " position: relative; z-index: var(--z-page-popover, 210);" + " background: rgba(255,255,255,0.7);" + " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" + " border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; margin-bottom: 8px;"
+    styleString: "display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap;" + " position: relative; z-index: var(--z-page-popover, 210);" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border: 1px solid var(--ax-border-subtle); border-radius: var(--ax-radius-lg); margin-bottom: 8px;"
   });
-  const controlStyle = "padding: 4px 8px; font-size: 12px; font-weight: 600; border-radius: 8px;" + " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' + " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" + " flex-shrink: 0;";
+  const controlStyle = "padding: 4px 8px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md);" + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg);" + " flex-shrink: 0;";
 
   // --- Symbol select ---
   const select = createElement_ui_createElement("select", {
@@ -60122,7 +60929,7 @@ function renderControlBar(currentSymbol, callbacks, symbols) {
   // --- Refresh button ---
   const refreshBtn = createElement_ui_createElement("button", {
     text: "Refresh",
-    styleString: "padding: 4px 12px; font-size: 11px; font-weight: 700; border-radius: 8px;" + " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' + " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" + " flex-shrink: 0; transition: opacity 0.2s;",
+    styleString: "padding: 4px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-md);" + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg);" + " flex-shrink: 0; transition: opacity 0.2s;",
     events: {
       click: () => {
         callbacks.onRefresh?.();
@@ -60176,14 +60983,14 @@ function injectThumbCSS() {
             -webkit-appearance: none; appearance: none;
             width: 16px; height: 16px; border-radius: 50%;
             background: #007AFF; border: 2px solid #fff;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            box-shadow: var(--ax-shadow-lg);
             cursor: pointer; pointer-events: auto;
             margin-top: -6px;
         }
         input[type=range].${THUMB_CLASS}::-moz-range-thumb {
             width: 16px; height: 16px; border-radius: 50%;
             background: #007AFF; border: 2px solid #fff;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            box-shadow: var(--ax-shadow-lg);
             cursor: pointer; pointer-events: auto;
         }
         input[type=range].${THUMB_CLASS}::-webkit-slider-runnable-track {
@@ -60197,15 +61004,15 @@ function injectThumbCSS() {
 function renderZoneControlBar(dateStart, dateEnd, timeStart, timeEnd, callbacks) {
   injectThumbCSS();
   const bar = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex-wrap: wrap;" + " background: rgba(255,255,255,0.55);" + " -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);" + " border: 1px solid rgba(0,0,0,0.05); border-radius: 8px; margin-bottom: 6px;"
+    styleString: "display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex-wrap: wrap;" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border: 1px solid var(--ax-border-subtle); border-radius: var(--ax-radius-md); margin-bottom: 6px;"
   });
-  const controlStyle = "padding: 3px 6px; font-size: 11px; font-weight: 600; border-radius: 6px;" + " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' + " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" + " flex-shrink: 0;";
+  const controlStyle = "padding: 3px 6px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: 6px;" + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg);" + " flex-shrink: 0;";
 
   // --- Date range inputs ---
   const dateGroup = createElement_ui_createElement("div", {
     styleString: "display: flex; align-items: center; gap: 4px; flex-shrink: 0;"
   });
-  const dateStyle = "padding: 3px 6px; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " border-radius: 6px; font-size: 11px; font-family: var(--ios-font, inherit);" + " background: rgba(255,255,255,0.6); flex-shrink: 0; width: 120px;";
+  const dateStyle = "padding: 3px 6px; border: 1px solid var(--ax-border);" + " border-radius: 6px; font-size: var(--ax-fs-sm); font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); flex-shrink: 0; width: 120px;";
   const dateStartInput = createElement_ui_createElement("input", {
     props: {
       type: "date",
@@ -60286,7 +61093,7 @@ function renderZoneControlBar(dateStart, dateEnd, timeStart, timeEnd, callbacks)
       mktHoursBtn.style.color = "#fff";
       mktHoursBtn.style.border = "1px solid #007AFF";
     } else {
-      mktHoursBtn.style.background = "rgba(255,255,255,0.6)";
+      mktHoursBtn.style.background = "var(--ax-bg-input)";
       mktHoursBtn.style.color = "var(--ios-text-secondary, #666)";
       mktHoursBtn.style.border = "1px solid var(--ios-border, rgba(230,230,230,0.7))";
     }
@@ -60329,7 +61136,7 @@ function renderZoneControlBar(dateStart, dateEnd, timeStart, timeEnd, callbacks)
     styleString: "position: relative; height: 20px; width: 100%;"
   });
   const sliderTrack = createElement_ui_createElement("div", {
-    styleString: "position: absolute; top: 8px; left: 0; right: 0; height: 4px;" + " background: rgba(0,0,0,0.08); border-radius: 2px; pointer-events: none;"
+    styleString: "position: absolute; top: 8px; left: 0; right: 0; height: 4px;" + " background: var(--ax-bg-glass-inset); border-radius: 2px; pointer-events: none;"
   });
   const sliderRange = createElement_ui_createElement("div", {
     styleString: "position: absolute; top: 8px; height: 4px;" + " background: #007AFF; border-radius: 2px; pointer-events: none;"
@@ -60875,6 +61682,7 @@ function renderStatusBand(metaRows, expiryRows) {
 
 
 
+
 function HeatmapChart_createHeatmapChart(opts) {
   return new HeatmapChart(opts);
 }
@@ -60901,7 +61709,10 @@ class HeatmapChart {
   }
   static CELL_GAP = 1;
   static CELL_RADIUS = 2;
-  static GRID_BG = "rgba(0, 0, 0, 0.035)";
+  // Theme-aware grid background — getter so each draw resolves the current theme.
+  get gridBg() {
+    return isDarkTheme() ? "rgba(255, 255, 255, 0.035)" : "rgba(0, 0, 0, 0.035)";
+  }
   get cellHeight() {
     return this.options.cellHeight;
   }
@@ -61282,7 +62093,7 @@ class HeatmapChart {
     // Grid background so cell gaps are visible
     const gridW = this.totalGridWidth;
     const gridH = rows.length * cellHeight;
-    ctx.fillStyle = HeatmapChart.GRID_BG;
+    ctx.fillStyle = this.gridBg;
     this.traceRoundRect(startX, startY, gridW, gridH, 4);
     ctx.fill();
 
@@ -62202,7 +63013,7 @@ function buildHeatmapPanelScaffold(opts) {
     styleString: "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary, #666); line-height: 1;"
   });
   const legendBar = createElement_ui_createElement("div", {
-    styleString: `height: 10px; width: 120px; border-radius: 5px;` + ` border: 1px solid rgba(0,0,0,0.12); background: ${HORIZ_GRADIENT};`
+    styleString: `height: 10px; width: 120px; border-radius: 5px;` + ` border: 1px solid var(--ax-border); background: ${HORIZ_GRADIENT};`
   });
   const legendMaxLabel = createElement_ui_createElement("span", {
     text: "+",
@@ -62239,7 +63050,7 @@ function buildHeatmapPanelScaffold(opts) {
   });
   rowLabelWrap.appendChild(rowLabelCanvas);
   rowLabelWrap.appendChild(createElement_ui_createElement("div", {
-    styleString: "position: absolute; top: 0; right: -12px; width: 12px; height: 100%;" + " background: linear-gradient(to right, rgba(0,0,0,0.04), rgba(0,0,0,0));" + " pointer-events: none; z-index: 1;"
+    styleString: "position: absolute; top: 0; right: -12px; width: 12px; height: 100%;" + " background: var(--ax-bg-sticky-shadow);" + " pointer-events: none; z-index: 1;"
   }));
   heatmapContainer.appendChild(rowLabelWrap);
   const scrollWrap = createElement_ui_createElement("div", {
@@ -62253,7 +63064,7 @@ function buildHeatmapPanelScaffold(opts) {
     styleString: "flex-shrink: 0; position: relative;"
   });
   summaryWrap.appendChild(createElement_ui_createElement("div", {
-    styleString: "position: absolute; top: 0; left: -12px; width: 12px; height: 100%;" + " background: linear-gradient(to left, rgba(0,0,0,0.04), rgba(0,0,0,0));" + " pointer-events: none; z-index: 1;"
+    styleString: "position: absolute; top: 0; left: -12px; width: 12px; height: 100%;" + " background: var(--ax-bg-sticky-shadow-reverse);" + " pointer-events: none; z-index: 1;"
   }));
   summaryWrap.appendChild(summaryCanvas);
   heatmapContainer.appendChild(summaryWrap);
@@ -62830,6 +63641,7 @@ function renderTermStructureBand(metaRows, expiryRows) {
   });
 }
 ;// ./src/frontend/charts/plugins/zeroLinePlugin.ts
+
 function createZeroLinePlugin(scaleId = "y") {
   return {
     id: "zeroLine",
@@ -62839,7 +63651,7 @@ function createZeroLinePlugin(scaleId = "y") {
       const yPixel = yScale.getPixelForValue(0);
       const ctx = chart.ctx;
       ctx.save();
-      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)";
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
@@ -63050,6 +63862,7 @@ function renderFlowIncrement(metaRows, expiryRows) {
 
 
 
+
 // ── Canvas sizing ───────────────────────────────────────────────────────────
 
 const CHART_HEIGHT = 40;
@@ -63085,10 +63898,10 @@ function severityStyle(severity) {
     default:
       return {
         bg: DS_COLORS.bgMuted,
-        border: `rgba(142,142,147,${DS_OPACITY.status})`,
+        border: "var(--ax-tone-muted-border)",
         dotColor: DS_COLORS.raw.muted,
         lineColor: DS_COLORS.raw.muted,
-        fillColor: "rgba(142,142,147,0.10)"
+        fillColor: isDarkTheme() ? "rgba(162,162,167,0.18)" : "rgba(142,142,147,0.10)"
       };
   }
 }
@@ -63431,8 +64244,9 @@ function renderSignalPanel(signals) {
   return strip;
 }
 ;// ./src/frontend/charts/plugins/referenceLinePlugin.ts
+
 function createReferenceLinePlugin(value, scaleId = "y", style) {
-  const color = style?.color ?? "rgba(0,0,0,0.3)";
+  const color = style?.color ?? (isDarkTheme() ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)");
   const dash = style?.dash ?? [4, 3];
   const lineWidth = style?.lineWidth ?? 1;
   return {
@@ -63456,6 +64270,7 @@ function createReferenceLinePlugin(value, scaleId = "y", style) {
   };
 }
 ;// ./src/frontend/analysis_optionFlow/components/charts/PCRatioMomentum.ts
+
 
 
 
@@ -63569,7 +64384,7 @@ function PCRatioMomentum_buildConfig(history, mode) {
         y: {
           ...niceLinearScale(raw),
           grid: {
-            color: "rgba(0,0,0,0.06)"
+            color: isDarkTheme() ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)"
           },
           title: {
             display: true,
@@ -63582,7 +64397,6 @@ function PCRatioMomentum_buildConfig(history, mode) {
       }
     },
     plugins: [createReferenceLinePlugin(1.0, "y", {
-      color: "rgba(142,142,147,0.5)",
       dash: [3, 3]
     })]
   };
@@ -65010,15 +65824,15 @@ async function collectStoreDetails(storeName) {
 // ── Styles ──
 
 const LABEL_STYLE = DS_TYPOGRAPHY.heading + " margin-bottom: 10px;";
-const BADGE_BG = "rgba(142,142,147,0.08)";
-const CELL_STYLE = "padding: 5px 10px; border-bottom: 1px solid rgba(0,0,0,0.04); font-size: 12px;";
+const BADGE_BG = "var(--ax-bg-chip)";
+const CELL_STYLE = "padding: 5px 10px; border-bottom: 1px solid var(--ax-border-subtle); font-size: 12px;";
 const CELL_RIGHT = CELL_STYLE + " text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;";
 
 // ── Helpers ──
 
 function badge(label, value, bg = BADGE_BG) {
   return createElement_ui_createElement("div", {
-    styleString: `display: inline-flex; flex-direction: column; align-items: center;` + ` padding: 8px 14px; background: ${bg}; border-radius: 12px; min-width: 70px;` + ` border: 1px solid rgba(0,0,0,0.04);`,
+    styleString: `display: inline-flex; flex-direction: column; align-items: center;` + ` padding: 8px 14px; background: ${bg}; border-radius: 12px; min-width: 70px;` + ` border: 1px solid var(--ax-border-subtle);`,
     children: [createElement_ui_createElement("span", {
       text: value,
       styleString: "font-size: 15px; font-weight: 700; color: var(--ios-text-primary); font-variant-numeric: tabular-nums;"
@@ -65063,7 +65877,7 @@ function renderDatabaseInfoPanel() {
   titleRow.appendChild(createElement_ui_createElement("span", {
     text: "Database Info"
   }));
-  const BTN_STYLE = "padding: 3px 10px; font-size: 11px; font-weight: 600; border-radius: 8px; cursor: pointer;" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " background: rgba(255,255,255,0.6); color: var(--ios-text-secondary);" + " font-family: var(--ios-font, inherit); transition: all 0.15s;";
+  const BTN_STYLE = "padding: 3px 10px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md); cursor: pointer;" + " border: 1px solid var(--ax-border);" + " background: var(--ax-bg-input); color: var(--ax-fg-2);" + " font-family: var(--ax-font-body); transition: all 0.15s;";
   const loadBtn = createElement_ui_createElement("button", {
     text: "Load",
     styleString: BTN_STYLE
@@ -65157,7 +65971,7 @@ function renderDatabaseInfoPanel() {
     for (const col of ["Store", "Records", "Est. Size"]) {
       const th = document.createElement("th");
       th.textContent = col;
-      th.style.cssText = "text-align: left; padding: 6px 10px; font-size: 11px; font-weight: 600;" + " color: var(--ios-text-secondary); border-bottom: 1px solid rgba(0,0,0,0.08);";
+      th.style.cssText = "text-align: left; padding: 6px 10px; font-size: 11px; font-weight: 600;" + " color: var(--ios-text-secondary); border-bottom: 1px solid var(--ax-border);";
       if (col !== "Store") th.style.textAlign = "right";
       headerRow.appendChild(th);
     }
@@ -65169,7 +65983,7 @@ function renderDatabaseInfoPanel() {
       mainRow.style.cursor = "pointer";
       mainRow.style.transition = "background 0.1s";
       mainRow.addEventListener("mouseenter", () => {
-        mainRow.style.background = "rgba(0,0,0,0.02)";
+        mainRow.style.background = "var(--ax-bg-row-hover)";
       });
       mainRow.addEventListener("mouseleave", () => {
         mainRow.style.background = "";
@@ -65212,7 +66026,7 @@ function renderDatabaseInfoPanel() {
       detailRow.style.display = "none";
       const detailCell = document.createElement("td");
       detailCell.colSpan = 3;
-      detailCell.style.cssText = "padding: 0; border-bottom: 1px solid rgba(0,0,0,0.04);";
+      detailCell.style.cssText = "padding: 0; border-bottom: 1px solid var(--ax-border-subtle);";
       detailRow.appendChild(detailCell);
       tbody.appendChild(detailRow);
       storeRowRefs.push({
@@ -65398,13 +66212,15 @@ function formatDateShort(iso) {
 function showDatabaseInfoPopup(_anchor) {
   document.body.querySelectorAll("[data-dbinfo-modal]").forEach(el => el.remove());
   const overlay = createElement_ui_createElement("div", {
-    styleString: "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: var(--z-modal-backdrop, 100500);" + " background: rgba(0,0,0,0.45);",
+    className: "ax-shell-element",
+    styleString: "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: var(--z-modal-backdrop, 100500);" + " background: var(--ax-modal-backdrop-bg);",
     props: {
       "data-dbinfo-modal": "true"
     }
   });
   const modal = createElement_ui_createElement("div", {
-    styleString: "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal-content, 100600);" + " background: rgba(255,255,255,0.97); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);" + " border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 90%; max-height: 80vh; overflow-y: auto;" + " box-shadow: var(--ios-shadow); font-family: var(--ios-font, inherit);",
+    className: "ax-shell-element ax-glass-3 ax-glass-rim",
+    styleString: "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal-content, 100600);" + " border-radius: var(--ax-radius-2xl); padding: 24px 28px; max-width: 720px; width: 90%; max-height: 80vh; overflow-y: auto;" + " font-family: var(--ax-font-body); color: var(--ax-fg);",
     props: {
       "data-dbinfo-modal": "true"
     }
@@ -65416,7 +66232,7 @@ function showDatabaseInfoPopup(_anchor) {
   };
   const closeBtn = createElement_ui_createElement("button", {
     text: "\u2715",
-    styleString: "position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border-radius: 8px;" + " border: 1px solid var(--ios-border); background: rgba(120,120,128,0.12);" + " color: var(--ios-text-secondary); cursor: pointer; font-size: 15px; line-height: 1;" + " display: inline-flex; align-items: center; justify-content: center;",
+    styleString: "position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border-radius: 8px;" + " border: 1px solid var(--ax-border); background: var(--ax-bg-chip);" + " color: var(--ax-fg-2); cursor: pointer; font-size: 15px; line-height: 1;" + " display: inline-flex; align-items: center; justify-content: center;",
     events: {
       click: closeAll
     }
@@ -65442,13 +66258,15 @@ function showDatabaseInfoPopup(_anchor) {
 function showPurgeWarning(_anchor, onConfirm) {
   document.body.querySelectorAll("[data-purge-modal]").forEach(el => el.remove());
   const overlay = createElement_ui_createElement("div", {
-    styleString: "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: var(--z-modal-backdrop, 100500);" + " background: rgba(0,0,0,0.45);",
+    className: "ax-shell-element",
+    styleString: "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: var(--z-modal-backdrop, 100500);" + " background: var(--ax-modal-backdrop-bg);",
     props: {
       "data-purge-modal": "true"
     }
   });
   const modal = createElement_ui_createElement("div", {
-    styleString: "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal-content, 100600);" + " background: rgba(255,255,255,0.97); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);" + " border-radius: 16px; padding: 24px 28px; max-width: 360px; width: 90%;" + " box-shadow: var(--ios-shadow); font-family: var(--ios-font, inherit);",
+    className: "ax-shell-element ax-glass-3 ax-glass-rim",
+    styleString: "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal-content, 100600);" + " border-radius: var(--ax-radius-2xl); padding: 24px 28px; max-width: 360px; width: 90%;" + " font-family: var(--ax-font-body); color: var(--ax-fg);",
     props: {
       "data-purge-modal": "true"
     }
@@ -65470,7 +66288,7 @@ function showPurgeWarning(_anchor, onConfirm) {
   };
   const cancelBtn = createElement_ui_createElement("button", {
     text: "Cancel",
-    styleString: "padding: 8px 20px; font-size: 13px; font-weight: 600; border-radius: 10px; cursor: pointer;" + " border: 1px solid var(--ios-border, rgba(200,200,200,0.8)); background: rgba(255,255,255,0.7);" + " color: var(--ios-text-primary); font-family: inherit;",
+    styleString: "padding: 8px 20px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-lg); cursor: pointer;" + " border: 1px solid var(--ax-border); background: var(--ax-bg-input);" + " color: var(--ax-fg); font-family: inherit;",
     events: {
       click: closeAll
     }
@@ -66175,7 +66993,7 @@ class TickerGridManager {
   }
   buildCard(sym, isFirst) {
     const card = createElement_ui_createElement("div", {
-      styleString: "padding: 10px 12px; border: 1px solid rgba(60,60,67,0.14); border-radius: 10px;" + " background: rgba(255,255,255,0.92); cursor: grab; user-select: none; transition: all 0.15s;" + (isFirst ? " border-color: rgba(0,122,255,0.35); background: rgba(0,122,255,0.05);" : ""),
+      styleString: "padding: 10px 12px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg);" + " background: var(--ax-bg-card); cursor: grab; user-select: none; transition: all 0.15s;" + (isFirst ? " border-color: rgba(0,122,255,0.35); background: rgba(0,122,255,0.05);" : ""),
       props: {
         draggable: "true"
       }
@@ -66264,7 +67082,7 @@ class TickerGridManager {
     topNInput.min = "1";
     topNInput.max = "30";
     topNInput.value = String(mc?.getTopNForSymbol(sym) ?? DEFAULT_MONITOR_SETTINGS.defaultTopN);
-    topNInput.style.cssText = "width: 56px; padding: 3px 6px; font-size: 12px; border: 1px solid var(--ios-border);" + " border-radius: 6px; outline: none; font-family: var(--ios-font, inherit); background: rgba(255,255,255,0.95); text-align: center;";
+    topNInput.style.cssText = "width: 56px; padding: 3px 6px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border);" + " border-radius: 6px; outline: none; font-family: var(--ax-font-body); background: var(--ax-bg-input); text-align: center;";
     topNInput.addEventListener("change", () => {
       if (!mc) return;
       const next = Number.parseInt(topNInput.value, 10);
@@ -66872,7 +67690,7 @@ function optionFlow_renderPage(_ctx) {
   // Copy Out button
   const copyOutBtn = createElement_ui_createElement("button", {
     text: "Copy Out",
-    styleString: "padding: 4px 12px; font-size: 11px; font-weight: 700; border-radius: 8px;" + " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' + " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" + " flex-shrink: 0; transition: opacity 0.2s, color 0.2s, border-color 0.2s;"
+    styleString: "padding: 4px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-md);" + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg);" + " flex-shrink: 0; transition: opacity 0.2s, color 0.2s, border-color 0.2s;"
   });
   const setCopyOutBtnAppearance = btnState => {
     if (btnState === "success") {
@@ -69168,7 +69986,7 @@ function ensureMarkdownStyles() {
 .md-h3   { font-size: 12px; font-weight: 700; margin: 8px 0 2px; color: var(--ios-text-primary); }
 .md-li   { padding-left: 14px; text-indent: -11px; margin: 1px 0; }
 .md-li2  { padding-left: 26px; text-indent: -11px; margin: 1px 0; }
-.md-code { background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
+.md-code { background: var(--ax-bg-glass-inset); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .md-hr   { border: none; border-top: 1px solid var(--ios-border); margin: 8px 0; }
 .md-spacer { height: 5px; }
@@ -69428,7 +70246,7 @@ function renderDecisionSummary(decision, marketData) {
   const actionColor = isPositive ? DS_COLORS.positive : isNegative ? DS_COLORS.negative : DS_COLORS.neutral;
   const actionColorRaw = isPositive ? DS_COLORS.raw.positive : isNegative ? DS_COLORS.raw.negative : DS_COLORS.raw.neutral;
   const panel = createElement_ui_createElement("div", {
-    styleString: "background: rgba(255,255,255,0.55); border: 1px solid var(--ios-border);" + " border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 16px;"
+    styleString: "background: var(--ax-glass-2-bg); border: 1px solid var(--ax-glass-2-border);" + " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border-radius: var(--ax-radius-xl); padding: 16px; display: flex; flex-direction: column; gap: 16px;"
   });
 
   // Action badge row
@@ -69474,7 +70292,7 @@ function renderDecisionSummary(decision, marketData) {
 
   // Summary text (rendered as markdown)
   const summaryEl = createElement_ui_createElement("div", {
-    styleString: "font-size: 13px; color: var(--ios-text-primary); line-height: 1.5; margin: 0;" + " padding: 10px 12px; background: rgba(0,0,0,0.03); border-radius: 8px;"
+    styleString: "font-size: 13px; color: var(--ios-text-primary); line-height: 1.5; margin: 0;" + " padding: 10px 12px; background: var(--ax-bg-glass-inset); border-radius: 8px;"
   });
   summaryEl.innerHTML = renderMarkdown(decision.summary);
   panel.appendChild(summaryEl);
@@ -69798,7 +70616,7 @@ function createCustomModelSection(opts) {
     customModelListEl.innerHTML = "";
     for (const profile of customModels) {
       const row = createElement_ui_createElement("div", {
-        styleString: "display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px;" + " border: 1px solid var(--ios-border); background: rgba(255,255,255,0.5);"
+        styleString: "display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--ax-radius-md);" + " border: 1px solid var(--ax-border); background: var(--ax-glass-2-bg);"
       });
       const provLabel = PROVIDER_OPTIONS.find(p => p.value === profile.provider)?.label ?? profile.provider;
       const price = getModelPriceLabel(profile.provider, profile.model, profile);
@@ -70617,7 +71435,7 @@ function createAISettingsPanel(opts) {
       value: config.general.alphaVantageApiKey,
       placeholder: "Enter API key"
     },
-    styleString: "padding: 5px 8px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 6px; outline: none; font-family: var(--ios-font); background: rgba(255,255,255,0.8);" + " width: 100%; box-sizing: border-box;"
+    styleString: "padding: 5px 8px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border); border-radius: 6px; outline: none; font-family: var(--ax-font-body); background: var(--ax-bg-input);" + " width: 100%; box-sizing: border-box;"
   });
   const alphaVantageToggle = createSettingsToggleButton(config.general.autoFetchData, next => {
     config.general.autoFetchData = next;
@@ -70920,7 +71738,7 @@ function createAgentSelector(opts) {
       value: today,
       max: today
     },
-    styleString: "padding: 2px 5px; font-size: 11px; border: 1px solid var(--ios-border);" + " border-radius: 6px; outline: none; font-family: var(--ios-font);" + " background: rgba(255,255,255,0.6); color: var(--ios-text-secondary);"
+    styleString: "padding: 2px 5px; font-size: var(--ax-fs-sm); border: 1px solid var(--ax-border);" + " border-radius: 6px; outline: none; font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg-2);"
   });
   headerEl.appendChild(dateInput);
 
@@ -71007,7 +71825,7 @@ function createDebateConfig(opts) {
   let riskRounds = opts.initialRiskRounds;
   let debateIntensity = opts.initialIntensity;
   let debateHeat = opts.initialHeat;
-  const segBtnStyle = active => "font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 8px; cursor: pointer;" + " border: none; transition: background 0.15s;" + (active ? " background: var(--ios-blue); color: #fff;" : " background: rgba(0,122,255,0.08); color: var(--ios-blue);");
+  const segBtnStyle = active => "font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); padding: 4px 10px; border-radius: var(--ax-radius-md); cursor: pointer;" + " border: none; transition: background 0.15s;" + (active ? " background: var(--ax-blue); color: #fff;" : " background: rgba(0,122,255,0.08); color: var(--ax-blue);");
 
   // ── Debate row ──────────────────────────────────────────────────────────
   const debateRow = createElement_ui_createElement("div", {
@@ -71228,7 +72046,7 @@ function createPipelineConfigPanel(opts) {
 
   // ── Container ──────────────────────────────────────────────────────────
   const pipelineConfig = createElement_ui_createElement("div", {
-    styleString: "display: flex; flex-direction: column; gap: 8px;" + " padding: 16px; background: rgba(255,255,255,0.7); -webkit-backdrop-filter: blur(12px);" + " backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;"
+    styleString: "display: flex; flex-direction: column; gap: 8px;" + " padding: 16px; background: var(--ax-glass-2-bg); -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)); border: 1px solid var(--ax-border-subtle); border-radius: var(--ax-radius-xl);"
   });
 
   // ── Streaming & web search toggles ────────────────────────────────────
@@ -71294,7 +72112,7 @@ function createPipelineConfigPanel(opts) {
       styleString: "font-size: 12px; color: var(--ios-text-secondary);"
     }));
     const sel = createElement_ui_createElement("select", {
-      styleString: "padding: 4px 6px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 6px;" + " font-family: var(--ios-font); background: rgba(255,255,255,0.8); outline: none; cursor: pointer;"
+      styleString: "padding: 4px 6px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border); border-radius: 6px;" + " font-family: var(--ax-font-body); background: var(--ax-bg-input); outline: none; cursor: pointer;"
     });
     const defOpt = document.createElement("option");
     defOpt.value = "";
@@ -71411,7 +72229,7 @@ function nodeChipStyle(status) {
   const base = "padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 600;" + " white-space: nowrap; transition: all 0.3s; border: 1.5px solid; user-select: none;";
   switch (status) {
     case "pending":
-      return base + " background: rgba(0,0,0,0.03); color: var(--ios-text-secondary); border-color: var(--ios-border); cursor: default;";
+      return base + " background: var(--ax-bg-glass-inset); color: var(--ios-text-secondary); border-color: var(--ios-border); cursor: default;";
     case "running":
       return base + " background: rgba(0,122,255,0.12); color: var(--ios-blue); border-color: rgba(0,122,255,0.3); cursor: default;";
     case "done":
@@ -71607,14 +72425,14 @@ function createReportList(opts) {
         day: "2-digit"
       });
       const card = createElement_ui_createElement("div", {
-        styleString: "border: 1px solid var(--ios-border); border-radius: 10px; padding: 8px 12px;" + " background: rgba(255,255,255,0.45); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" + (rec.status === "completed" ? " cursor: pointer;" : "") + " transition: background 0.15s;"
+        styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 8px 12px;" + " background: var(--ax-glass-2-bg); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" + (rec.status === "completed" ? " cursor: pointer;" : "") + " transition: background 0.15s;"
       });
       if (rec.status === "completed") {
         card.addEventListener("mouseenter", () => {
-          card.style.background = "rgba(255,255,255,0.8)";
+          card.style.background = "var(--ax-bg-card)";
         });
         card.addEventListener("mouseleave", () => {
-          card.style.background = "rgba(255,255,255,0.45)";
+          card.style.background = "var(--ax-glass-2-bg)";
         });
       }
       const metaStyle = "font-size: 11px; color: var(--ios-text-secondary); white-space: nowrap; flex-shrink: 0;";
@@ -71803,7 +72621,7 @@ async function runComparison(ctx) {
     compHeader.appendChild(makeCopyBtn("Copy", () => `Comparison Analysis \u2014 ${ctx.symbol}\n${dateOlder}  \u2192  ${dateNewer}\n\n${compText}`));
     resultsSection.appendChild(compHeader);
     const compBody = createElement_ui_createElement("div", {
-      styleString: "padding: 14px 16px; border: 1px solid var(--ios-border); border-radius: 12px;" + " background: rgba(255,255,255,0.5); font-size: 13px; line-height: 1.5;" + " color: var(--ios-text-primary); white-space: pre-wrap; font-family: var(--ios-font);"
+      styleString: "padding: 14px 16px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-xl);" + " background: var(--ax-glass-2-bg); font-size: var(--ax-fs-lg); line-height: 1.5;" + " color: var(--ax-fg); white-space: pre-wrap; font-family: var(--ax-font-body);"
     });
     compBody.textContent = compText;
     resultsSection.appendChild(compBody);
@@ -72037,7 +72855,7 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
 
   // ── Focus topic row ──────────────────────────────────────────────────────
   const focusRow = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; gap: 8px;" + " padding: 8px 16px; border: 1px solid var(--ios-border); border-radius: 14px;" + " background: rgba(255,255,255,0.5);"
+    styleString: "display: flex; align-items: center; gap: 8px;" + " padding: 8px 16px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-2xl);" + " background: var(--ax-glass-2-bg);"
   });
   focusRow.appendChild(createElement_ui_createElement("span", {
     text: "Focus",
@@ -72048,7 +72866,7 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
       type: "text",
       placeholder: 'e.g. "Buy 180 call", "Sell covered puts at 160"'
     },
-    styleString: "flex: 1; padding: 5px 10px; font-size: 13px; border: 1px solid var(--ios-border);" + " border-radius: 8px; outline: none; font-family: var(--ios-font);" + " background: rgba(255,255,255,0.8); color: var(--ios-text-primary);"
+    styleString: "flex: 1; padding: 5px 10px; font-size: var(--ax-fs-lg); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-md); outline: none; font-family: var(--ax-font-body);" + " background: var(--ax-bg-input); color: var(--ax-fg);"
   });
   focusRow.appendChild(focusInput);
   container.appendChild(focusRow);
@@ -72627,7 +73445,7 @@ function buildNewsToolbar(deps) {
   });
   toolbar.appendChild(filterPills.element);
   const symbolFilterSelect = createElement_ui_createElement("select", {
-    styleString: "border: 1px solid var(--ios-border); border-radius: 8px; padding: 5px 8px;" + " font-size: 12px; outline: none; min-width: 120px; background: rgba(255,255,255,0.6);" + " color: var(--ios-text-primary);"
+    styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md); padding: 5px 8px;" + " font-size: var(--ax-fs-md); outline: none; min-width: 120px; background: var(--ax-bg-input);" + " color: var(--ax-fg);"
   });
   symbolFilterSelect.addEventListener("change", () => {
     const next = symbolFilterSelect.value;
@@ -72639,7 +73457,7 @@ function buildNewsToolbar(deps) {
       type: "text",
       placeholder: "Search headlines..."
     },
-    styleString: "border: 1px solid var(--ios-border); border-radius: 8px; padding: 5px 10px;" + " font-size: 12px; outline: none; width: 180px; background: rgba(255,255,255,0.6);" + " transition: border-color 0.15s;"
+    styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md); padding: 5px 10px;" + " font-size: var(--ax-fs-md); outline: none; width: 180px; background: var(--ax-bg-input);" + " transition: border-color 0.15s;"
   });
   searchInput.addEventListener("input", () => {
     deps.onSearchChange(searchInput.value.trim().toLowerCase());
@@ -72787,7 +73605,7 @@ function buildAIWorkspace(deps) {
   aiShell.appendChild(aiActionRow);
   const aiResultArea = createElement_ui_createElement("div", {
     text: SUMMARY_PLACEHOLDER,
-    styleString: "font-size: 12px; color: var(--ios-text-primary); line-height: 1.5; white-space: pre-wrap;" + " flex: 1; min-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.02);" + " border-radius: 8px; padding: 10px 12px; border: 1px solid var(--ios-border);"
+    styleString: "font-size: var(--ax-fs-md); color: var(--ax-fg); line-height: 1.5; white-space: pre-wrap;" + " flex: 1; min-height: 140px; overflow-y: auto; background: var(--ax-bg-glass-inset);" + " border-radius: var(--ax-radius-md); padding: 10px 12px; border: 1px solid var(--ax-border);"
   });
   aiShell.appendChild(aiResultArea);
   const setCopySummaryEnabled = enabled => {
@@ -73535,9 +74353,9 @@ function saveMovingBetaAxes(watchlistTickers, indicatorTickers) {
 ;// ./src/frontend/analysis_visualize/timeseries/moving_beta/MovingBetaControls.ts
 
 const AXIS_LABEL_STYLE = "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary, #8e8e93);" + " text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;";
-const CHIP_STYLE = "display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;" + " font-size: 10px; font-weight: 600; border-radius: 6px; cursor: grab;" + " background: rgba(0,0,0,0.04); color: var(--ios-text-primary);" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " transition: opacity 150ms, border-color 150ms, background 150ms;";
+const CHIP_STYLE = "display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;" + " font-size: 10px; font-weight: 600; border-radius: 6px; cursor: grab;" + " background: var(--ax-bg-glass-inset); color: var(--ios-text-primary);" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " transition: opacity 150ms, border-color 150ms, background 150ms;";
 const CHIP_ACTIVE_STYLE = "background: rgba(0,122,255,0.1); border-color: rgba(0,122,255,0.5); color: rgb(0,122,255);";
-const TICKER_INPUT_STYLE = "width: 70px; padding: 3px 6px; font-size: 10px; border-radius: 6px;" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " font-family: var(--ios-font, inherit); text-transform: uppercase;" + " background: rgba(255,255,255,0.6);";
+const TICKER_INPUT_STYLE = "width: 70px; padding: 3px 6px; font-size: var(--ax-fs-xs); border-radius: 6px;" + " border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); text-transform: uppercase;" + " background: var(--ax-bg-input);";
 function createMovingBetaAxisSections(state, callbacks, buttonStyle) {
   let dragState = null;
   function getAxisList(axis) {
@@ -73832,7 +74650,7 @@ function renderMovingBetaChart(config) {
     styleString: "font-size: 12px; color: var(--ios-text-secondary, #8e8e93);"
   });
   const progressTrack = createElement_ui_createElement("div", {
-    styleString: "width: min(560px, 90%); height: 8px; border-radius: 6px;" + " background: rgba(0, 0, 0, 0.08); overflow: hidden;"
+    styleString: "width: min(560px, 90%); height: 8px; border-radius: 6px;" + " background: var(--ax-bg-glass-inset); overflow: hidden;"
   });
   const progressFill = createElement_ui_createElement("div", {
     styleString: "height: 100%; width: 0%; border-radius: 6px;" + ` background: linear-gradient(90deg, ${CHART_COLORS.info}, ${CHART_COLORS.info}); transition: width 120ms linear;`
@@ -74068,7 +74886,7 @@ function renderMovingBetaChart(config) {
       if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl);
       const errEl = createElement_ui_createElement("div", {
         text: "Failed to load rolling data.",
-        styleString: "text-align: center; padding: 40px 0; font-size: 12px; color: var(--ios-danger, #d73126);"
+        styleString: "text-align: center; padding: 40px 0; font-size: var(--ax-fs-md); color: var(--ax-negative);"
       });
       panel.appendChild(errEl);
     } finally {
@@ -74140,7 +74958,7 @@ function renderDualTickerOverlay(config) {
   const inputRow = createElement_ui_createElement("div", {
     styleString: "display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;"
   });
-  const inputStyle = "padding: 3px 8px; font-size: 11px; border-radius: 6px;" + " border: 1px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.9);" + " color: inherit; width: 70px; text-transform: uppercase; outline: none;" + " font-family: inherit;";
+  const inputStyle = "padding: 3px 8px; font-size: var(--ax-fs-sm); border-radius: 6px;" + " border: 1px solid var(--ax-border-strong); background: var(--ax-bg-input);" + " color: inherit; width: 70px; text-transform: uppercase; outline: none;" + " font-family: inherit;";
   const input1 = document.createElement("input");
   input1.type = "text";
   input1.placeholder = "Ticker 1";
@@ -74407,9 +75225,9 @@ function renderDualTickerOverlay(config) {
 }
 ;// ./src/frontend/analysis_visualize/heatmap/AxisTickerManager.ts
 
-const AxisTickerManager_AXIS_LABEL_STYLE = "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary, #8e8e93);" + " text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;";
-const AxisTickerManager_CHIP_STYLE = "display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;" + " font-size: 10px; font-weight: 600; border-radius: 6px; cursor: grab;" + " background: rgba(0,0,0,0.04); color: var(--ios-text-primary);" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " transition: opacity 150ms, border-color 150ms;";
-const AxisTickerManager_TICKER_INPUT_STYLE = "width: 70px; padding: 3px 6px; font-size: 10px; border-radius: 6px;" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " font-family: var(--ios-font, inherit); text-transform: uppercase;" + " background: rgba(255,255,255,0.6);";
+const AxisTickerManager_AXIS_LABEL_STYLE = "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); color: var(--ax-fg-2);" + " text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;";
+const AxisTickerManager_CHIP_STYLE = "display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;" + " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-sm); cursor: grab;" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg);" + " border: 1px solid var(--ax-border);" + " transition: opacity 150ms, border-color 150ms;";
+const AxisTickerManager_TICKER_INPUT_STYLE = "width: 70px; padding: 3px 6px; font-size: var(--ax-fs-xs); border-radius: 6px;" + " border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); text-transform: uppercase;" + " background: var(--ax-bg-input);";
 function createAxisTickerManager(state, callbacks, actionBtnStyle) {
   // Drag state scoped per-axis
   let dragState = null;
@@ -74462,7 +75280,7 @@ function createAxisTickerManager(state, callbacks, actionBtnStyle) {
         e.preventDefault();
         if (!dragState || dragState.ticker === ticker) return;
         e.dataTransfer.dropEffect = "move";
-        chip.style.borderColor = "rgba(0,122,255,0.5)";
+        chip.style.borderColor = "var(--ax-blue)";
       });
       chip.addEventListener("dragleave", () => {
         chip.style.borderColor = "";
@@ -74927,7 +75745,7 @@ function renderCorrelationBetaHeatmap(config) {
     styleString: "font-size: 12px; color: var(--ios-text-secondary, #8e8e93);"
   });
   const progressTrack = createElement_ui_createElement("div", {
-    styleString: "width: min(560px, 90%); height: 8px; border-radius: 6px;" + " background: rgba(0, 0, 0, 0.08); overflow: hidden;"
+    styleString: "width: min(560px, 90%); height: 8px; border-radius: 6px;" + " background: var(--ax-bg-glass-inset); overflow: hidden;"
   });
   const progressFill = createElement_ui_createElement("div", {
     styleString: "height: 100%; width: 0%; border-radius: 6px;" + ` background: linear-gradient(90deg, ${CHART_COLORS.info}, ${CHART_COLORS.info}); transition: width 120ms linear;`
@@ -74960,7 +75778,7 @@ function renderCorrelationBetaHeatmap(config) {
   const rangeToolbar = createElement_ui_createElement("div", {
     styleString: "display: flex; align-items: center; gap: 6px; margin-bottom: 4px;"
   });
-  const rangeInputStyle = "width: 48px; padding: 3px 5px; font-size: 10px; border-radius: 6px;" + " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" + " font-family: var(--ios-font, inherit); background: rgba(255,255,255,0.6); text-align: center;";
+  const rangeInputStyle = "width: 48px; padding: 3px 5px; font-size: var(--ax-fs-xs); border-radius: 6px;" + " border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); background: var(--ax-bg-input); text-align: center;";
   const minInput = document.createElement("input");
   minInput.type = "text";
   minInput.placeholder = "Min";
@@ -74968,7 +75786,7 @@ function renderCorrelationBetaHeatmap(config) {
 
   // DOM color scale gradient bar (replaces canvas-drawn color scale)
   const colorScaleBar = createElement_ui_createElement("div", {
-    styleString: "width: 180px; flex-shrink: 0; height: 10px; border-radius: 5px;" + " background: linear-gradient(90deg," + " rgb(215,49,38) 0%, rgb(215,129,0) 25%, rgb(255,255,255) 50%," + " rgb(144,238,144) 75%, rgb(32,169,69) 100%);" + " border: 0.5px solid rgba(0,0,0,0.1);"
+    styleString: "width: 180px; flex-shrink: 0; height: 10px; border-radius: 5px;" + " background: linear-gradient(90deg," + " rgb(215,49,38) 0%, rgb(215,129,0) 25%, rgb(255,255,255) 50%," + " rgb(144,238,144) 75%, rgb(32,169,69) 100%);" + " border: 0.5px solid var(--ax-border);"
   });
   const maxInput = document.createElement("input");
   maxInput.type = "text";
@@ -75132,7 +75950,7 @@ function renderCorrelationBetaHeatmap(config) {
       if (loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl);
       const errEl = createElement_ui_createElement("div", {
         text: "Failed to compute cross-asset matrix.",
-        styleString: "text-align: center; padding: 40px 0; font-size: 12px; color: var(--ios-danger, #d73126);"
+        styleString: "text-align: center; padding: 40px 0; font-size: var(--ax-fs-md); color: var(--ax-negative);"
       });
       panel.appendChild(errEl);
     } finally {
@@ -75441,1203 +76259,2597 @@ class RenderEngine {
     this.changeView(view);
   }
 }
-;// ./src/frontend/components/core/ui_styles.ts
+;// ./src/frontend/components/core/axTokens/surfaces.ts
+// Surface tokens — light/dark backgrounds, borders, shadows.
+
+const AX_LIGHT_SURFACES = {
+  bg: "#ffffff",
+  bgSubtle: "#f5f5f7",
+  bgCard: "#fafafb",
+  bgCardAlt: "#ffffff",
+  bgChip: "#eeeef1",
+  bgModal: "rgba(252,252,254,0.65)",
+  bgInput: "#ffffff",
+  bgInputSolid: "#ffffff",
+  bgToolbar: "#f5f5f7",
+  bgPanel: "#fafafb",
+  bgTable: "#ffffff",
+  bgTableHead: "linear-gradient(180deg, #f5f5f7, #ececef)",
+  bgRowHover: "rgba(0, 0, 0, 0.04)",
+  bgHighlight: "rgba(255, 204, 0, 0.2)",
+  bgGroup: "rgba(27, 95, 167, 0.08)",
+  bgGroupStrong: "rgba(27, 95, 167, 0.15)",
+  bgGlassInset: "rgba(0, 0, 0, 0.06)",
+  bgStickyFade: "linear-gradient(to right, #ffffff, rgba(255,255,255,0))",
+  bgStickyFadeReverse: "linear-gradient(to left, #ffffff, rgba(255,255,255,0))",
+  bgStickyShadow: "linear-gradient(to right, rgba(0,0,0,0.07), rgba(0,0,0,0))",
+  bgStickyShadowReverse: "linear-gradient(to left, rgba(0,0,0,0.07), rgba(0,0,0,0))",
+  modalBackdropBg: "rgba(0, 0, 0, 0.45)",
+  modalBackdropLight: "rgba(0, 0, 0, 0.30)"
+};
+const AX_DARK_SURFACES = {
+  bg: "#060608",
+  bgSubtle: "#0f0f12",
+  bgCard: "#141418",
+  bgCardAlt: "#101014",
+  bgChip: "#1a1a1f",
+  bgModal: "rgba(20,20,26,0.55)",
+  bgInput: "#16161a",
+  bgInputSolid: "#1a1a1f",
+  bgToolbar: "#0d0d10",
+  bgPanel: "#0c0c0f",
+  bgTable: "#0a0a0d",
+  bgTableHead: "linear-gradient(180deg, #18181c, #141418)",
+  bgRowHover: "rgba(255, 255, 255, 0.05)",
+  bgHighlight: "rgba(255, 204, 0, 0.15)",
+  bgGroup: "rgba(107, 179, 240, 0.10)",
+  bgGroupStrong: "rgba(107, 179, 240, 0.18)",
+  bgGlassInset: "rgba(0, 0, 0, 0.22)",
+  bgStickyFade: "linear-gradient(to right, #0a0a0d, rgba(10,10,13,0))",
+  bgStickyFadeReverse: "linear-gradient(to left, #0a0a0d, rgba(10,10,13,0))",
+  bgStickyShadow: "linear-gradient(to right, rgba(0,0,0,0.45), rgba(0,0,0,0))",
+  bgStickyShadowReverse: "linear-gradient(to left, rgba(0,0,0,0.45), rgba(0,0,0,0))",
+  modalBackdropBg: "rgba(0, 0, 0, 0.60)",
+  modalBackdropLight: "rgba(0, 0, 0, 0.42)"
+};
+const AX_LIGHT_BORDERS = {
+  base: "rgba(230, 230, 230, 0.7)",
+  subtle: "rgba(0,0,0,0.06)",
+  strong: "rgba(0,0,0,0.12)"
+};
+const AX_DARK_BORDERS = {
+  base: "rgba(255, 255, 255, 0.12)",
+  subtle: "rgba(255,255,255,0.10)",
+  strong: "rgba(255,255,255,0.20)"
+};
+const AX_LIGHT_SHADOWS = {
+  sm: "0 2px 6px rgba(0, 0, 0, 0.06)",
+  md: "0 5px 16px rgba(0, 0, 0, 0.1)",
+  lg: "0 12px 32px rgba(0, 0, 0, 0.14)",
+  xl: "0 16px 48px rgba(0, 0, 0, 0.18)"
+};
+const AX_DARK_SHADOWS = {
+  sm: "0 2px 6px rgba(0, 0, 0, 0.3)",
+  md: "0 5px 16px rgba(0, 0, 0, 0.4)",
+  lg: "0 12px 32px rgba(0, 0, 0, 0.5)",
+  xl: "0 16px 48px rgba(0, 0, 0, 0.6)"
+};
+const AX_LIGHT_FG_DISABLED = "rgba(60,60,67,0.35)";
+const AX_DARK_FG_DISABLED = "rgba(235,235,245,0.30)";
+const AX_LIGHT_TOOLTIP = {
+  bg: "rgba(255,255,255,0.58)",
+  border: "rgba(0,0,0,0.15)",
+  shadow: "0 2px 12px rgba(0,0,0,0.18)"
+};
+const AX_DARK_TOOLTIP = {
+  bg: "rgba(22,22,28,0.52)",
+  border: "rgba(255,255,255,0.14)",
+  shadow: "0 2px 12px rgba(0,0,0,0.55)"
+};
+
+// Scenery is the body bg under everything. Light scenery carries a faint cool
+// gradient — just enough spatial variation for tier-2/tier-3 glass to "bite".
+// Dark scenery gets a near-black gradient.
+const AX_LIGHT_SCENERY = "linear-gradient(135deg, #ffffff 0%, #eef1f6 45%, #e3e8f1 100%)";
+const AX_DARK_SCENERY = "linear-gradient(135deg, #060609 0%, #0b0d15 50%, #05070f 100%)";
+const AX_LIGHT_TITLE_GRADIENT = "linear-gradient(45deg, #4CAF50, #2196F3)";
+const AX_DARK_TITLE_GRADIENT = "linear-gradient(45deg, #34C759, #0A84FF)";
+const AX_BG = {
+  base: "var(--ax-bg)",
+  subtle: "var(--ax-bg-subtle)",
+  card: "var(--ax-bg-card)",
+  cardAlt: "var(--ax-bg-card-alt)",
+  chip: "var(--ax-bg-chip)",
+  modal: "var(--ax-bg-modal)",
+  input: "var(--ax-bg-input)",
+  inputSolid: "var(--ax-bg-input-solid)",
+  toolbar: "var(--ax-bg-toolbar)",
+  panel: "var(--ax-bg-panel)",
+  table: "var(--ax-bg-table)",
+  tableHead: "var(--ax-bg-table-head)",
+  rowHover: "var(--ax-bg-row-hover)",
+  highlight: "var(--ax-bg-highlight)",
+  tooltip: "var(--ax-bg-tooltip)"
+};
+const AX_BORDER = {
+  default: "var(--ax-border)",
+  subtle: "var(--ax-border-subtle)",
+  strong: "var(--ax-border-strong)",
+  tooltip: "var(--ax-border-tooltip)"
+};
+;// ./src/frontend/components/core/axTokens/glass.ts
+// Glass tier definitions and tonal washes. All alpha-tinted variants are
+// derived from raw light/dark via axColorWithAlpha so changing a palette
+// value automatically propagates here.
 
 
-function addAnimationStyles() {
-  injectStylesheet("dock-animation-styles", `
-        @keyframes fadeIn {
-            0% { opacity: 0; }
-            100% { opacity: 1; }
-        }
-        
-        @keyframes slideIn {
-            0% { transform: translateY(20px); opacity: 0; }
-            100% { transform: translateY(0); opacity: 1; }
-        }
-        
-        @keyframes bounce {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        @keyframes iosBounce {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.3); }
-        }
-        
-        @keyframes pulseIndicator {
-            from { transform: translateX(-50%) scale(0.8); opacity: 0.7; }
-            to { transform: translateX(-50%) scale(1.2); opacity: 1; }
-        }
-
-        @keyframes dockStreamerFlash {
-            0% { background-color: var(--ios-orange); }
-            100% { background-color: var(--dock-streamer-target, var(--ios-gray)); }
-        }
-        
-        .ios-sort-animation {
-            animation: iosBounce 0.3s ease;
-        }
-
-        @keyframes flashUpdateGreen {
-            0% { background-color: rgba(70, 210, 70, 0); }
-            12% { background-color: rgba(70, 210, 70, 0.16); }
-            100% { background-color: rgba(70, 210, 70, 0); }
-        }
-
-        @keyframes flashUpdateRed {
-            0% { background-color: rgba(217, 70, 70, 0); }
-            12% { background-color: rgba(217, 70, 70, 0.16); }
-            100% { background-color: rgba(217, 70, 70, 0); }
-        }
-
-        .flash-update-green {
-            animation: flashUpdateGreen 0.6s ease;
-        }
-
-        .flash-update-red {
-            animation: flashUpdateRed 0.6s ease;
-        }
-    `);
+const AX_LIGHT_GLASS = {
+  tier1: {
+    blur: "0px",
+    saturate: "100%",
+    brightness: "1",
+    bg: "#f3f3f5",
+    border: "rgba(0,0,0,0.06)",
+    shadow: "0 1px 2px rgba(15,30,60,0.05), 0 0 0 0.5px rgba(15,30,60,0.04)",
+    edge: "inset 0 1px 0 rgba(255,255,255,0.78)"
+  },
+  tier2: {
+    blur: "10px",
+    saturate: "140%",
+    brightness: "1.02",
+    bg: "rgba(250,250,252,0.50)",
+    border: "rgba(0,0,0,0.08)",
+    shadow: "0 6px 18px rgba(15,30,60,0.10), 0 1px 3px rgba(15,30,60,0.06)",
+    edge: "inset 0 1px 0 rgba(255,255,255,0.85)"
+  },
+  tier3: {
+    blur: "14px",
+    saturate: "160%",
+    brightness: "1.03",
+    bg: "rgba(248,249,252,0.42)",
+    border: "rgba(0,0,0,0.10)",
+    shadow: "0 18px 44px rgba(15,30,60,0.18), 0 2px 6px rgba(15,30,60,0.08)",
+    edge: "inset 0 1px 0 rgba(255,255,255,0.62)"
+  }
+};
+const AX_DARK_GLASS = {
+  tier1: {
+    blur: "0px",
+    saturate: "100%",
+    brightness: "1",
+    bg: "#141418",
+    border: "rgba(255,255,255,0.06)",
+    shadow: "0 1px 0 rgba(0,0,0,0.40), 0 0 0 0.5px rgba(0,0,0,0.30)",
+    edge: "inset 0 1px 0 rgba(255,255,255,0.04)"
+  },
+  tier2: {
+    blur: "10px",
+    saturate: "140%",
+    brightness: "1.02",
+    bg: "rgba(20,20,26,0.44)",
+    border: "rgba(255,255,255,0.10)",
+    shadow: "0 14px 34px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.35)",
+    edge: "inset 0 1px 0 rgba(255,255,255,0.07)"
+  },
+  tier3: {
+    blur: "14px",
+    saturate: "125%",
+    brightness: "1.02",
+    bg: "rgba(22,22,26,0.34)",
+    border: "rgba(255,255,255,0.12)",
+    shadow: "0 24px 60px rgba(0,0,0,0.72), 0 2px 10px rgba(0,0,0,0.40)",
+    edge: "inset 0 1px 0 rgba(255,255,255,0.10)"
+  }
+};
+const AX_LIGHT_GLASS_3_HOVER = "rgba(255,255,255,0.42)";
+const AX_DARK_GLASS_3_HOVER = "rgba(255,255,255,0.18)";
+function tintGradient(raw, topAlpha, bottomAlpha) {
+  return `linear-gradient(180deg, ${axColorWithAlpha(raw, topAlpha)}, ${axColorWithAlpha(raw, bottomAlpha)})`;
 }
-function addGlobalStyle() {
-  const globalCSS = `
-        :focus-visible {
-            outline: 2px solid rgba(0,122,255,0.35);
-            outline-offset: 2px;
-            border-radius: 6px;
-        }
+const AX_LIGHT_GLASS_TINTS = {
+  positive: tintGradient(AX_LIGHT_RAW.positive, 0.1, 0.04),
+  negative: tintGradient(AX_LIGHT_RAW.negative, 0.1, 0.04),
+  info: tintGradient(AX_LIGHT_RAW.info, 0.1, 0.04),
+  warn: tintGradient(AX_LIGHT_RAW.neutral, 0.1, 0.04)
+};
+const AX_DARK_GLASS_TINTS = {
+  positive: tintGradient(AX_DARK_RAW.positive, 0.16, 0.06),
+  negative: tintGradient(AX_DARK_RAW.negative, 0.16, 0.06),
+  info: tintGradient(AX_DARK_RAW.info, 0.16, 0.06),
+  warn: tintGradient(AX_DARK_RAW.neutral, 0.16, 0.06)
+};
+const AX_LIGHT_TONE_BG = {
+  positive: axColorWithAlpha(AX_LIGHT_RAW.positive, 0.12),
+  negative: axColorWithAlpha(AX_LIGHT_RAW.negative, 0.12),
+  neutral: axColorWithAlpha(AX_LIGHT_RAW.neutral, 0.12),
+  info: axColorWithAlpha(AX_LIGHT_RAW.info, 0.12),
+  muted: axColorWithAlpha(AX_LIGHT_RAW.muted, 0.12)
+};
+const AX_DARK_TONE_BG = {
+  positive: axColorWithAlpha(AX_DARK_RAW.positive, 0.18),
+  negative: axColorWithAlpha(AX_DARK_RAW.negative, 0.18),
+  neutral: axColorWithAlpha(AX_DARK_RAW.neutral, 0.18),
+  info: axColorWithAlpha(AX_DARK_RAW.info, 0.18),
+  muted: axColorWithAlpha(AX_DARK_RAW.muted, 0.18)
+};
+const AX_LIGHT_TONE_BORDER = {
+  positive: axColorWithAlpha(AX_LIGHT_RAW.positive, 0.28),
+  negative: axColorWithAlpha(AX_LIGHT_RAW.negative, 0.3),
+  neutral: axColorWithAlpha(AX_LIGHT_RAW.neutral, 0.28),
+  info: axColorWithAlpha(AX_LIGHT_RAW.info, 0.28),
+  muted: axColorWithAlpha(AX_LIGHT_RAW.muted, 0.24)
+};
+const AX_DARK_TONE_BORDER = {
+  positive: axColorWithAlpha(AX_DARK_RAW.positive, 0.35),
+  negative: axColorWithAlpha(AX_DARK_RAW.negative, 0.35),
+  neutral: axColorWithAlpha(AX_DARK_RAW.neutral, 0.35),
+  info: axColorWithAlpha(AX_DARK_RAW.info, 0.35),
+  muted: axColorWithAlpha(AX_DARK_RAW.muted, 0.3)
+};
+const AX_LIGHT_TONE_SOFT = {
+  positive: axColorWithAlpha(AX_LIGHT_RAW.positive, 0.06),
+  negative: axColorWithAlpha(AX_LIGHT_RAW.negative, 0.06),
+  neutral: axColorWithAlpha(AX_LIGHT_RAW.neutral, 0.06),
+  info: axColorWithAlpha(AX_LIGHT_RAW.info, 0.06),
+  muted: axColorWithAlpha(AX_LIGHT_RAW.muted, 0.06)
+};
+const AX_DARK_TONE_SOFT = {
+  positive: axColorWithAlpha(AX_DARK_RAW.positive, 0.12),
+  negative: axColorWithAlpha(AX_DARK_RAW.negative, 0.12),
+  neutral: axColorWithAlpha(AX_DARK_RAW.neutral, 0.12),
+  info: axColorWithAlpha(AX_DARK_RAW.info, 0.12),
+  muted: axColorWithAlpha(AX_DARK_RAW.muted, 0.12)
+};
+const AX_LIGHT_CRITICAL_SOFT_BG = axColorWithAlpha(AX_LIGHT_RAW.critical, 0.06);
+const AX_DARK_CRITICAL_SOFT_BG = axColorWithAlpha(AX_DARK_RAW.critical, 0.12);
+const AX_LIGHT_CRITICAL_BORDER = axColorWithAlpha(AX_LIGHT_RAW.critical, 0.25);
+const AX_DARK_CRITICAL_BORDER = axColorWithAlpha(AX_DARK_RAW.critical, 0.35);
+;// ./src/frontend/components/core/axTokens/motion.ts
+// Motion tokens — durations + easing curves.
 
-        input:not([type=checkbox]):not([type=radio]):focus,
-        select:focus,
-        textarea:focus {
-            border-color: var(--ios-blue) !important;
-            box-shadow: 0 0 0 3px rgba(0,122,255,0.1);
-            outline: none;
-        }
+const AX_DURATION = {
+  instant: "0ms",
+  fast: "150ms",
+  medium: "240ms",
+  slow: "320ms",
+  slower: "480ms"
+};
+const AX_EASE = {
+  out: "cubic-bezier(0.22, 1, 0.36, 1)",
+  inOut: "cubic-bezier(0.4, 0, 0.2, 1)",
+  in: "cubic-bezier(0.4, 0, 1, 1)",
+  spring: "cubic-bezier(0.16, 1.11, 0.3, 1.02)",
+  linear: "linear"
+};
+function axTransition(props, dur = "fast", ease = "out") {
+  return `${props} ${AX_DURATION[dur]} ${AX_EASE[ease]}`;
+}
+const AX_SHADOW = {
+  none: "none",
+  sm: "var(--ax-shadow-sm)",
+  md: "var(--ax-shadow-md)",
+  lg: "var(--ax-shadow-lg)",
+  xl: "var(--ax-shadow-xl)"
+};
+;// ./src/frontend/components/core/axTokens/radius.ts
+// Border-radius scale.
 
-        input:disabled, select:disabled, textarea:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
+const AX_RADIUS = {
+  xs: "3px",
+  sm: "5px",
+  md: "7px",
+  lg: "9px",
+  xl: "11px",
+  "2xl": "13px",
+  pill: "999px",
+  circle: "50%"
+};
+function axRadius(v) {
+  return AX_RADIUS[v] ?? v;
+}
+;// ./src/frontend/components/core/axTokens/typography.ts
+// Typography tokens — font stacks + size/weight/line-height/letter-spacing scales.
+//
+// `body` is the default UI font (system stack) used for all chrome and prose.
+// `mono` is the monospace stack reserved for tabular numbers, code blocks,
+// and any surface that explicitly opts in via `var(--ax-font-mono)`.
+
+const AX_FONT = {
+  body: "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif",
+  mono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace"
+};
+// Half-pixel sizes are intentional — recorder.user.js uses 9.5/10.5/12.5 to
+// hit a denser visual rhythm than integer-only scales. Modern browsers render
+// these via subpixel antialiasing and the difference is visible.
+const AX_FSIZE = {
+  "2xs": "9.5px",
+  xs: "10.5px",
+  sm: "11px",
+  md: "12px",
+  lg: "12.5px",
+  menu: "13px",
+  xl: "14px",
+  "2xl": "16px",
+  "3xl": "19px",
+  "4xl": "23px"
+};
+const AX_FWEIGHT = {
+  light: 300,
+  normal: 400,
+  medium: 500,
+  semibold: 600,
+  bold: 700,
+  heavy: 800
+};
+const AX_LH = {
+  none: "1",
+  tight: "1.2",
+  snug: "1.3",
+  normal: "1.35",
+  relaxed: "1.4",
+  loose: "1.5"
+};
+const AX_LETTER = {
+  tighter: "-0.5px",
+  tight: "-0.2px",
+  normal: "0",
+  wide: "0.2px",
+  wider: "0.4px",
+  widest: "0.6px"
+};
+;// ./src/frontend/components/core/axTokens/zIndex.ts
+// Z-index layer scale — mirrors CSS custom properties.
+// Three-zone architecture: T2 (page content), T1 (nav), T0 (body portals).
+
+const AX_Z = {
+  // T2 — page content
+  tableHeader: 10,
+  tableStickyCell: 30,
+  tableStickyHeader: 32,
+  stickyNav: 100,
+  stickyControl: 110,
+  stickyState: 120,
+  pagePopover: 210,
+  // T1 — nav-bar chrome
+  navDropdown: 200,
+  // T0 — body portals, position:fixed
+  alert: 100_000,
+  notification: 100_100,
+  dock: 100_200,
+  floatingPanel: 100_300,
+  floatingToggle: 100_400,
+  modalBackdrop: 100_500,
+  modalContent: 100_600,
+  tooltip: 100_700
+};
+;// ./src/frontend/components/core/axTheme/cssVars.ts
+// CSS custom property emission — single source for theme tokens.
+//
+// Emits two namespaces:
+//   1. --ax-*       — modern AlexQuant-aligned tokens
+//   2. --ios-* / --lg-* / --glass-*  — legacy aliases that point to the
+//      matching --ax-* values, so the existing codebase picks up the new
+//      style automatically and stays theme-aware.
+//
+// Light values render in `:root`; dark overrides render in `body.theme-dark`.
+
+
+
+
+
+
+
+
+const LIGHT = {
+  palette: AX_LIGHT_RAW,
+  surfaces: AX_LIGHT_SURFACES,
+  borders: AX_LIGHT_BORDERS,
+  shadows: AX_LIGHT_SHADOWS,
+  glass: AX_LIGHT_GLASS,
+  glass3Hover: AX_LIGHT_GLASS_3_HOVER,
+  glassTints: AX_LIGHT_GLASS_TINTS,
+  toneBg: AX_LIGHT_TONE_BG,
+  toneBorder: AX_LIGHT_TONE_BORDER,
+  toneSoft: AX_LIGHT_TONE_SOFT,
+  criticalSoftBg: AX_LIGHT_CRITICAL_SOFT_BG,
+  criticalBorder: AX_LIGHT_CRITICAL_BORDER,
+  tooltip: AX_LIGHT_TOOLTIP,
+  fgDisabled: AX_LIGHT_FG_DISABLED,
+  scenery: AX_LIGHT_SCENERY,
+  titleGradient: AX_LIGHT_TITLE_GRADIENT
+};
+const DARK = {
+  palette: AX_DARK_RAW,
+  surfaces: AX_DARK_SURFACES,
+  borders: AX_DARK_BORDERS,
+  shadows: AX_DARK_SHADOWS,
+  glass: AX_DARK_GLASS,
+  glass3Hover: AX_DARK_GLASS_3_HOVER,
+  glassTints: AX_DARK_GLASS_TINTS,
+  toneBg: AX_DARK_TONE_BG,
+  toneBorder: AX_DARK_TONE_BORDER,
+  toneSoft: AX_DARK_TONE_SOFT,
+  criticalSoftBg: AX_DARK_CRITICAL_SOFT_BG,
+  criticalBorder: AX_DARK_CRITICAL_BORDER,
+  tooltip: AX_DARK_TOOLTIP,
+  fgDisabled: AX_DARK_FG_DISABLED,
+  scenery: AX_DARK_SCENERY,
+  titleGradient: AX_DARK_TITLE_GRADIENT
+};
+function emitGlassTier(prefix, tier) {
+  return [`${prefix}-blur: ${tier.blur};`, `${prefix}-saturate: ${tier.saturate};`, `${prefix}-brightness: ${tier.brightness};`, `${prefix}-bg: ${tier.bg};`, `${prefix}-border: ${tier.border};`, `${prefix}-shadow: ${tier.shadow};`, `${prefix}-edge: ${tier.edge};`].join("\n      ");
+}
+function emitTheme(t) {
+  return `
+      /* ─── Palette (saturated accents) ─── */
+      --ax-blue: ${t.palette.blue};
+      --ax-dark-blue: ${t.palette.darkBlue};
+      --ax-green: ${t.palette.green};
+      --ax-orange: ${t.palette.orange};
+      --ax-red: ${t.palette.red};
+      --ax-gray: ${t.palette.gray};
+      --ax-cyan: ${t.palette.cyan};
+      --ax-purple: ${t.palette.purple};
+      --ax-yellow: ${t.palette.yellow};
+
+      /* ─── P&L sign (desaturated — for dashboards / tables) ─── */
+      --ax-positive: ${t.palette.positive};
+      --ax-negative: ${t.palette.negative};
+
+      /* ─── Critical (saturated alert red — P0 alerts only) ─── */
+      --ax-critical: ${t.palette.critical};
+      --ax-critical-soft-bg: ${t.criticalSoftBg};
+      --ax-critical-border: ${t.criticalBorder};
+
+      /* ─── Foreground ─── */
+      --ax-fg: ${t.palette.fg};
+      --ax-fg-2: ${t.palette.fg2};
+      --ax-fg-muted: ${t.palette.fgMuted};
+      --ax-fg-disabled: ${t.fgDisabled};
+      --ax-table-head: ${t.palette.tableHeader};
+
+      /* ─── Background surfaces ─── */
+      --ax-bg: ${t.surfaces.bg};
+      --ax-bg-subtle: ${t.surfaces.bgSubtle};
+      --ax-bg-card: ${t.surfaces.bgCard};
+      --ax-bg-card-alt: ${t.surfaces.bgCardAlt};
+      --ax-bg-chip: ${t.surfaces.bgChip};
+      --ax-bg-modal: ${t.surfaces.bgModal};
+      --ax-bg-input: ${t.surfaces.bgInput};
+      --ax-bg-input-solid: ${t.surfaces.bgInputSolid};
+      --ax-bg-toolbar: ${t.surfaces.bgToolbar};
+      --ax-bg-panel: ${t.surfaces.bgPanel};
+      --ax-bg-table: ${t.surfaces.bgTable};
+      --ax-bg-table-head: ${t.surfaces.bgTableHead};
+      --ax-bg-row-hover: ${t.surfaces.bgRowHover};
+      --ax-bg-highlight: ${t.surfaces.bgHighlight};
+      --ax-bg-group: ${t.surfaces.bgGroup};
+      --ax-bg-group-strong: ${t.surfaces.bgGroupStrong};
+      --ax-bg-glass-inset: ${t.surfaces.bgGlassInset};
+      --ax-bg-sticky-fade: ${t.surfaces.bgStickyFade};
+      --ax-bg-sticky-fade-reverse: ${t.surfaces.bgStickyFadeReverse};
+      --ax-bg-sticky-shadow: ${t.surfaces.bgStickyShadow};
+      --ax-bg-sticky-shadow-reverse: ${t.surfaces.bgStickyShadowReverse};
+      --ax-modal-backdrop-bg: ${t.surfaces.modalBackdropBg};
+      --ax-modal-backdrop-light: ${t.surfaces.modalBackdropLight};
+
+      /* ─── Borders ─── */
+      --ax-border: ${t.borders.base};
+      --ax-border-subtle: ${t.borders.subtle};
+      --ax-border-strong: ${t.borders.strong};
+
+      /* ─── Shadows ─── */
+      --ax-shadow-sm: ${t.shadows.sm};
+      --ax-shadow-md: ${t.shadows.md};
+      --ax-shadow-lg: ${t.shadows.lg};
+      --ax-shadow-xl: ${t.shadows.xl};
+
+      /* ─── Tone tints (containers) ─── */
+      --ax-tone-positive-bg: ${t.toneBg.positive};
+      --ax-tone-positive-border: ${t.toneBorder.positive};
+      --ax-tone-negative-bg: ${t.toneBg.negative};
+      --ax-tone-negative-border: ${t.toneBorder.negative};
+      --ax-tone-neutral-bg: ${t.toneBg.neutral};
+      --ax-tone-neutral-border: ${t.toneBorder.neutral};
+      --ax-tone-info-bg: ${t.toneBg.info};
+      --ax-tone-info-border: ${t.toneBorder.info};
+      --ax-tone-muted-bg: ${t.toneBg.muted};
+      --ax-tone-muted-border: ${t.toneBorder.muted};
+
+      /* ─── Tone soft tints (chip / row washes) ─── */
+      --ax-tone-positive-soft-bg: ${t.toneSoft.positive};
+      --ax-tone-negative-soft-bg: ${t.toneSoft.negative};
+      --ax-tone-neutral-soft-bg: ${t.toneSoft.neutral};
+      --ax-tone-info-soft-bg: ${t.toneSoft.info};
+      --ax-tone-muted-soft-bg: ${t.toneSoft.muted};
+
+      /* ─── Liquid-glass tiers ─── */
+      ${emitGlassTier("--ax-glass-1", t.glass.tier1)}
+
+      ${emitGlassTier("--ax-glass-2", t.glass.tier2)}
+
+      ${emitGlassTier("--ax-glass-3", t.glass.tier3)}
+
+      --ax-glass-3-hover: ${t.glass3Hover};
+
+      /* ─── Tinted glass washes ─── */
+      --ax-glass-tint-positive: ${t.glassTints.positive};
+      --ax-glass-tint-negative: ${t.glassTints.negative};
+      --ax-glass-tint-info: ${t.glassTints.info};
+      --ax-glass-tint-warn: ${t.glassTints.warn};
+
+      /* ─── App-shell scenery + title gradient ─── */
+      --ax-app-scenery: ${t.scenery};
+      --ax-title-gradient: ${t.titleGradient};
+
+      /* ─── Tooltip surface ─── */
+      --ax-bg-tooltip: ${t.tooltip.bg};
+      --ax-border-tooltip: ${t.tooltip.border};
+      --ax-shadow-tooltip: ${t.tooltip.shadow};
+
+      /* ─── Legacy --ios-* aliases (back-compat with existing code) ─── */
+      --ios-blue: var(--ax-blue);
+      --ios-dark-blue: var(--ax-dark-blue);
+      --ios-green: var(--ax-green);
+      --ios-orange: var(--ax-orange);
+      --ios-red: var(--ax-red);
+      --ios-gray: var(--ax-gray);
+      --ios-cyan: var(--ax-cyan);
+      --ios-purple: var(--ax-purple);
+
+      --ios-text-primary: var(--ax-fg);
+      --ios-text-secondary: var(--ax-fg-2);
+      --ios-light-gray: ${t.toneBg.muted};
+
+      --ios-background: var(--ax-bg);
+      --ios-secondary-bg: var(--ax-bg-subtle);
+      --ios-border: var(--ax-border);
+      --ios-table-header: var(--ax-table-head);
+
+      --ios-shadow-sm: var(--ax-shadow-sm);
+      --ios-shadow-md: var(--ax-shadow-md);
+      --ios-shadow: var(--ax-shadow-lg);
+
+      --ios-status-active-bg: var(--ax-tone-positive-bg);
+      --ios-status-pending-bg: var(--ax-tone-neutral-bg);
+      --ios-status-inactive-bg: var(--ax-tone-negative-bg);
+
+      --ios-table-row-hover: var(--ax-bg-row-hover);
+
+      --ios-highlight-bg: var(--ax-bg-highlight);
+      --ios-highlight-border: ${t.palette.yellow};
+      --ios-highlight-hover: var(--ax-bg-highlight);
+
+      --ios-header-bg: var(--ax-bg-table-head);
+      --ios-title-gradient: var(--ax-title-gradient);
+
+      /* ─── Legacy --lg-* (liquid-glass) aliases ─── */
+      --lg-border: var(--ax-glass-2-border);
+      --lg-shadow: var(--ax-glass-2-shadow);
+      --lg-shadow-strong: var(--ax-shadow-lg);
+      --lg-highlight-1: ${t.glass.tier2.edge.replace("inset 0 1px 0 ", "")};
+      --lg-highlight-2: ${t.glass.tier3.edge.replace("inset 0 1px 0 ", "")};
+
+      /* ─── Legacy --glass-N-* aliases ─── */
+      --glass-1-blur: var(--ax-glass-1-blur);
+      --glass-1-saturate: var(--ax-glass-1-saturate);
+      --glass-1-bg: var(--ax-glass-1-bg);
+      --glass-1-border: var(--ax-glass-1-border);
+      --glass-1-shadow: var(--ax-glass-1-shadow);
+
+      --glass-2-blur: var(--ax-glass-2-blur);
+      --glass-2-saturate: var(--ax-glass-2-saturate);
+      --glass-2-bg: var(--ax-glass-2-bg);
+      --glass-2-bg-gradient: var(--ax-glass-2-bg);
+      --glass-2-border: var(--ax-glass-2-border);
+      --glass-2-shadow: var(--ax-glass-2-shadow);
+
+      --glass-3-blur: var(--ax-glass-3-blur);
+      --glass-3-saturate: var(--ax-glass-3-saturate);
+      --glass-3-bg: var(--ax-glass-3-bg);
+      --glass-3-inset-shadow: var(--ax-glass-3-edge);`;
+}
+function emitConstants() {
+  return `
+      /* ─── Motion (durations + easings) ─── */
+      --ax-ease-out: ${AX_EASE.out};
+      --ax-ease-in-out: ${AX_EASE.inOut};
+      --ax-ease-spring: ${AX_EASE.spring};
+      --ax-dur-fast: ${AX_DURATION.fast};
+      --ax-dur-medium: ${AX_DURATION.medium};
+      --ax-dur-slow: ${AX_DURATION.slow};
+
+      /* ─── Radius scale ─── */
+      --ax-radius-xs: ${AX_RADIUS.xs};
+      --ax-radius-sm: ${AX_RADIUS.sm};
+      --ax-radius-md: ${AX_RADIUS.md};
+      --ax-radius-lg: ${AX_RADIUS.lg};
+      --ax-radius-xl: ${AX_RADIUS.xl};
+      --ax-radius-2xl: ${AX_RADIUS["2xl"]};
+      --ax-radius-pill: ${AX_RADIUS.pill};
+
+      /* ─── Typography ─── */
+      --ax-font-body: ${AX_FONT.body};
+      --ax-font-mono: ${AX_FONT.mono};
+
+      /* ─── Liquid-glass mouse tracking (defaults; live values written by
+             attachLiquidGlassRim() in liquidGlass.ts). Defining defaults
+             here keeps calc()-based rim gradients valid before the first
+             pointer event lands. ─── */
+      --ax-lg-mx: 0;
+      --ax-lg-mx-abs: 0;
+      --ax-lg-my: 0;
+      --ax-lg-hover: 0;
+      --ax-fs-2xs:  ${AX_FSIZE["2xs"]};
+      --ax-fs-xs:   ${AX_FSIZE.xs};
+      --ax-fs-sm:   ${AX_FSIZE.sm};
+      --ax-fs-md:   ${AX_FSIZE.md};
+      --ax-fs-lg:   ${AX_FSIZE.lg};
+      --ax-fs-menu: ${AX_FSIZE.menu};
+      --ax-fs-xl:   ${AX_FSIZE.xl};
+      --ax-fs-2xl:  ${AX_FSIZE["2xl"]};
+      --ax-fs-3xl:  ${AX_FSIZE["3xl"]};
+      --ax-fs-4xl:  ${AX_FSIZE["4xl"]};
+      --ax-fw-light:    ${AX_FWEIGHT.light};
+      --ax-fw-normal:   ${AX_FWEIGHT.normal};
+      --ax-fw-medium:   ${AX_FWEIGHT.medium};
+      --ax-fw-semibold: ${AX_FWEIGHT.semibold};
+      --ax-fw-bold:     ${AX_FWEIGHT.bold};
+      --ax-fw-heavy:    ${AX_FWEIGHT.heavy};
+      --ax-lh-none:    ${AX_LH.none};
+      --ax-lh-tight:   ${AX_LH.tight};
+      --ax-lh-snug:    ${AX_LH.snug};
+      --ax-lh-normal:  ${AX_LH.normal};
+      --ax-lh-relaxed: ${AX_LH.relaxed};
+      --ax-lh-loose:   ${AX_LH.loose};
+      --ax-letter-tighter: ${AX_LETTER.tighter};
+      --ax-letter-tight:   ${AX_LETTER.tight};
+      --ax-letter-normal:  ${AX_LETTER.normal};
+      --ax-letter-wide:    ${AX_LETTER.wide};
+      --ax-letter-wider:   ${AX_LETTER.wider};
+      --ax-letter-widest:  ${AX_LETTER.widest};
+
+      /* ─── Z-index ─── */
+      --ax-z-table-header: ${AX_Z.tableHeader};
+      --ax-z-table-sticky-cell: ${AX_Z.tableStickyCell};
+      --ax-z-table-sticky-header: ${AX_Z.tableStickyHeader};
+      --ax-z-sticky-nav: ${AX_Z.stickyNav};
+      --ax-z-sticky-control: ${AX_Z.stickyControl};
+      --ax-z-sticky-state: ${AX_Z.stickyState};
+      --ax-z-nav-dropdown: ${AX_Z.navDropdown};
+      --ax-z-page-popover: ${AX_Z.pagePopover};
+      --ax-z-alert: ${AX_Z.alert};
+      --ax-z-notification: ${AX_Z.notification};
+      --ax-z-dock: ${AX_Z.dock};
+      --ax-z-floating-panel: ${AX_Z.floatingPanel};
+      --ax-z-floating-toggle: ${AX_Z.floatingToggle};
+      --ax-z-modal-backdrop: ${AX_Z.modalBackdrop};
+      --ax-z-modal-content: ${AX_Z.modalContent};
+      --ax-z-tooltip: ${AX_Z.tooltip};
+
+      /* ─── Legacy z-index aliases ─── */
+      --z-table-header: var(--ax-z-table-header);
+      --z-table-sticky-cell: var(--ax-z-table-sticky-cell);
+      --z-table-sticky-header: var(--ax-z-table-sticky-header);
+      --z-sticky-nav: var(--ax-z-sticky-nav);
+      --z-sticky-control: var(--ax-z-sticky-control);
+      --z-sticky-state: var(--ax-z-sticky-state);
+      --z-nav-dropdown: var(--ax-z-nav-dropdown);
+      --z-page-popover: var(--ax-z-page-popover);
+      --z-alert: var(--ax-z-alert);
+      --z-notification: var(--ax-z-notification);
+      --z-dock: var(--ax-z-dock);
+      --z-floating-panel: var(--ax-z-floating-panel);
+      --z-floating-toggle: var(--ax-z-floating-toggle);
+      --z-modal-backdrop: var(--ax-z-modal-backdrop);
+      --z-modal-content: var(--ax-z-modal-content);
+      --z-tooltip: var(--ax-z-tooltip);
+
+      /* ─── Legacy non-themed shape/font/anim aliases ─── */
+      --ios-radius: var(--ax-radius-2xl);
+      --ios-table-border-radius: var(--ax-radius-md);
+      --ios-font: var(--ax-font-body);
+
+      --ios-anim-fast: var(--ax-dur-fast);
+      --ios-anim-medium: var(--ax-dur-medium);
+      --ios-anim-slow: var(--ax-dur-slow);
+
+      --ios-table-cell-padding: 6px 10px;
+      --ios-table-header-font-size: var(--ax-fs-sm);
+      --ios-table-cell-font-size: var(--ax-fs-md);
+      --ios-empty-padding: 60px 20px;
+
+      /* ─── Legacy --lg-alpha aliases (kept for back-compat with badge etc.) ─── */
+      --lg-alpha-1: 0.80;
+      --lg-alpha-2: 0.65;
+      --lg-saturate: 140%;
+      --lg-blur: 16px;`;
+}
+function axCssVars() {
+  return `
     :root {
-        --lg-alpha-1: .80;
-        --lg-alpha-2: .65;
-        --lg-saturate: 140%;
-        --lg-blur: 16px;
-        --lg-border: rgba(255,255,255,.22);
-        --lg-shadow: 0 8px 24px rgba(12,38,73,.10);
-        --lg-highlight-1: rgba(255,255,255,.55);
-        --lg-highlight-2: rgba(255,255,255,.25);
+      color-scheme: light;
+${emitConstants()}
+${emitTheme(LIGHT)}
+    }
 
-        --ios-blue: #007AFF;
-        --ios-dark-blue: #0062CC;
-        --ios-green: rgb(32, 169, 69);
-        --ios-orange: rgb(215, 129, 0);
-        --ios-red: rgb(215, 49, 38);
-        --ios-gray: rgb(142, 142, 147);
+    body.theme-dark {
+      color-scheme: dark;${emitTheme(DARK)}
+    }
+  `;
+}
+;// ./src/frontend/components/core/axTheme/baseCss.ts
+// Base reset / utilities / presets / animations / app-shell CSS.
+// All values come from --ax-* CSS vars so the entire stylesheet is theme-aware.
 
-        --ios-background: rgba(255, 255, 255, 0.8);
-        --ios-secondary-bg: rgba(249, 249, 251, 0.6);
-        --ios-light-gray: rgba(142, 142, 147, 0.1);
+const axResetCss = `
+    :focus-visible {
+      outline: 2px solid rgba(10,132,255,0.35);
+      outline-offset: 2px;
+      border-radius: var(--ax-radius-md);
+    }
 
-        --ios-text-primary: #1c1c1e;
-    --ios-text-secondary: #3a3a3c;
+    input:not([type=checkbox]):not([type=radio]):focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--ax-blue) !important;
+      box-shadow: 0 0 0 3px rgba(10,132,255,0.1);
+      outline: none;
+    }
 
-        --ios-border: rgba(230, 230, 230, 0.7);
-        --ios-radius: 18px;
-        --ios-table-border-radius: 8px;
-        --ios-table-header: #1b5fa7;
-        --ios-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    input:disabled, select:disabled, textarea:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
 
-        --ios-title-gradient: linear-gradient(45deg, #4CAF50, #2196F3);
-        --ios-button-gradient: linear-gradient(45deg, rgb(84,99,86), rgb(27,66,29));
-        --ios-header-bg: linear-gradient(to right, rgba(245, 245, 247, 0.9), rgba(235, 235, 242, 0.85));
+    input:focus-visible,
+    textarea:focus-visible,
+    button:focus-visible,
+    .ios-table th.sortable:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
+    }
 
-        --ios-shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.06);
-        --ios-shadow-md: 0 5px 16px rgba(0, 0, 0, 0.1);
-        --ios-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
+    ::-webkit-scrollbar-corner { background: transparent; }
+    body.theme-dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); }
+    body.theme-dark ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.32); }
 
-        --ios-anim-fast: 0.2s;
-        --ios-anim-medium: 0.3s;
-        --ios-anim-slow: 0.5s;
+    /* Button press feedback */
+    button:active:not(:disabled) {
+      transform: scale(0.97);
+      filter: brightness(0.92);
+    }
+    button, [role="button"] { transition: all 0.15s ease; }
 
-        --ios-status-active-bg: rgba(52, 199, 89, 0.15);
-        --ios-status-pending-bg: rgba(215, 129, 0, 0.15);
-        --ios-status-inactive-bg: rgba(255, 59, 48, 0.15);
+    /* Theme transition */
+    .theme-transitioning,
+    .theme-transitioning *,
+    .theme-transitioning *::before,
+    .theme-transitioning *::after {
+      transition:
+        background-color 0.3s ease,
+        color 0.3s ease,
+        border-color 0.3s ease,
+        box-shadow 0.3s ease,
+        background 0.3s ease !important;
+    }
 
-    --ios-table-cell-padding: 6px 10px;
-    --ios-table-row-hover: rgba(0, 0, 0, 0.04);
-    --ios-table-header-font-size: 11px;
-    --ios-table-cell-font-size: 12.5px;
+    /* Native form coherence */
+    body.theme-dark select, body.theme-dark option, body.theme-dark optgroup {
+      color-scheme: dark;
+    }
+    body.theme-dark option, body.theme-dark optgroup {
+      background-color: #2c2c2e;
+      color: var(--ax-fg);
+    }
+    body.theme-dark input:not([type=checkbox]):not([type=radio]),
+    body.theme-dark select,
+    body.theme-dark textarea {
+      color: var(--ax-fg);
+      background-color: var(--ax-bg-input);
+    }
+    body.theme-dark ::placeholder {
+      color: var(--ax-fg-2);
+      opacity: 0.7;
+    }
 
-        --ios-highlight-bg: rgba(255, 204, 0, 0.2);
-        --ios-highlight-border: rgba(255, 204, 0, 0.8);
-        --ios-highlight-hover: rgba(255, 204, 0, 0.25);
+    /* ─── Defensive overrides for legacy inline-style hardcoded surfaces ───
+       Catches the common patterns embedded in older renderers' styleString
+       values where translucent white backgrounds were used directly. In
+       dark mode those would otherwise punch through as bright white panels
+       on a dark canvas. */
+    body.theme-dark [style*="background: rgba(255, 255, 255"],
+    body.theme-dark [style*="background: rgba(255,255,255"],
+    body.theme-dark [style*="background:rgba(255,255,255"],
+    body.theme-dark [style*="background:rgba(255, 255, 255"],
+    body.theme-dark [style*="background-color: rgba(255, 255, 255"],
+    body.theme-dark [style*="background-color: rgba(255,255,255"],
+    body.theme-dark [style*="background-color:rgba(255,255,255"],
+    body.theme-dark [style*="background: rgb(255, 255, 255)"],
+    body.theme-dark [style*="background: rgb(255,255,255)"],
+    body.theme-dark [style*="background:rgb(255,255,255)"],
+    body.theme-dark [style*="background: #fff"],
+    body.theme-dark [style*="background:#fff"],
+    body.theme-dark [style*="background-color: #fff"],
+    body.theme-dark [style*="background-color:#fff"],
+    body.theme-dark [style*="background: #FFF"],
+    body.theme-dark [style*="background:#FFF"],
+    body.theme-dark [style*="background: white"],
+    body.theme-dark [style*="background:white"],
+    body.theme-dark [style*="background-color: white"],
+    body.theme-dark [style*="background-color:white"] {
+      background-color: var(--ax-bg-card) !important;
+      background-image: none !important;
+    }
 
-        --ios-empty-padding: 60px 20px;
+    /* Dark mode: defensive text-color override for inline-style black/dark text. */
+    body.theme-dark [style*="color: #1c1c1e"],
+    body.theme-dark [style*="color:#1c1c1e"],
+    body.theme-dark [style*="color: #3a3a3c"],
+    body.theme-dark [style*="color:#3a3a3c"],
+    body.theme-dark [style*="color: #222"],
+    body.theme-dark [style*="color:#222"],
+    body.theme-dark [style*="color: #111"],
+    body.theme-dark [style*="color:#111"],
+    body.theme-dark [style*="color: #000"],
+    body.theme-dark [style*="color:#000"],
+    body.theme-dark [style*="color: black"],
+    body.theme-dark [style*="color:black"] {
+      color: var(--ax-fg) !important;
+    }
 
-        /* Layer scale (z-index) */
-        --z-table-header: 10;
-        --z-table-sticky-cell: 30;
-        --z-table-sticky-header: 32;
-        --z-sticky-nav: 100;
-        --z-sticky-control: 110;
-        --z-sticky-state: 120;
-        --z-nav-dropdown: 200;
-        --z-page-popover: 210;
-        --z-alert: 100000;
-        --z-notification: 100100;
-        --z-dock: 100200;
-        --z-floating-panel: 100300;
-        --z-floating-toggle: 100400;
-        --z-modal-backdrop: 100500;
-        --z-modal-content: 100600;
-        --z-tooltip: 100700;
+    /* Dark mode: defensive border color for hardcoded light borders. */
+    body.theme-dark [style*="border: 1px solid #fff"],
+    body.theme-dark [style*="border:1px solid #fff"],
+    body.theme-dark [style*="border-color: #fff"],
+    body.theme-dark [style*="border-color:#fff"] {
+      border-color: var(--ax-border) !important;
+    }
+  `;
 
-    --glass-1-blur: 10px;
-    --glass-1-saturate: 115%;
-    --glass-1-bg: rgba(255,255,255,0.06);
-    --glass-1-border: rgba(255,255,255,0.18);
-    --glass-1-shadow: 0 8px 24px rgba(12,38,73,0.10);
+// ──────────────────────────────────────────────────────────────────────────
+// Liquid-glass utility classes — drop-in replacements for the repeated 6-line
+// inline-style blob (`background + backdrop-filter + border + shadow + edge`)
+// that floating panels used to ship verbatim. Each tier maps to a glass token
+// emitted by axTheme/cssVars.ts.
+//
+// `.ax-glass-rim` adds the mouse-tracked dual-blend gradient rim. JS in
+// liquidGlass.ts writes --ax-lg-mx / --ax-lg-my / --ax-lg-hover; CSS turns
+// those into a cubic-bezier-eased rim that follows the pointer. The rim
+// renders best on dark glass (light theme falls back to a static glow).
+// ──────────────────────────────────────────────────────────────────────────
 
-    --glass-2-blur: 16px;
-    --glass-2-saturate: 140%;
-    --glass-2-bg-gradient: linear-gradient(180deg, rgba(255,255,255,0.24), rgba(255,255,255,0.10));
-    --glass-2-border: rgba(255,255,255,0.24);
-    --glass-2-shadow: 0 4px 12px rgba(0,0,0,0.08);
+const axGlassCss = `
+    .ax-glass-1, .ax-glass-2, .ax-glass-3 {
+      position: relative;
+    }
+    .ax-glass-1 {
+      background: var(--ax-glass-1-bg);
+      border: 1px solid var(--ax-glass-1-border);
+      box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);
+      -webkit-backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate)) brightness(var(--ax-glass-1-brightness));
+      backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate)) brightness(var(--ax-glass-1-brightness));
+    }
+    .ax-glass-2 {
+      background: var(--ax-glass-2-bg);
+      border: 1px solid var(--ax-glass-2-border);
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+    }
+    .ax-glass-3 {
+      background: var(--ax-glass-3-bg);
+      border: 1px solid var(--ax-glass-3-border);
+      box-shadow: var(--ax-glass-3-shadow), var(--ax-glass-3-edge);
+      -webkit-backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
+      backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
+    }
 
-    --glass-3-blur: 20px;
-    --glass-3-saturate: 140%;
-    --glass-3-bg: rgba(255,255,255,0.28);
-    --glass-3-inset-shadow: inset 0 1px 0 rgba(255,255,255,0.40);
+    /* ─── Mouse-tracked rim (dark theme — full cubic-bezier gradient) ───
+       Two pseudo-elements on the same border-box give us screen + overlay
+       blend modes simultaneously, ported from recorder.user.js .lg-rim--*. */
+    .ax-glass-rim { position: relative; }
+    .ax-glass-rim::before,
+    .ax-glass-rim::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      border-radius: inherit;
+      padding: 1px;
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      background: linear-gradient(
+        calc((135 + var(--ax-lg-mx, 0) * 1.2) * 1deg),
+        rgba(255,255,255,0) 0%,
+        rgba(255,255,255, calc(0.04 + var(--ax-lg-mx-abs, 0) * 0.014)) calc(max(10, 33 + var(--ax-lg-my, 0) * 0.3) * 1%),
+        rgba(255,255,255, calc(0.10 + var(--ax-lg-mx-abs, 0) * 0.018)) calc(min(90, 66 + var(--ax-lg-my, 0) * 0.4) * 1%),
+        rgba(255,255,255,0) 100%
+      );
+      transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .ax-glass-rim::before {
+      mix-blend-mode: screen;
+      opacity: calc(0.40 + var(--ax-lg-hover, 0) * 0.30);
+    }
+    .ax-glass-rim::after {
+      mix-blend-mode: overlay;
+      opacity: calc(0.28 + var(--ax-lg-hover, 0) * 0.20);
+    }
+    /* Light theme rim is much subtler — strong overlay blend on white reads
+       as a black halo, so we drop it to a thin cool inner highlight only. */
+    body:not(.theme-dark) .ax-glass-rim::before {
+      background: linear-gradient(
+        calc((135 + var(--ax-lg-mx, 0) * 1.2) * 1deg),
+        rgba(15,30,60,0) 0%,
+        rgba(15,30,60, calc(0.02 + var(--ax-lg-mx-abs, 0) * 0.005)) 50%,
+        rgba(15,30,60,0) 100%
+      );
+      mix-blend-mode: multiply;
+      opacity: calc(0.50 + var(--ax-lg-hover, 0) * 0.30);
+    }
+    body:not(.theme-dark) .ax-glass-rim::after {
+      display: none;
+    }
+
+    /* ─── Liquid-glass refraction filter handle ───
+       Adds the SVG chromatic-aberration filter from liquidGlass.ts. Use
+       sparingly — backdrop-filter + filter on the same element compounds
+       composite cost. Reserve for hero panels (snapshot, dock header). */
+    .ax-glass-refract {
+      filter: url(#ax-lg-filter);
+    }
+
+    /* ─── Status dot family ───
+       Small pulsing/idle indicators ported from recorder.user.js .dot. The
+       breath glow is the visual difference between "live data" and "frozen
+       snapshot" — gives the UI a heartbeat without animating panel chrome.
+       Each variant sets BOTH "background" and "color" so the keyframe's
+       color-mix(in srgb, currentColor ...) picks up the correct halo tint;
+       without "color:" the pulse animation falls back to inherited color. */
+    .ax-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--ax-fg-muted);
+      color: var(--ax-fg-muted);
+      transition: background 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                  color 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .ax-status-dot--live {
+      background: var(--ax-positive);
+      color: var(--ax-positive);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--ax-positive) 60%, transparent);
+      animation: axStatusPulse 1.8s ease-in-out infinite;
+    }
+    .ax-status-dot--paused {
+      background: var(--ax-orange);
+      color: var(--ax-orange);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--ax-orange) 60%, transparent);
+    }
+    .ax-status-dot--offline {
+      background: var(--ax-fg-muted);
+      color: var(--ax-fg-muted);
+      box-shadow: none;
+    }
+    .ax-status-dot--alert {
+      background: var(--ax-critical);
+      color: var(--ax-critical);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--ax-critical) 60%, transparent);
+      animation: axStatusPulse 1.4s ease-in-out infinite;
+    }
+  `;
+const axUtilitiesCss = `
+    /* Display */
+    .u-block { display: block; }
+    .u-inline { display: inline; }
+    .u-inline-block { display: inline-block; }
+    .u-inline-flex { display: inline-flex; }
+    .u-grid { display: grid; }
+    .u-hidden { display: none !important; }
+    .u-flex { display: flex; }
+    .u-flex-col { display: flex; flex-direction: column; }
+    .u-flex-row { display: flex; flex-direction: row; }
+    .u-flex-wrap { flex-wrap: wrap; }
+    .u-flex-1 { flex: 1; min-width: 0; }
+    .u-flex-auto { flex: auto; }
+    .u-flex-none { flex: none; }
+    .u-flex-shrink-0 { flex-shrink: 0; }
+
+    /* Alignment */
+    .u-items-start { align-items: flex-start; }
+    .u-items-center { align-items: center; }
+    .u-items-end { align-items: flex-end; }
+    .u-items-stretch { align-items: stretch; }
+    .u-items-baseline { align-items: baseline; }
+    .u-justify-start { justify-content: flex-start; }
+    .u-justify-center { justify-content: center; }
+    .u-justify-end { justify-content: flex-end; }
+    .u-justify-between { justify-content: space-between; }
+    .u-justify-around { justify-content: space-around; }
+
+    /* Gap */
+    .u-gap-0 { gap: 0; }
+    .u-gap-1 { gap: 4px; }
+    .u-gap-2 { gap: 6px; }
+    .u-gap-3 { gap: 8px; }
+    .u-gap-4 { gap: 10px; }
+    .u-gap-5 { gap: 12px; }
+    .u-gap-6 { gap: 14px; }
+    .u-gap-7 { gap: 16px; }
+    .u-gap-8 { gap: 20px; }
+    .u-gap-9 { gap: 24px; }
+
+    /* Padding */
+    .u-p-0 { padding: 0; }
+    .u-p-1 { padding: 4px; }
+    .u-p-2 { padding: 6px; }
+    .u-p-3 { padding: 8px; }
+    .u-p-4 { padding: 10px; }
+    .u-p-5 { padding: 12px; }
+    .u-p-7 { padding: 16px; }
+    .u-p-8 { padding: 20px; }
+
+    /* Radius */
+    .u-radius-none { border-radius: 0; }
+    .u-radius-xs { border-radius: var(--ax-radius-xs); }
+    .u-radius-sm { border-radius: var(--ax-radius-sm); }
+    .u-radius-md { border-radius: var(--ax-radius-md); }
+    .u-radius-lg { border-radius: var(--ax-radius-lg); }
+    .u-radius-xl { border-radius: var(--ax-radius-xl); }
+    .u-radius-2xl { border-radius: var(--ax-radius-2xl); }
+    .u-radius-full { border-radius: var(--ax-radius-pill); }
+    .u-radius-circle { border-radius: 50%; }
+
+    /* Typography */
+    .u-text-primary { color: var(--ax-fg); }
+    .u-text-secondary { color: var(--ax-fg-2); }
+    .u-text-muted { color: var(--ax-fg-muted); }
+    .u-text-positive { color: var(--ax-positive); }
+    .u-text-negative { color: var(--ax-negative); }
+    .u-text-zero { color: var(--ax-fg-muted); }
+    .u-text-neutral { color: var(--ax-orange); }
+    .u-text-info { color: var(--ax-blue); }
+    .u-text-critical { color: var(--ax-critical); }
+    .u-font-normal { font-weight: var(--ax-fw-normal); }
+    .u-font-medium { font-weight: var(--ax-fw-medium); }
+    .u-font-semibold { font-weight: var(--ax-fw-semibold); }
+    .u-font-bold { font-weight: var(--ax-fw-bold); }
+    .u-text-2xs { font-size: var(--ax-fs-2xs); }
+    .u-text-xs { font-size: var(--ax-fs-xs); }
+    .u-text-sm { font-size: var(--ax-fs-sm); }
+    .u-text-md { font-size: var(--ax-fs-md); }
+    .u-text-lg { font-size: var(--ax-fs-lg); }
+    .u-text-xl { font-size: var(--ax-fs-xl); }
+    .u-tabular-nums { font-variant-numeric: tabular-nums lining-nums; }
+    .u-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .u-whitespace-nowrap { white-space: nowrap; }
+    .u-text-center { text-align: center; }
+    .u-text-right { text-align: right; }
+    .u-text-left { text-align: left; }
+    .u-uppercase { text-transform: uppercase; }
+    .u-font-mono { font-family: var(--ax-font-mono); }
+    .u-font-body { font-family: var(--ax-font-body); }
+
+    /* Bg / border */
+    .u-bg-subtle { background: var(--ax-bg-subtle); }
+    .u-bg-card { background: var(--ax-bg-card); }
+    .u-bg-chip { background: var(--ax-bg-chip); }
+    .u-bg-panel { background: var(--ax-bg-panel); }
+    .u-border { border: 1px solid var(--ax-border); }
+    .u-border-subtle { border: 1px solid var(--ax-border-subtle); }
+    .u-border-t { border-top: 1px solid var(--ax-border-subtle); }
+    .u-border-b { border-bottom: 1px solid var(--ax-border-subtle); }
+
+    /* Sizing */
+    .u-min-w-0 { min-width: 0; }
+    .u-max-w-full { max-width: 100%; }
+    .u-w-full { width: 100%; }
+    .u-h-full { height: 100%; }
+
+    /* Overflow */
+    .u-overflow-hidden { overflow: hidden; }
+    .u-overflow-auto { overflow: auto; }
+    .u-overflow-y-auto { overflow-y: auto; }
+    .u-overflow-x-auto { overflow-x: auto; }
+
+    /* Cursor */
+    .u-cursor-pointer { cursor: pointer; }
+    .u-cursor-default { cursor: default; }
+    .u-cursor-not-allowed { cursor: not-allowed; }
+
+    /* State */
+    .is-disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+    .is-hidden { display: none !important; }
+  `;
+const axPresetsCss = `
+    /* Typography presets */
+    .az-typo-panel-title {
+      margin: 0 0 4px 0;
+      font-size: var(--ax-fs-xl);
+      font-weight: var(--ax-fw-bold);
+      color: var(--ax-fg);
+      letter-spacing: -0.2px;
+    }
+    .az-typo-panel-desc {
+      font-size: var(--ax-fs-sm);
+      color: var(--ax-fg-2);
+      margin-bottom: 8px;
+    }
+    .az-typo-metric-label {
+      font-size: var(--ax-fs-xs);
+      font-weight: var(--ax-fw-bold);
+      color: var(--ax-fg-2);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .az-typo-metric-value {
+      font-size: var(--ax-fs-sm);
+      font-weight: var(--ax-fw-semibold);
+      color: var(--ax-fg);
+      font-variant-numeric: tabular-nums lining-nums;
+    }
+    .az-typo-body-text {
+      font-size: var(--ax-fs-md);
+      color: var(--ax-fg-2);
+      line-height: 1.4;
+    }
+    .az-typo-caption {
+      font-size: var(--ax-fs-xs);
+      color: var(--ax-fg-2);
+    }
+    .az-typo-page-title {
+      font-size: var(--ax-fs-3xl);
+      font-weight: var(--ax-fw-semibold);
+      color: var(--ax-fg);
+      margin: 0 0 16px 0;
+    }
+    .az-typo-heading {
+      font-size: var(--ax-fs-lg);
+      font-weight: var(--ax-fw-bold);
+      color: var(--ax-fg);
+      line-height: 1.3;
+    }
+    .az-typo-mono {
+      font-size: var(--ax-fs-md);
+      font-weight: var(--ax-fw-semibold);
+      color: var(--ax-fg);
+      font-family: var(--ax-font-mono);
+      font-variant-numeric: tabular-nums lining-nums;
+    }
+
+    /* Glass tier-2 surfaces */
+    .az-preset-panel,
+    .az-preset-card,
+    .az-preset-collapsible-card {
+      background: var(--ax-glass-2-bg);
+      border: 1px solid var(--ax-glass-2-border);
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+    }
+    .az-preset-panel { border-radius: var(--ax-radius-xl); padding: 20px; }
+    .az-preset-card { border-radius: var(--ax-radius-lg); padding: 16px; }
+    .az-preset-collapsible-card { border-radius: var(--ax-radius-lg); overflow: hidden; }
+
+    /* Tier-1 chips / tiles */
+    .az-preset-metric-cell,
+    .az-preset-metric-cell-inline {
+      background: var(--ax-glass-1-bg);
+      border: 1px solid var(--ax-glass-1-border);
+      box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);
+      border-radius: var(--ax-radius-sm);
+      display: flex;
+    }
+    .az-preset-metric-cell { padding: 5px 7px; flex-direction: column; gap: 1px; }
+    .az-preset-metric-cell-inline { padding: 4px 8px; gap: 4px; align-items: center; }
+
+    /* Tables */
+    .az-preset-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      border-radius: var(--ax-radius-md);
+      overflow: hidden;
+      border: 1px solid var(--ax-border);
+      background: var(--ax-bg-table);
+    }
+    .az-preset-table-header {
+      text-align: left;
+      padding: 8px 10px;
+      font-size: var(--ax-fs-sm);
+      font-weight: var(--ax-fw-semibold);
+      color: var(--ax-table-head);
+      letter-spacing: 0.2px;
+      border-bottom: 1px solid var(--ax-border-subtle);
+      background: var(--ax-bg-table-head);
+    }
+    .az-preset-table-cell {
+      padding: 7px 10px;
+      font-size: var(--ax-fs-md);
+      color: var(--ax-fg);
+      font-variant-numeric: tabular-nums lining-nums;
+    }
+  `;
+const axAnimationsCss = `
+    @keyframes fadeIn {
+      0% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    @keyframes slideIn {
+      0% { transform: translateY(20px); opacity: 0; }
+      100% { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes bounce {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes iosBounce {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.3); }
+    }
+    @keyframes pulseIndicator {
+      from { transform: translateX(-50%) scale(0.8); opacity: 0.7; }
+      to { transform: translateX(-50%) scale(1.2); opacity: 1; }
+    }
+    @keyframes dockStreamerFlash {
+      0% { background-color: var(--ax-orange); }
+      100% { background-color: var(--dock-streamer-target, var(--ax-gray)); }
+    }
+    .ios-sort-animation { animation: iosBounce 0.3s ease; }
+
+    @keyframes flashUpdateGreen {
+      0% { background-color: rgba(70, 210, 70, 0); }
+      12% { background-color: rgba(70, 210, 70, 0.16); }
+      100% { background-color: rgba(70, 210, 70, 0); }
+    }
+    @keyframes flashUpdateRed {
+      0% { background-color: rgba(217, 70, 70, 0); }
+      12% { background-color: rgba(217, 70, 70, 0.16); }
+      100% { background-color: rgba(217, 70, 70, 0); }
+    }
+    @keyframes flashUpdateGreenDark {
+      0% { background-color: rgba(80, 220, 100, 0); }
+      12% { background-color: rgba(80, 220, 100, 0.22); }
+      100% { background-color: rgba(80, 220, 100, 0); }
+    }
+    @keyframes flashUpdateRedDark {
+      0% { background-color: rgba(232, 90, 80, 0); }
+      12% { background-color: rgba(232, 90, 80, 0.24); }
+      100% { background-color: rgba(232, 90, 80, 0); }
+    }
+    .flash-update-green { animation: flashUpdateGreen 0.6s ease; }
+    .flash-update-red { animation: flashUpdateRed 0.6s ease; }
+    body.theme-dark .flash-update-green { animation: flashUpdateGreenDark 0.6s ease; }
+    body.theme-dark .flash-update-red { animation: flashUpdateRedDark 0.6s ease; }
+
+    /* ─── Status-dot breath pulse (used by .ax-status-dot--live / --alert) ───
+       Mirrors recorder.user.js's aq-pulse: a 1.8s ease-in-out double box-shadow
+       expansion that reads as a heartbeat. Tone-matched in both light and
+       dark via the --ax-tone-*-border vars. */
+    @keyframes axStatusPulse {
+      0%, 100% {
+        box-shadow:
+          0 0 6px color-mix(in srgb, currentColor 60%, transparent);
+      }
+      50% {
+        box-shadow:
+          0 0 12px color-mix(in srgb, currentColor 100%, transparent),
+          0 0 18px color-mix(in srgb, currentColor 40%, transparent);
+      }
+    }
+    @keyframes axRimSweep {
+      0%, 100% { --ax-lg-mx: 0; --ax-lg-mx-abs: 0; --ax-lg-my: 0; }
+      25%      { --ax-lg-mx: 28; --ax-lg-mx-abs: 28; --ax-lg-my: -18; }
+      50%      { --ax-lg-mx: 0;  --ax-lg-mx-abs: 0;  --ax-lg-my: 18; }
+      75%      { --ax-lg-mx: -28; --ax-lg-mx-abs: 28; --ax-lg-my: -10; }
+    }
+  `;
+;// ./src/frontend/components/core/axTheme/shellCss.ts
+// App-shell CSS — dock, header, nav, mobile, tables, buttons, badges, notifications.
+// Theme-aware: every value reads from --ax-* CSS vars.
+// Replaces the hand-coded legacy styles in the original ui_styles.ts.
+
+const axShellCss = `
+    body { background: var(--ax-app-scenery); }
+    body.theme-dark {
+      background: var(--ax-app-scenery) !important;
+      color-scheme: dark;
+    }
+    html:has(body.theme-dark) {
+      background-color: var(--ax-bg) !important;
+      color-scheme: dark;
+    }
+
+    /* ════════════════════════════════════════════════════════════════════════
+       Host-page dark-mode hijack (Dark Reader–style filter inversion).
+
+       In dark mode the underlying Schwab page stays white-themed, which then
+       bleeds through translucent glass tiers in the dock and floating
+       panels. Filter-inverting Schwab's body children (header, layout,
+       footer, custom-element widgets like quick-quote / responsive-meganav)
+       turns their bright surfaces into a dark, tone-matched backdrop while
+       keeping the content readable.
+
+       AlexQuant overlays are excluded so they render with their native dark
+       palette. The exclusion list covers: the dock (#alexquant-container),
+       any id-prefixed overlay (#alexquant-*), the tooltip host
+       (alexquant-tip), the notification stack, mobile UI surfaces, and any
+       element explicitly tagged with .ax-shell-element (snapshot tab/panel,
+       AlertPanel, modal overlays).
+
+       Re-invert images / video / iframes / canvases inside Schwab content so
+       logos, photos, and embedded graphics keep their original colours.
+       ════════════════════════════════════════════════════════════════════════ */
+
+    body.theme-dark.ax-host-hijack > *:not(#alexquant-container):not([id^="alexquant-"]):not(alexquant-tip):not(.ax-shell-element):not(.dock-notification-container):not(.mobile-tab-bar):not(.mobile-more-sheet):not(.mobile-more-backdrop):not(script):not(style):not(link):not(noscript):not(template):not(meta) {
+      filter: invert(0.93) hue-rotate(180deg);
+      transition: filter 0.3s ease;
+    }
+    body.theme-dark.ax-host-hijack > *:not(#alexquant-container):not([id^="alexquant-"]):not(alexquant-tip):not(.ax-shell-element):not(.dock-notification-container) img,
+    body.theme-dark.ax-host-hijack > *:not(#alexquant-container):not([id^="alexquant-"]):not(alexquant-tip):not(.ax-shell-element):not(.dock-notification-container) video,
+    body.theme-dark.ax-host-hijack > *:not(#alexquant-container):not([id^="alexquant-"]):not(alexquant-tip):not(.ax-shell-element):not(.dock-notification-container) iframe,
+    body.theme-dark.ax-host-hijack > *:not(#alexquant-container):not([id^="alexquant-"]):not(alexquant-tip):not(.ax-shell-element):not(.dock-notification-container) canvas {
+      filter: invert(1) hue-rotate(180deg);
+    }
+    /* Don't double-invert AlexQuant assistant button or any element that
+       explicitly opts out via a class. */
+    body.theme-dark .ax-no-invert,
+    body.theme-dark .ax-no-invert * {
+      filter: none !important;
     }
 
     .dock-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: 80vw;
-        height: 100vh;
-        max-height: 100vh;
-        background: var(--glass-3-bg);
-        -webkit-backdrop-filter: blur(var(--glass-3-blur)) saturate(var(--glass-3-saturate));
-        backdrop-filter: blur(var(--glass-3-blur)) saturate(var(--glass-3-saturate));
-        border-radius: 0;
-        z-index: var(--z-dock, 100300);
-        font-family: var(--ios-font);
-        box-shadow: var(--ios-shadow), var(--glass-3-inset-shadow);
-        overflow: hidden;
-        border: none;
-        transition: all 0.3s ease;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 80vw;
+      height: 100vh;
+      max-height: 100vh;
+      background: var(--ax-glass-3-bg);
+      -webkit-backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
+      backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
+      border-radius: 0;
+      z-index: var(--ax-z-dock);
+      font-family: var(--ax-font-body);
+      box-shadow: var(--ax-glass-3-shadow), var(--ax-glass-3-edge);
+      color: var(--ax-fg);
+      overflow: hidden;
+      border: none;
+      transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                  height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+                  opacity 0.3s ease,
+                  transform 0.3s ease,
+                  box-shadow 0.3s ease;
+    }
+    /* Auto-attached by startGlobalRimObserver — adds the mouse-tracked rim
+       and the right-edge separator that gives the dock its "floating slab"
+       feel against Schwab's filter-inverted backdrop. */
+    .dock-container.ax-glass-rim::before,
+    .dock-container.ax-glass-rim::after {
+      border-radius: 0;
     }
 
     .liquid-glass {
-        position: relative;
-        background: var(--glass-2-bg-gradient);
-        -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate));
-        backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate));
-        border: 1px solid var(--glass-2-border);
-        border-radius: var(--ios-radius);
-        box-shadow: var(--glass-2-shadow);
-        overflow: hidden;
+      position: relative;
+      background: var(--ax-glass-2-bg);
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      border: 1px solid var(--ax-glass-2-border);
+      border-radius: var(--ax-radius-2xl);
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
+      overflow: hidden;
+      transition: box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
     }
-
-    .liquid-glass::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 55px;
-        pointer-events: none;
-        background: linear-gradient(180deg, var(--lg-highlight-1), var(--lg-highlight-2), transparent 70%);
-    }
-
     .liquid-glass.no-highlight::before { display: none; }
 
-    body.theme-dark .liquid-glass {
-        background: linear-gradient(135deg, rgba(44,44,48,0.42), rgba(30,30,34,0.35));
-        border-color: rgba(255,255,255,0.08);
-        box-shadow: var(--lg-shadow-strong);
-    }
-
     .dock-modal {
-        --lg-alpha-1: 0.9;
-        --lg-alpha-2: 0.85;
-        --lg-blur: 10px;
-        --modal-tabs-height: 44px;
+      --modal-tabs-height: 44px;
     }
     .dock-modal .ios-table {
-        background: #ffffff;
-        border-color: rgba(0,0,0,0.08);
-        margin-top: 0;
-        transform: translateY(0);
+      background: var(--ax-bg-table);
+      border-color: var(--ax-border-subtle);
+      margin-top: 0;
+      transform: translateY(0);
     }
     .dock-modal .ios-table tr:nth-child(even){
-        background-color: rgba(0,0,0,0.02);
+      background-color: var(--ax-bg-row-hover);
     }
     .dock-modal .ios-table-head {
-        top: 0;
-        z-index: var(--z-table-sticky-header, 32);
+      top: 0;
+      z-index: var(--ax-z-table-sticky-header);
     }
 
     .dock-minimized {
-        width: 200px !important;
-        height: 75px !important;
-        transform: scale(0.98);
-        box-shadow: 0 12px 18px rgba(0,0,0,0.20);
+      width: 200px !important;
+      height: 75px !important;
+      transform: scale(0.98);
+      box-shadow: var(--ax-shadow-md);
     }
-
     .dock-expanded {
-        width: 82vw;
-        height: 100% !important;
-        border-radius: 0;
-        transform: none;
-        box-shadow: var(--ios-shadow);
+      width: 82vw;
+      height: 100% !important;
+      border-radius: 0;
+      transform: none;
+      box-shadow: var(--ax-shadow-lg);
     }
 
     .dock-header {
-        background-color: transparent;
-        border-bottom: 1px solid rgba(0,0,0,0.08);
-        padding: 12px 20px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        cursor: grab;
-        user-select: none;
+      background-color: transparent;
+      border-bottom: 1px solid var(--ax-border-subtle);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      cursor: grab;
+      user-select: none;
     }
-
     .dock-title {
-        font-size: 1.4rem;
-        font-weight: 600;
-        background: var(--ios-title-gradient);
-        -webkit-background-clip: text;
-        color: transparent;
-        letter-spacing: -0.5px;
-        flex-shrink: 0;
+      font-size: 1.4rem;
+      font-weight: var(--ax-fw-semibold);
+      background: var(--ax-title-gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      letter-spacing: -0.5px;
+      flex-shrink: 0;
     }
 
-    /* ── Header center data area (flex:1, wraps totals + indices) ── */
     .dock-header-center {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        flex: 1 1 0%;
-        min-width: 0;
-        overflow: hidden;
-        justify-content: center;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex: 1 1 0%;
+      min-width: 0;
+      overflow: hidden;
+      justify-content: center;
     }
-
     .dock-totals {
-        display: flex;
-        gap: 16px;
-        font-size: 12px;
+      display: flex;
+      gap: 16px;
+      font-size: var(--ax-fs-md);
+      color: var(--ax-fg);
     }
-
     .dock-indices {
-        display: flex;
-        gap: 16px;
-        font-size: 12px;
-        align-items: center;
+      display: flex;
+      gap: 16px;
+      font-size: var(--ax-fs-md);
+      color: var(--ax-fg);
+      align-items: center;
     }
-
     .dock-nav-sep,
     .dock-center-sep {
-        width: 1px;
-        height: 24px;
-        border-left: 1px dashed #ccc;
-        flex-shrink: 0;
+      width: 1px;
+      height: 24px;
+      border-left: 1px dashed var(--ax-border-strong);
+      flex-shrink: 0;
     }
 
-    /* ── Status indicators ── */
     .dock-status-container {
-        display: flex;
-        gap: 16px;
-        flex-shrink: 0;
+      display: flex;
+      gap: 16px;
+      flex-shrink: 0;
     }
-
     .dock-status-item {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
     }
-
     .dock-status-label {
-        font-size: 12px;
-        color: var(--ios-text-primary);
+      font-size: var(--ax-fs-md);
+      color: var(--ax-fg);
     }
-
     .dock-status-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #ccc;
-        transition: background 0.3s;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ax-fg-muted);
+      transition: background 220ms cubic-bezier(0.16, 1, 0.3, 1);
+      flex-shrink: 0;
     }
-
+    /* "streamer-on" rides the same breath pulse as .ax-status-dot--live so
+       the dock's "live data" indicator and floating panel dots tell the
+       same story visually. "currentColor" is set so axStatusPulse's
+       color-mix() picks up the green glow automatically. */
     .dock-status-dot--streamer-on {
-        --dock-streamer-target: var(--ios-green);
-        background: var(--ios-green);
+      --dock-streamer-target: var(--ax-green);
+      background: var(--ax-green);
+      color: var(--ax-green);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--ax-green) 60%, transparent);
+      animation: axStatusPulse 1.8s ease-in-out infinite;
     }
-
     .dock-status-dot--streamer-off {
-        --dock-streamer-target: var(--ios-gray);
-        background: var(--ios-gray);
+      --dock-streamer-target: var(--ax-gray);
+      background: var(--ax-gray);
+      box-shadow: none;
+      animation: none;
     }
-
     .dock-status-dot--streamer-flash {
-        animation: dockStreamerFlash 0.2s ease;
+      animation: dockStreamerFlash 0.2s ease;
     }
-
     .dock-snapshot-area {
-        display: flex;
-        align-items: center;
-        flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
     }
 
-    /* ── Minimized state: only logo + toggle + share btn visible, driven by CSS ── */
+    /* Minimized state */
     .dock-minimized .dock-header > *:not(.dock-title):not(.dock-toggle-btn):not(.dock-share-btn) {
-        display: none !important;
+      display: none !important;
     }
-    .dock-minimized .dock-toggle-btn {
-        margin-left: auto;
-    }
-    .dock-minimized .dock-settings-wrapper {
-        display: none !important;
-    }
+    .dock-minimized .dock-toggle-btn { margin-left: auto; }
+    .dock-minimized .dock-settings-wrapper { display: none !important; }
 
-    /* ── Settings button + dropdown panel ── */
+    /* Settings button + dropdown */
     .dock-settings-wrapper {
-        position: relative;
-        flex-shrink: 0;
+      position: relative;
+      flex-shrink: 0;
     }
     .dock-settings-btn {
-        position: relative;
-        font-size: 1.2rem;
-        border: 1px solid var(--glass-2-border);
-        border-radius: 12px;
-        width: 46px;
-        height: 46px;
-        flex-shrink: 0;
-        display: inline-flex;
-        justify-content: center;
-        align-items: center;
-        cursor: pointer;
-        background: var(--glass-2-bg-gradient);
-        -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate));
-        backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate));
-        transition: all 0.2s ease;
-        box-shadow: var(--glass-2-shadow);
+      position: relative;
+      font-size: 1.2rem;
+      border: 1px solid var(--ax-glass-2-border);
+      border-radius: var(--ax-radius-xl);
+      width: 46px;
+      height: 46px;
+      flex-shrink: 0;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      background: var(--ax-glass-2-bg);
+      color: var(--ax-fg);
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      transition: all 0.2s ease;
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
     }
     .dock-settings-btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+      transform: translateY(-1px);
+      box-shadow: var(--ax-shadow-md);
     }
     .dock-settings-badge {
-        display: none;
-        position: absolute;
-        top: -4px;
-        right: -4px;
-        align-items: center;
-        justify-content: center;
-        font-size: 9px;
-        font-weight: 700;
-        padding: 1px 4px;
-        border-radius: 6px;
-        line-height: 1.3;
-        white-space: nowrap;
-        pointer-events: none;
+      display: none;
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--ax-fs-2xs);
+      font-weight: var(--ax-fw-bold);
+      padding: 1px 4px;
+      border-radius: var(--ax-radius-sm);
+      line-height: 1.3;
+      white-space: nowrap;
+      pointer-events: none;
     }
     .dock-settings-panel {
-        position: absolute;
-        top: calc(100% + 8px);
-        right: 0;
-        min-width: 220px;
-        background: rgba(255,255,255,0.96);
-        -webkit-backdrop-filter: blur(20px) saturate(180%);
-        backdrop-filter: blur(20px) saturate(180%);
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 14px;
-        box-shadow: 0 8px 28px rgba(0,0,0,0.14);
-        padding: 12px;
-        z-index: var(--z-nav-dropdown, 200);
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(-4px) scale(0.97);
-        transition: opacity 0.15s ease, transform 0.15s ease;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 240px;
+      background: var(--ax-bg-card);
+      color: var(--ax-fg);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid var(--ax-border);
+      border-radius: var(--ax-radius-xl);
+      box-shadow: var(--ax-shadow-md);
+      padding: 12px;
+      z-index: var(--ax-z-nav-dropdown);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-4px) scale(0.97);
+      transition: opacity 0.15s ease, transform 0.15s ease;
     }
     .dock-settings-wrapper.open .dock-settings-panel {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0) scale(1);
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
     }
     .dock-settings-row {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .dock-settings-row + .dock-settings-row {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--ax-border-subtle);
     }
     .dock-settings-label {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--ios-text-secondary);
-        letter-spacing: 0.3px;
+      font-size: var(--ax-fs-md);
+      font-weight: var(--ax-fw-semibold);
+      color: var(--ax-fg-2);
+      letter-spacing: 0.3px;
     }
     .dock-settings-options {
-        display: flex;
-        gap: 4px;
+      display: flex;
+      gap: 4px;
     }
     .dock-settings-opt {
-        flex: 1;
-        padding: 6px 4px;
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 8px;
-        background: transparent;
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--ios-text-secondary);
-        cursor: pointer;
-        transition: all 0.15s ease;
-        font-family: var(--ios-font);
+      flex: 1;
+      padding: 6px 4px;
+      border: 1px solid var(--ax-border);
+      border-radius: var(--ax-radius-md);
+      background: transparent;
+      font-size: var(--ax-fs-md);
+      font-weight: var(--ax-fw-semibold);
+      color: var(--ax-fg-2);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      font-family: var(--ax-font-body);
     }
     .dock-settings-opt:hover {
-        background: rgba(0,122,255,0.06);
-        border-color: rgba(0,122,255,0.2);
+      background: var(--ax-tone-info-soft-bg);
+      border-color: var(--ax-tone-info-border);
     }
     .dock-settings-opt.active {
-        background: rgba(0,122,255,0.12);
-        border-color: var(--ios-blue);
-        color: var(--ios-blue);
-    }
-    .dock-minimized .dock-content {
-        display: none !important;
+      background: var(--ax-tone-info-bg);
+      border-color: var(--ax-blue);
+      color: var(--ax-blue);
     }
 
+    .dock-minimized .dock-content { display: none !important; }
+
+    /* Nav */
     .dock-nav {
-        display: flex;
-        gap: 12px;
-        background: transparent;
-        border-radius: 12px;
-        padding: 6px;
-        flex-shrink: 0;
+      display: flex;
+      gap: 12px;
+      background: transparent;
+      border-radius: var(--ax-radius-xl);
+      padding: 6px;
+      flex-shrink: 0;
     }
-
     .dock-nav-button {
-        position: relative;
-        cursor: pointer;
-        font-size: 15px;
-        padding: 8px 16px;
-        border: 1px solid transparent; /* transparent by default */
-        background: transparent; /* remove white-ish plate */
-        border-radius: 10px;
-        transition: all 0.2s ease;
-        color: var(--ios-text-secondary);
-        font-weight: 600;
-        box-shadow: none;
+      position: relative;
+      cursor: pointer;
+      font-size: var(--ax-fs-xl);
+      padding: 8px 16px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: var(--ax-radius-lg);
+      transition: all 0.2s ease;
+      color: var(--ax-fg-2);
+      font-weight: var(--ax-fw-semibold);
+      box-shadow: none;
     }
-
     .dock-nav-button:hover { transform: translateY(-1px); }
 
     .offer-tab-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 16px;
-        margin-bottom: 12px;
-        width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 12px;
+      width: 100%;
     }
-
     .dock-tab {
-        padding: 14px;
-        border: none;
-        border-radius: 8px;
-        background: transparent;
-        color: var(--ios-text-secondary);
-        font-weight: 500;
-        cursor: pointer;
-        transition: all 0.2s ease;
+      padding: 14px;
+      border: none;
+      border-radius: var(--ax-radius-md);
+      background: transparent;
+      color: var(--ax-fg-2);
+      font-weight: var(--ax-fw-medium);
+      cursor: pointer;
+      transition: all 0.2s ease;
     }
-
     .dock-tab.active {
-        background-color: var(--ios-blue);
-        color: #ffffff;
-        box-shadow: 0 2px 8px rgba(0, 122, 255, 0.25);
+      background-color: var(--ax-blue);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(10, 132, 255, 0.25);
     }
 
-    .redeemed-stats-row {
-        display: flex;
-        gap: 8px;
-        width: 100%;
-        flex-wrap: wrap;
-        align-items: stretch;
-    }
-
+    .redeemed-stats-row,
     .stats-row {
-        display: flex;
-        gap: 8px;
-        width: 100%;
-        flex-wrap: wrap;
-        align-items: stretch;
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      flex-wrap: wrap;
+      align-items: stretch;
     }
 
     .dock-nav-button.active {
-        font-weight: 800;
-        background-color: var(--ios-blue);
-        color: #ffffff;
-        box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
-        border-color: rgba(255,255,255,0.25);
+      font-weight: var(--ax-fw-heavy);
+      background-color: var(--ax-blue);
+      color: #ffffff;
+      box-shadow:
+        0 4px 14px color-mix(in srgb, var(--ax-blue) 38%, transparent),
+        inset 0 1px 0 rgba(255,255,255,0.25);
+      border-color: rgba(255,255,255,0.30);
     }
-
     .dock-nav-button.active::after {
-        content: '';
-        position: absolute;
-        bottom: -8px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 8px;
-        height: 8px;
-        background-color: var(--ios-blue);
-        border-radius: 50%;
-        animation: pulseIndicator 1.5s infinite alternate;
+      content: '';
+      position: absolute;
+      bottom: -8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 8px;
+      height: 8px;
+      background-color: var(--ax-blue);
+      border-radius: 50%;
+      box-shadow: 0 0 8px color-mix(in srgb, var(--ax-blue) 60%, transparent);
+      animation: pulseIndicator 1.5s infinite alternate;
     }
 
-    .dock-nav-group {
-        position: relative;
-    }
-
+    .dock-nav-group { position: relative; }
     .dock-nav-group-btn {
-        position: relative;
-        cursor: pointer;
-        font-size: 15px;
-        padding: 8px 16px;
-        border: 1px solid transparent;
-        background: transparent;
-        border-radius: 10px;
-        transition: all 0.2s ease;
-        color: var(--ios-text-secondary);
-        font-weight: 600;
-        box-shadow: none;
-        display: flex;
-        align-items: center;
-        gap: 6px;
+      position: relative;
+      cursor: pointer;
+      font-size: var(--ax-fs-xl);
+      padding: 8px 16px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: var(--ax-radius-lg);
+      transition: all 0.2s ease;
+      color: var(--ax-fg-2);
+      font-weight: var(--ax-fw-semibold);
+      box-shadow: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-
     .dock-nav-group-btn:hover { transform: translateY(-1px); }
-
     .dock-nav-group-btn .nav-caret {
-        font-size: 10px;
-        transition: transform 0.2s ease;
+      font-size: var(--ax-fs-xs);
+      transition: transform 0.2s ease;
     }
-
-    .dock-nav-group.open .nav-caret {
-        transform: rotate(180deg);
-    }
-
+    .dock-nav-group.open .nav-caret { transform: rotate(180deg); }
     .dock-nav-group-btn.active {
-        font-weight: 800;
-        background-color: var(--ios-blue);
-        color: #ffffff;
-        box-shadow: 0 2px 8px rgba(0, 122, 255, 0.3);
-        border-color: rgba(255,255,255,0.25);
+      font-weight: var(--ax-fw-heavy);
+      background-color: var(--ax-blue);
+      color: #ffffff;
+      box-shadow: 0 2px 8px rgba(10, 132, 255, 0.30);
+      border-color: rgba(255,255,255,0.25);
     }
-
-    .dock-nav-group-btn.active .nav-caret {
-        color: #ffffff;
-    }
+    .dock-nav-group-btn.active .nav-caret { color: #ffffff; }
 
     .dock-nav-dropdown {
-        position: absolute;
-        top: calc(100% + 6px);
-        left: 50%;
-        transform: translateX(-50%) scale(0.95);
-        opacity: 0;
-        pointer-events: none;
-        min-width: 140px;
-        background: var(--glass-2-bg, rgba(255,255,255,0.95));
-        border: 1px solid var(--glass-2-border, rgba(0,0,0,0.08));
-        border-radius: 12px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-        padding: 6px;
-        z-index: var(--z-nav-dropdown, 200);
-        transition: opacity 0.15s ease, transform 0.15s ease;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%) scale(0.95);
+      opacity: 0;
+      pointer-events: none;
+      min-width: 160px;
+      background: var(--ax-bg-card);
+      color: var(--ax-fg);
+      border: 1px solid var(--ax-border);
+      border-radius: var(--ax-radius-xl);
+      box-shadow: var(--ax-shadow-md);
+      padding: 6px;
+      z-index: var(--ax-z-nav-dropdown);
+      transition: opacity 0.15s ease, transform 0.15s ease;
     }
-
     .dock-nav-group.open .dock-nav-dropdown {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateX(-50%) scale(1);
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(-50%) scale(1);
     }
-
     .dock-nav-dropdown-item {
-        display: block;
-        width: 100%;
-        padding: 8px 14px;
-        border: none;
-        background: transparent;
-        border-radius: 8px;
-        font-size: 14px;
-        font-weight: 500;
-        color: var(--ios-text-secondary);
-        cursor: pointer;
-        text-align: left;
-        transition: background 0.15s ease;
+      display: block;
+      width: 100%;
+      padding: 8px 14px;
+      border: none;
+      background: transparent;
+      border-radius: var(--ax-radius-md);
+      font-size: var(--ax-fs-menu);
+      font-weight: var(--ax-fw-medium);
+      color: var(--ax-fg-2);
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s ease;
     }
-
     .dock-nav-dropdown-item:hover {
-        background: rgba(0, 122, 255, 0.08);
-        color: var(--ios-blue);
+      background: var(--ax-tone-info-soft-bg);
+      color: var(--ax-blue);
     }
-
     .dock-nav-dropdown-item.active {
-        background: rgba(0, 122, 255, 0.12);
-        color: var(--ios-blue);
-        font-weight: 700;
+      background: var(--ax-tone-info-bg);
+      color: var(--ax-blue);
+      font-weight: var(--ax-fw-bold);
     }
 
     .dock-toggle-btn {
-        font-size: 1.2rem;
-    border: 1px solid var(--glass-2-border);
-    border-radius: 12px;
-    width: 46px;
-    height: 46px;
-    flex-shrink: 0;
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    cursor: pointer;
-    background: var(--glass-2-bg-gradient);
-    -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate));
-    backdrop-filter: blur(var(--glass-2-blur)) saturate(var(--glass-2-saturate));
-    transition: all 0.2s ease;
-    box-shadow: var(--glass-2-shadow);
+      font-size: 1.2rem;
+      border: 1px solid var(--ax-glass-2-border);
+      border-radius: var(--ax-radius-xl);
+      width: 46px;
+      height: 46px;
+      flex-shrink: 0;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      background: var(--ax-glass-2-bg);
+      color: var(--ax-fg);
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      transition: all 0.2s ease;
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
     }
-
     .dock-toggle-btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+      transform: translateY(-1px);
+      box-shadow: var(--ax-shadow-md);
     }
 
     .dock-content {
-        padding: 20px;
-        overflow-y: auto;
-        max-height: calc(100vh - 80px);
-        height: calc(100vh - 80px);
+      padding: 20px;
+      overflow-y: auto;
+      max-height: calc(100vh - 80px);
+      height: calc(100vh - 80px);
+      color: var(--ax-fg);
     }
 
-    .ios-table{
-        width: max-content;
-        min-width: 100%;
-        table-layout: fixed;
-        border-collapse: separate;
-        border-spacing: 0;
-        font-family: var(--ios-font);
-        border-radius: var(--ios-table-border-radius);
-        overflow: hidden;
-    background: var(--glass-1-bg);
-    -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate));
-    backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate));
-    box-shadow: var(--glass-1-shadow);
-    border: 1px solid var(--glass-1-border);
+    /* iOS Tables */
+    .ios-table {
+      width: max-content;
+      min-width: 100%;
+      table-layout: fixed;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-family: var(--ax-font-body);
+      border-radius: var(--ax-radius-md);
+      overflow: hidden;
+      background: var(--ax-bg-table);
+      color: var(--ax-fg);
+      box-shadow: var(--ax-glass-1-shadow);
+      border: 1px solid var(--ax-border);
     }
-
-    .ios-table-head{
-    background: var(--ios-header-bg);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    position: sticky;
-    top: 0;
-    z-index: var(--z-table-header, 10);
-    box-shadow: inset 0 -1px 0 rgba(0,0,0,0.06);
+    .ios-table-head {
+      background: var(--ax-bg-table-head);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: var(--ax-z-table-header);
+      box-shadow: inset 0 -1px 0 var(--ax-border-subtle);
     }
-
-    .ios-table th{
-        padding: var(--ios-table-cell-padding);
-        font-weight: 400; /* headers should not be bold */
-        font-family: var(--ios-font);
-        font-size: var(--ios-table-header-font-size);
-        color: var(--ios-table-header);
-        border-bottom: 1px solid rgba(60, 60, 67, 0.12);
-        text-align: center; /* center align header text */
-        vertical-align: middle;
-        letter-spacing: 0.2px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(250,250,252,0.75));
+    .ios-table th {
+      padding: var(--ios-table-cell-padding);
+      font-weight: var(--ax-fw-semibold);
+      font-family: var(--ax-font-body);
+      font-size: var(--ax-fs-2xs);
+      color: var(--ax-table-head);
+      border-bottom: 1px solid var(--ax-border-subtle);
+      text-align: center;
+      vertical-align: middle;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      background: var(--ax-bg-table-head);
     }
-
-    .ios-table-header-icon{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 0;
+    .ios-table-header-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 0;
     }
-
-    .ios-table-header-label{
-        display: inline-block;
-        margin-left: 6px;
+    .ios-table-header-label {
+      display: inline-block;
+      margin-left: 6px;
     }
-
-    .ios-table th.sortable{
-        cursor: pointer;
-        position: relative;
-        padding-left: 28px; /* balance right padding for centered text */
-        padding-right: 28px;
+    .ios-table th.sortable {
+      cursor: pointer;
+      position: relative;
+      padding-left: 28px;
+      padding-right: 28px;
     }
-
     .ios-sort-button {
-        position: absolute;
-        right: 8px;
-        top: 50%;
-        transform: translateY(-50%);
-        width: 18px;
-        height: 18px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        opacity: 0.7; /* DS_OPACITY.muted */
-        transition: opacity 0.2s ease;
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.7;
+      transition: opacity 0.2s ease;
     }
     .ios-sort-button:hover { opacity: 1; }
     .ios-sort-indicator { display: inline-flex; line-height: 0; }
 
-    .ios-table tr{
-        transition: background-color 0.2s ease;
+    .ios-table tr { transition: background-color 0.2s ease; }
+    /* Recorder uses an alpha 0.018 stripe — almost invisible, but enough
+       to give long tables a calm rhythm without the harsh banding the
+       previous --ax-bg-subtle gave. Pure-white backgrounds in light mode
+       fall through to the soft chrome below. */
+    body.theme-dark .ios-table tr:nth-child(even) td {
+      background-color: rgba(255,255,255,0.018);
+    }
+    body:not(.theme-dark) .ios-table tr:nth-child(even) td {
+      background-color: rgba(15,30,60,0.018);
+    }
+    .group-summary-row td { background-color: var(--ax-bg-group); }
+    .ios-table tr:hover { background-color: var(--ax-bg-row-hover); }
+    .ios-table td {
+      padding: var(--ios-table-cell-padding);
+      color: var(--ax-fg);
+      border-bottom: 1px solid var(--ax-border-subtle);
+      vertical-align: middle;
+      font-variant-numeric: tabular-nums lining-nums;
     }
 
-    .ios-table tr:nth-child(even){
-        background-color: var(--ios-secondary-bg);
+    .ios-status {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: var(--ax-radius-pill);
+      font-size: var(--ax-fs-lg);
+      font-weight: var(--ax-fw-medium);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     }
-    .group-summary-row td{
-        background-color: #f5f7fb;
+    .ios-status.active, .ios-status.success {
+      background-color: var(--ax-tone-positive-bg);
+      color: var(--ax-positive);
+      border: 1px solid var(--ax-tone-positive-border);
     }
-
-    .ios-table tr:hover{
-        background-color: var(--ios-table-row-hover);
-    }
-
-    .ios-table td{
-        padding: var(--ios-table-cell-padding);
-        color: #222;
-        border-bottom: 1px solid rgba(60, 60, 67, 0.04);
-        vertical-align: middle;
-    }
-
-    .ios-status{
-        display: inline-block;
-        padding: 5px 10px;
-        border-radius: 16px;
-        font-size: 13px;
-        font-weight: 500;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-    }
-
-    .ios-status.active, .ios-status.success{
-        background-color: var(--ios-status-active-bg);
-        color: var(--ios-green);
-        border: 1px solid rgba(52, 199, 89, 0.25);
-    }
-
     .ios-status.pending {
-        background-color: var(--ios-status-pending-bg);
-        color: var(--ios-orange);
-        border: 1px solid rgba(215, 129, 0, 0.25);
+      background-color: var(--ax-tone-neutral-bg);
+      color: var(--ax-orange);
+      border: 1px solid var(--ax-tone-neutral-border);
     }
-
     .ios-status.inactive, .ios-status.failed, .ios-status.canceled {
-        background-color: var(--ios-status-inactive-bg);
-        color: var(--ios-red);
-        border: 1px solid rgba(255, 59, 48, 0.25);
+      background-color: var(--ax-tone-negative-bg);
+      color: var(--ax-negative);
+      border: 1px solid var(--ax-tone-negative-border);
     }
 
-    .ios-empty-state{
-        padding: var(--ios-empty-padding);
-        text-align: center;
+    .ios-empty-state {
+      padding: var(--ios-empty-padding);
+      text-align: center;
+      color: var(--ax-fg-2);
     }
 
+    /* Search */
     .ios-search-container {
-        position: relative;
-        box-sizing: border-box;
-        width: 220px;
-    box-shadow: var(--glass-1-shadow);
-    border-radius: 12px;
-    border: 1px solid var(--glass-1-border);
-    background: var(--glass-1-bg);
-    -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate));
-    backdrop-filter: blur(var(--glass-1-blur)) saturate(var(--glass-1-saturate));
+      position: relative;
+      box-sizing: border-box;
+      width: 220px;
+      box-shadow: var(--ax-glass-1-shadow);
+      border-radius: var(--ax-radius-xl);
+      border: 1px solid var(--ax-border);
+      background: var(--ax-bg-input);
+      color: var(--ax-fg);
+      -webkit-backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate));
+      backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate));
     }
-
     .ios-search-input {
-        width: 100%;
-        padding: 10px 32px 10px 12px;
-        border-radius: 12px;
-        border: 1px solid transparent;
-        background: transparent;
-        font-size: 14px;
-        font-family: var(--ios-font);
-        color: var(--ios-text-primary);
+      width: 100%;
+      padding: 10px 32px 10px 12px;
+      border-radius: var(--ax-radius-xl);
+      border: 1px solid transparent;
+      background: transparent;
+      font-size: var(--ax-fs-menu);
+      font-family: var(--ax-font-body);
+      color: var(--ax-fg);
     }
-
     .ios-search-input:focus {
-        outline: none;
-        border-color: var(--ios-blue);
-        box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.08);
+      outline: none;
+      border-color: var(--ax-blue);
+      box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.10);
+    }
+    .ios-search-icon {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--ax-fg-muted);
+      transition: color .3s ease;
+    }
+    .ios-search-clear {
+      position: absolute;
+      right: 30px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      font-size: 18px;
+      cursor: pointer;
+      color: var(--ax-fg-muted);
+      display: none;
+      padding: 4px;
+    }
+    .ios-search-container:focus-within {
+      box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.10);
     }
 
+    .ios-highlight-row {
+      border-left: 3px solid var(--ax-yellow);
+      background: var(--ax-bg-highlight);
+    }
+    .ios-match-enrolled {
+      background-color: var(--ax-tone-positive-bg) !important;
+      border-left: 3px solid var(--ax-positive) !important;
+    }
+    .ios-match-eligible {
+      background-color: var(--ax-tone-info-bg) !important;
+      border-left: 3px solid var(--ax-blue) !important;
+    }
+
+    /* Action chip */
     .action-chip {
-        display:inline-flex; align-items:center; justify-content:center;
-        height:28px; min-width:78px; padding:0 10px; border-radius:9999px;
-        font:600 12.5px/28px system-ui, -apple-system, "Segoe UI", Roboto;
-        border:1px solid transparent; box-shadow:var(--lg-shadow);
-        transition: background .15s ease, transform .15s ease, border-color .15s ease;
+      display: inline-flex; align-items: center; justify-content: center;
+      height: 28px; min-width: 78px; padding: 0 10px; border-radius: 9999px;
+      font: 600 12.5px/28px var(--ax-font-body);
+      border: 1px solid transparent; box-shadow: var(--ax-glass-1-shadow);
+      transition: background .15s ease, transform .15s ease, border-color .15s ease;
     }
     .action-chip--enroll {
-        background: rgba(0,122,255,0.12);
-        border-color: rgba(0,122,255,0.35);
-        color: #007aff;
-        cursor: pointer;
+      background: var(--ax-tone-info-bg);
+      border-color: var(--ax-tone-info-border);
+      color: var(--ax-blue);
+      cursor: pointer;
     }
-    .action-chip--enroll:hover {
-        background: rgba(0,122,255,0.18);
-    }
-    .action-chip--enroll:active {
-        transform: translateY(1px);
-    }
-    .action-chip--enroll:focus-visible {
-        outline: 2px solid rgba(0,122,255,0.35);
-        outline-offset: 2px;
-    }
+    .action-chip--enroll:hover { background: var(--ax-tone-info-soft-bg); filter: brightness(1.05); }
+    .action-chip--enroll:active { transform: translateY(1px); }
+    .action-chip--enroll:focus-visible { outline: 2px solid rgba(10,132,255,0.35); outline-offset: 2px; }
     .action-chip--enrolled {
-        background: rgba(16,185,129,0.12);
-        border-color: rgba(16,185,129,0.35);
-        color: #0e9f6e;
-        cursor: pointer; pointer-events: auto;
+      background: var(--ax-tone-positive-bg);
+      border-color: var(--ax-tone-positive-border);
+      color: var(--ax-positive);
+      cursor: pointer;
     }
-    .action-chip--enrolled:hover { background: rgba(16,185,129,0.18); }
+    .action-chip--enrolled:hover { filter: brightness(1.05); }
     .action-chip--enrolled:active { transform: translateY(1px); }
-    .action-chip--enrolled:focus-visible { outline: 2px solid rgba(16,185,129,0.35); outline-offset: 2px; }
+    .action-chip--enrolled:focus-visible {
+      outline: 2px solid var(--ax-tone-positive-border); outline-offset: 2px;
+    }
 
     @media (max-width: 768px) {
-        .dock-container {
-            width: 95%;
-            left: 2.5%;
-        }
-
-        .summary-header,
-        .button-container {
-            flex-direction: column;
-            align-items: stretch;
-        }
-
-        .chart-grid-responsive {
-            grid-template-columns: 1fr !important;
-        }
+      .dock-container { width: 95%; left: 2.5%; }
+      .summary-header,
+      .button-container { flex-direction: column; align-items: stretch; }
+      .chart-grid-responsive { grid-template-columns: 1fr !important; }
     }
 
     .dock-container .ios-table {
-        background: rgba(255,255,255,.92);
-        backdrop-filter: none;
-        -webkit-backdrop-filter: none;
+      background: var(--ax-bg-table);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
     }
     .dock-container .ios-table-head {
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-    box-shadow: inset 0 -1px 0 rgba(0,0,0,.06);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      box-shadow: inset 0 -1px 0 var(--ax-border-subtle);
     }
 
     button:focus-visible, .ios-table th.sortable:focus-visible {
-        outline: 2px solid rgba(0,122,255,.35);
-        outline-offset: 2px;
-        border-radius: 10px;
+      outline: 2px solid rgba(10, 132, 255, 0.35);
+      outline-offset: 2px;
+      border-radius: var(--ax-radius-lg);
     }
 
     .hidden { display: none !important; }
-    .text-muted { color: var(--ios-text-secondary); opacity:0.7; /* DS_OPACITY.muted */ }
+    .text-muted { color: var(--ax-fg-muted); opacity: 0.85; }
 
-    .btn { position:relative; display:inline-flex; align-items:center; justify-content:center; gap:8px; border-radius:12px; border:1px solid transparent; cursor:pointer; transition: transform .15s ease, box-shadow .15s ease, background .15s ease, color .15s ease; font-weight:600; font-family: var(--ios-font); }
-    .btn--sm { padding:6px 12px; font-size:13px; }
-    .btn--md { padding:10px 16px; font-size:14px; }
-    .btn--lg { padding:12px 24px; font-size:16px; }
+    /* Buttons (.btn family) */
+    .btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: var(--ax-radius-lg);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: transform .15s ease, box-shadow .15s ease, background .15s ease, color .15s ease, filter .15s ease;
+      font-weight: var(--ax-fw-semibold);
+      font-family: var(--ax-font-body);
+    }
+    .btn--sm { padding: 6px 12px; font-size: var(--ax-fs-lg); }
+    .btn--md { padding: 10px 16px; font-size: var(--ax-fs-menu); }
+    .btn--lg { padding: 12px 24px; font-size: var(--ax-fs-2xl); }
     .btn--full { width: 100%; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    .btn--primary { background: linear-gradient(to bottom, rgba(255,255,255,0.08) 0%, transparent 8%), linear-gradient(135deg, rgba(0,122,255,0.9), rgba(0,122,255,0.8)); color:#fff; border-color: rgba(255,255,255,0.25); box-shadow: 0 6px 16px rgba(0,122,255,0.20); }
-    .btn--secondary { background: linear-gradient(135deg, rgba(255,255,255,0.22), rgba(255,255,255,0.12)); color:var(--ios-text-secondary); border-color: var(--lg-border); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-    .btn--danger { background: linear-gradient(135deg, rgba(255,59,48,0.9), rgba(255,59,48,0.8)); color:#fff; border-color: rgba(255,59,48,0.5); box-shadow: 0 6px 16px rgba(255,59,48,0.20); }
-    .btn--success { background: linear-gradient(135deg, rgba(52,199,89,0.9), rgba(52,199,89,0.8)); color:#fff; border-color: rgba(52,199,89,0.5); box-shadow: 0 6px 16px rgba(52,199,89,0.20); }
-    .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: var(--ios-shadow-md); }
-    .btn:active:not(:disabled) { transform: translateY(0); box-shadow: var(--ios-shadow-sm); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn--primary {
+      background: var(--ax-blue);
+      color: #ffffff;
+      border-color: var(--ax-blue);
+      box-shadow: 0 1px 3px rgba(10, 132, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+    .btn--primary:hover:not(:disabled) { filter: brightness(1.06); }
+    .btn--secondary {
+      background: var(--ax-bg-glass-inset);
+      color: var(--ax-fg);
+      border-color: var(--ax-border);
+      box-shadow: var(--ax-glass-1-shadow), var(--ax-glass-1-edge);
+    }
+    .btn--secondary:hover:not(:disabled) { background: var(--ax-bg-row-hover); }
+    .btn--danger {
+      background: var(--ax-red);
+      color: #ffffff;
+      border-color: var(--ax-red);
+      box-shadow: 0 1px 3px rgba(215, 49, 38, 0.30), inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+    .btn--danger:hover:not(:disabled) { filter: brightness(1.06); }
+    .btn--success {
+      background: var(--ax-green);
+      color: #ffffff;
+      border-color: var(--ax-green);
+      box-shadow: 0 1px 3px rgba(52, 199, 89, 0.30), inset 0 1px 0 rgba(255,255,255,0.22);
+    }
+    .btn--success:hover:not(:disabled) { filter: brightness(1.06); }
+    .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: var(--ax-shadow-md); }
+    .btn:active:not(:disabled) { transform: translateY(0); box-shadow: var(--ax-shadow-sm); }
 
-    .fav-toggle { background: transparent !important; border: none !important; box-shadow: none !important; padding: 4px; border-radius: 8px; }
-    .fav-toggle:hover { transform: none; background: rgba(0,0,0,0.04); }
-    .fav-toggle:focus-visible { outline: 2px solid rgba(0,122,255,.35); outline-offset: 2px; }
+    .fav-toggle {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      padding: 4px;
+      border-radius: var(--ax-radius-md);
+      color: var(--ax-fg-muted);
+    }
+    .fav-toggle:hover {
+      transform: none;
+      background: var(--ax-bg-row-hover);
+    }
+    .fav-toggle:focus-visible {
+      outline: 2px solid rgba(10,132,255,0.35);
+      outline-offset: 2px;
+    }
 
-    .badge { display:inline-flex; align-items:center; gap:4px; border-radius:12px; border:1px solid currentColor; background: linear-gradient(135deg, rgba(255,255,255,var(--lg-alpha-1)), rgba(255,255,255,var(--lg-alpha-2))); -webkit-backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)); backdrop-filter: blur(var(--lg-blur)) saturate(var(--lg-saturate)); transition: transform .15s ease, box-shadow .15s ease; }
-    .badge--sm { padding:3px 6px; font-size:11px; border-radius:8px; }
-    .badge--md { padding:4px 8px; font-size:12px; border-radius:10px; }
-    .badge--lg { padding:5px 10px; font-size:13px; border-radius:12px; }
-    .badge:hover { transform: translateY(-2px); box-shadow: 0 2px 5px rgba(0,0,0,0.08); }
+    /* Badge */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: var(--ax-radius-md);
+      border: 1px solid currentColor;
+      background: var(--ax-glass-1-bg);
+      -webkit-backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate));
+      backdrop-filter: blur(var(--ax-glass-1-blur)) saturate(var(--ax-glass-1-saturate));
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .badge--sm { padding: 3px 6px; font-size: var(--ax-fs-sm); border-radius: var(--ax-radius-sm); }
+    .badge--md { padding: 4px 8px; font-size: var(--ax-fs-md); border-radius: var(--ax-radius-md); }
+    .badge--lg { padding: 5px 10px; font-size: var(--ax-fs-lg); border-radius: var(--ax-radius-md); }
+    .badge:hover { transform: translateY(-2px); box-shadow: var(--ax-shadow-sm); }
 
-    .dock-notification-container { position: fixed; top: 20px; right: 20px; z-index: var(--z-notification, 100100); display: flex; flex-direction: column; gap: 12px; pointer-events: none; max-width: 360px; }
-    .dock-notification { pointer-events: auto; padding: 12px 14px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); color: #fff; font-size: 14px; display: flex; align-items: center; gap: 8px; opacity: 0; transform: translateX(100px); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    /* Notifications */
+    .dock-notification-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: var(--ax-z-notification);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      pointer-events: none;
+      max-width: 360px;
+    }
+    /* Notification card — glass tier-2 + tone-tinted bg + tinted left bar.
+       Replaces the previous opaque solid-color block; this lets the dock's
+       blurred background show through and matches recorder.user.js's
+       layered approach to alerts. */
+    .dock-notification {
+      pointer-events: auto;
+      padding: 11px 14px 11px 16px;
+      border-radius: var(--ax-radius-lg);
+      background: var(--ax-glass-2-bg);
+      border: 1px solid var(--ax-glass-2-border);
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));
+      color: var(--ax-fg);
+      font-size: var(--ax-fs-menu);
+      font-weight: var(--ax-fw-medium);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      overflow: hidden;
+      opacity: 0;
+      transform: translateX(100px);
+      transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+                  transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .dock-notification::before {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0; left: 0;
+      width: 3px;
+      background: currentColor;
+    }
     .dock-notification.show { opacity: 1; transform: translateX(0); }
     .dock-notification.removing { opacity: 0; transform: translateX(100px); pointer-events: none; }
-    .dock-notification.info { background-color: var(--ios-blue); }
-    .dock-notification.success { background-color: var(--ios-green); }
-    .dock-notification.error { background-color: var(--ios-red); }
-    .dock-notification.warning { background-color: var(--ios-orange); }
-    .dock-notification .close { background: none; border: none; color: white; font-size: 18px; cursor: pointer; padding: 0 0 0 8px; margin-left: auto; opacity: 0.7; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; transition: opacity 0.2s; } /* DS_OPACITY.muted */
+    .dock-notification.info {
+      color: var(--ax-blue);
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--ax-blue) 14%, transparent),
+          color-mix(in srgb, var(--ax-blue) 6%, transparent)),
+        var(--ax-glass-2-bg);
+    }
+    .dock-notification.success {
+      color: var(--ax-positive);
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--ax-positive) 14%, transparent),
+          color-mix(in srgb, var(--ax-positive) 6%, transparent)),
+        var(--ax-glass-2-bg);
+    }
+    .dock-notification.error {
+      color: var(--ax-critical);
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--ax-critical) 16%, transparent),
+          color-mix(in srgb, var(--ax-critical) 7%, transparent)),
+        var(--ax-glass-2-bg);
+    }
+    .dock-notification.warning {
+      color: var(--ax-orange);
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--ax-orange) 14%, transparent),
+          color-mix(in srgb, var(--ax-orange) 6%, transparent)),
+        var(--ax-glass-2-bg);
+    }
+    /* The accent currentColor on .dock-notification.{info,success,error,warning}
+       drives the ::before bar; the message text and close button explicitly
+       reset to neutral foreground so they stay readable on the tinted glass
+       background. .icon / .accent children opt into the accent by re-asserting
+       currentColor to override this normalization. */
+    .dock-notification > :not(.close):not(.icon):not(.accent) { color: var(--ax-fg); }
+    .dock-notification > .icon,
+    .dock-notification > .accent { color: currentColor; flex-shrink: 0; }
+    .dock-notification .close {
+      background: none;
+      border: none;
+      color: var(--ax-fg-2);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 0 0 0 8px;
+      margin-left: auto;
+      opacity: 0.7;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.2s, color 0.2s;
+    }
     .dock-notification .close:hover { opacity: 1; }
-    .dock-notification:hover { box-shadow: 0 6px 16px rgba(0,0,0,0.2); }
+    .dock-notification:hover { box-shadow: var(--ax-shadow-lg); }
 
-    .refresh-dropdown-container { position: relative; display:flex; align-items:center; margin-right: 12px; }
-    .refresh-brand-logo { display:flex; align-items:center; justify-content:center; margin-left:6px; color:#fff; font-size:10px; letter-spacing:0.4px; text-transform:uppercase; font-weight:600; }
-    .refresh-brand-logo svg { width:16px; height:16px; display:block; }
-    .refresh-dropdown-menu { position: absolute; top: 100%; left: 0; background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; box-shadow: 0 12px 24px rgba(0,0,0,0.14); z-index: var(--z-nav-dropdown, 200); min-width: 180px; display: none; margin-top: 8px; padding: 6px; overflow: hidden; }
-    .refresh-dropdown-container.open .refresh-dropdown-menu { display:block; }
-    .refresh-dropdown-item { padding: 10px 12px; cursor: pointer; display: flex; align-items: center; font-size: 14px; color: #1c1c1e; border-radius: 8px; margin: 2px; transition: background-color .15s ease, color .15s ease; background: transparent; font-weight: 600; gap: 8px; }
-    .refresh-dropdown-item:hover { background-color: rgba(0,0,0,0.05); }
-
-    .ios-search-icon { position:absolute; right:10px; top:50%; transform:translateY(-50%); pointer-events:none; transition: color .3s ease; }
-    .ios-search-clear { position:absolute; right:30px; top:50%; transform:translateY(-50%); background:none; border:none; font-size:18px; cursor:pointer; color:var(--ios-gray); display:none; padding:4px; }
-    .ios-search-container:focus-within { box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.1); }
-
-    .ios-highlight-row { border-left: 3px solid var(--ios-highlight-border); background: var(--ios-highlight-bg); }
-    .ios-match-enrolled { background-color: rgba(52, 199, 89, 0.15) !important; border-left: 3px solid rgba(52, 199, 89, 0.6) !important; }
-    .ios-match-eligible { background-color: rgba(0, 122, 255, 0.15) !important; border-left: 3px solid rgba(0, 122, 255, 0.6) !important; }
+    /* Refresh dropdown */
+    .refresh-dropdown-container {
+      position: relative;
+      display: flex;
+      align-items: center;
+      margin-right: 12px;
+    }
+    .refresh-brand-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-left: 6px;
+      color: #fff;
+      font-size: var(--ax-fs-xs);
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      font-weight: var(--ax-fw-semibold);
+    }
+    .refresh-brand-logo svg { width: 16px; height: 16px; display: block; }
+    .refresh-dropdown-menu {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      background: var(--ax-bg-card);
+      color: var(--ax-fg);
+      border: 1px solid var(--ax-border);
+      border-radius: var(--ax-radius-xl);
+      box-shadow: var(--ax-shadow-md);
+      z-index: var(--ax-z-nav-dropdown);
+      min-width: 180px;
+      display: none;
+      margin-top: 8px;
+      padding: 6px;
+      overflow: hidden;
+    }
+    .refresh-dropdown-container.open .refresh-dropdown-menu { display: block; }
+    .refresh-dropdown-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      font-size: var(--ax-fs-menu);
+      color: var(--ax-fg);
+      border-radius: var(--ax-radius-md);
+      margin: 2px;
+      transition: background-color .15s ease, color .15s ease;
+      background: transparent;
+      font-weight: var(--ax-fw-semibold);
+      gap: 8px;
+    }
+    .refresh-dropdown-item:hover { background-color: var(--ax-bg-row-hover); }
 
     .dock-modal .modal-header {
-        background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.86));
-        box-shadow: inset 0 -1px 0 rgba(0,0,0,.06);
+      background: var(--ax-bg-table-head);
+      box-shadow: inset 0 -1px 0 var(--ax-border-subtle);
     }
 
     @media (prefers-reduced-motion: reduce) {
-        * {
-            animation-duration: .001ms !important;
-            animation-iteration-count: 1 !important;
-            transition-duration: .001ms !important;
-        }
+      * {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+      }
     }
 
-    /* === Responsive header priority (ResizeObserver-driven) ===
-       A ResizeObserver on .dock-container measures its actual content-box
-       width and toggles .cw-lte-<bp> classes. This ensures breakpoints
-       respond to the real container width (including side-panel shrinkage),
-       independent of viewport size.
-       Priority order (highest = hidden last):
-       1. AlexQuant logo + toggle   (never hidden)
-       2. Trade / Analysis nav     (hidden last among removables)
-       3. DayChange + TotalChange  (first account-info pair)
-       4. AccVal + Cash            (second account-info pair)
-       5. $SPX
-       6. $COMPX
-       7. $DJI
-       8. $RUT                     (hidden first among data items)
-       Status indicators are not in the priority list → hidden earliest.
-    */
-
-    /* Tier 0 (not in priority list): hide status indicator lights first */
+    /* Responsive header priority */
     .cw-lte-1500 .dock-status-container { display: none !important; }
-
-    /* Tier 8: hide $RUT */
     .cw-lte-1300 .dock-indices [data-index-symbol="$RUT"] { display: none !important; }
-
-    /* Tier 7: hide $DJI */
     .cw-lte-1200 .dock-indices [data-index-symbol="$DJI"] { display: none !important; }
-
-    /* Tier 6: hide $COMPX */
     .cw-lte-1050 .dock-indices [data-index-symbol="$COMPX"] { display: none !important; }
-
-    /* Tier 5: hide $SPX (last index) + center separator */
     .cw-lte-950 .dock-indices { display: none !important; }
     .cw-lte-950 .dock-center-sep { display: none !important; }
-
-    /* Tier 4: hide AccVal + Cash pair */
     .cw-lte-820 .dock-totals-accval { display: none !important; }
-
-    /* Tier 3: hide all totals (DayChange + TotalChange) + nav separator */
     .cw-lte-640 .dock-totals { display: none !important; }
     .cw-lte-640 .dock-nav-sep { display: none !important; }
-
-    /* Tier 2: hide Trade / Analysis nav buttons */
     .cw-lte-500 .dock-nav { display: none !important; }
 
-    /* ══════════════════════════════════════════════════════════════════════════
-       Mobile Layout — driven by .layout-mobile on <html>
-       Set by initLayoutMode() via matchMedia('(max-width: 768px)')
-       ══════════════════════════════════════════════════════════════════════════ */
-
-    /* ── Shell ── */
+    /* Mobile layout */
     .layout-mobile .dock-container {
-        width: 100vw !important;
-        height: 100vh !important;
-        border-radius: 0;
-        left: 0 !important;
-        top: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      border-radius: 0;
+      left: 0 !important;
+      top: 0 !important;
     }
     .layout-mobile .dock-header {
-        padding: 8px 16px;
-        gap: 8px;
+      padding: 8px 16px;
+      gap: 8px;
     }
     .layout-mobile .dock-content {
-        padding: 8px 12px;
-        max-height: calc(100vh - 48px - 56px - env(safe-area-inset-bottom, 0px));
-        height: calc(100vh - 48px - 56px - env(safe-area-inset-bottom, 0px));
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
+      padding: 8px 12px;
+      max-height: calc(100vh - 48px - 56px - env(safe-area-inset-bottom, 0px));
+      height: calc(100vh - 48px - 56px - env(safe-area-inset-bottom, 0px));
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
-    /* Element visibility in mobile is handled by ResizeObserver breakpoints
-       (.cw-lte-*) based on actual container width — no separate mobile overrides.
-       This preserves the priority-based hide sequence at all widths. */
 
-    /* ── Bottom Tab Bar ── */
+    /* Mobile chrome (.mobile-tab-bar / .mobile-more-sheet) rides the same
+       glass tokens as desktop floating panels — tier-2 bg + tier-2 shadow +
+       saturate-145% blur — so the bottom tab bar feels physically connected
+       to the dock above instead of being a flat strip. */
     .mobile-tab-bar {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: calc(56px + env(safe-area-inset-bottom, 0px));
-        padding-bottom: env(safe-area-inset-bottom, 0px);
-        display: flex;
-        justify-content: space-around;
-        align-items: center;
-        background: rgba(255, 255, 255, 0.92);
-        backdrop-filter: blur(20px) saturate(180%);
-        -webkit-backdrop-filter: blur(20px) saturate(180%);
-        border-top: 1px solid rgba(0, 0, 0, 0.08);
-        z-index: var(--z-sticky-nav, 100);
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: calc(56px + env(safe-area-inset-bottom, 0px));
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      background: var(--ax-glass-2-bg);
+      backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)) brightness(var(--ax-glass-2-brightness));
+      border-top: 1px solid var(--ax-glass-2-border);
+      box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);
+      z-index: var(--ax-z-sticky-nav);
     }
     .mobile-tab-item {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-        min-width: 44px;
-        min-height: 44px;
-        justify-content: center;
-        cursor: pointer;
-        color: var(--ios-text-secondary);
-        font-size: 10px;
-        font-weight: 500;
-        background: none;
-        border: none;
-        font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, sans-serif);
-        -webkit-tap-highlight-color: transparent;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      min-width: 44px;
+      min-height: 44px;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--ax-fg-2);
+      font-size: var(--ax-fs-xs);
+      font-weight: var(--ax-fw-medium);
+      background: none;
+      border: none;
+      font-family: var(--ax-font-body);
+      -webkit-tap-highlight-color: transparent;
     }
-    .mobile-tab-item.active { color: var(--ios-blue); }
+    .mobile-tab-item.active { color: var(--ax-blue); }
     .mobile-tab-item svg { width: 22px; height: 22px; }
 
-    /* ── More‐sheet overlay (mobile "More" tab) ── */
     .mobile-more-sheet {
-        position: fixed;
-        bottom: calc(56px + env(safe-area-inset-bottom, 0px));
-        left: 0;
-        right: 0;
-        background: rgba(255, 255, 255, 0.96);
-        backdrop-filter: blur(20px) saturate(180%);
-        -webkit-backdrop-filter: blur(20px) saturate(180%);
-        border-top: 1px solid rgba(0, 0, 0, 0.08);
-        border-radius: 14px 14px 0 0;
-        padding: 12px 0 4px;
-        z-index: var(--z-sticky-nav, 100);
-        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+      position: fixed;
+      bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+      left: 0;
+      right: 0;
+      background: var(--ax-glass-3-bg);
+      backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
+      -webkit-backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
+      border-top: 1px solid var(--ax-glass-3-border);
+      border-radius: var(--ax-radius-2xl) var(--ax-radius-2xl) 0 0;
+      padding: 12px 0 4px;
+      z-index: var(--ax-z-sticky-nav);
+      box-shadow: var(--ax-glass-3-shadow), var(--ax-glass-3-edge);
     }
     .mobile-more-sheet-item {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 14px 20px;
-        font-size: 15px;
-        color: var(--ios-text-primary);
-        background: none;
-        border: none;
-        width: 100%;
-        text-align: left;
-        cursor: pointer;
-        font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, sans-serif);
-        -webkit-tap-highlight-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      font-size: var(--ax-fs-xl);
+      color: var(--ax-fg);
+      background: none;
+      border: none;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      font-family: var(--ax-font-body);
+      -webkit-tap-highlight-color: transparent;
     }
-    .mobile-more-sheet-item:active { background: rgba(0, 0, 0, 0.04); }
+    .mobile-more-sheet-item:active { background: var(--ax-bg-row-hover); }
     .mobile-more-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.2);
-        z-index: calc(var(--z-sticky-nav, 100) - 1);
+      position: fixed;
+      inset: 0;
+      background: var(--ax-modal-backdrop-light);
+      z-index: calc(var(--ax-z-sticky-nav) - 1);
     }
 
-    /* ── Page-level mobile rules ── */
-
-    /* Section grids (Portfolio, Options, etc.) → single column with tighter gap */
     .layout-mobile .section-grid {
-        grid-template-columns: 1fr !important;
-        gap: 8px !important;
+      grid-template-columns: 1fr !important;
+      gap: 8px !important;
     }
-
-    /* Chart page: single column, tighter gap */
     .layout-mobile .chart-grid-responsive {
-        grid-template-columns: 1fr !important;
-        gap: 12px !important;
+      grid-template-columns: 1fr !important;
+      gap: 12px !important;
     }
-
-    /* Opening page: tighter chart grid */
     .layout-mobile .opening-chart-grid {
-        grid-template-columns: 1fr !important;
-        gap: 8px !important;
+      grid-template-columns: 1fr !important;
+      gap: 8px !important;
     }
-
-    /* News page: single column */
     .layout-mobile .alexquant-news-layout {
-        grid-template-columns: 1fr !important;
+      grid-template-columns: 1fr !important;
     }
-
-    /* AI page: full width, reduced padding */
     .layout-mobile .ai-analysis-container {
-        max-width: 100% !important;
-        padding: 12px 14px !important;
+      max-width: 100% !important;
+      padding: 12px 14px !important;
     }
-
-    /* Universal mobile spacing helpers */
     .layout-mobile .page-header {
-        padding: 10px 12px !important;
+      padding: 10px 12px !important;
     }
     .layout-mobile .control-bar {
-        flex-wrap: wrap;
-        gap: 6px !important;
+      flex-wrap: wrap;
+      gap: 6px !important;
     }
 
-    `;
-  const extraCSS = `
-        .table-scroll {
-            overflow-x: auto;
-            scrollbar-gutter: stable both-edges;
-            padding-right: 14px;
-        }
-        .ios-table tbody tr:hover {
-            background: rgba(0,0,0,0.03);
-            box-shadow: inset 0 1px 0 rgba(0,0,0,0.04), inset 0 -1px 0 rgba(0,0,0,0.04);
-        }
-        .ios-table td { line-height: 1.2; padding-top: 6px; padding-bottom: 6px; }
-        .ios-table th { line-height: 1.2; padding-top: 8px; padding-bottom: 8px; }
-    `;
-  injectStylesheet("dock-extra-styles", extraCSS);
-  injectStylesheet("dock-global-styles", globalCSS);
+    .table-scroll {
+      overflow-x: auto;
+      scrollbar-gutter: stable both-edges;
+      padding-right: 14px;
+    }
+    .ios-table tbody tr:hover {
+      background: var(--ax-bg-row-hover);
+      box-shadow: inset 0 1px 0 var(--ax-border-subtle), inset 0 -1px 0 var(--ax-border-subtle);
+    }
+    .ios-table td { line-height: 1.2; padding-top: 6px; padding-bottom: 6px; }
+    .ios-table th { line-height: 1.2; padding-top: 8px; padding-bottom: 8px; }
+  `;
+;// ./src/frontend/components/core/axTheme/runtime.ts
+// CSS runtime — injects the full UI stylesheet into <head> on first use.
+// Idempotent: subsequent calls are a single boolean check.
+
+
+
+
+
+const STYLE_ID = "ax-ui-runtime";
+let injected = false;
+let runtimeBootstrapped = false;
+function bootstrapLiquidGlassRuntime() {
+  if (runtimeBootstrapped) return;
+  runtimeBootstrapped = true;
+  // SVG filter wants document.body — defer if not yet available.
+  if (typeof document === "undefined") return;
+  const apply = () => {
+    ensureLiquidGlassFilter();
+    startGlobalRimObserver();
+  };
+  if (document.body) {
+    apply();
+  } else if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", apply, {
+      once: true
+    });
+  } else {
+    queueMicrotask(apply);
+  }
 }
+function ensureAxUICss() {
+  if (injected) {
+    bootstrapLiquidGlassRuntime();
+    return;
+  }
+  if (typeof document === "undefined") return;
+  if (document.getElementById(STYLE_ID)) {
+    injected = true;
+    bootstrapLiquidGlassRuntime();
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = STYLE_ID;
+  style.textContent = [axCssVars(), axResetCss, axGlassCss, axUtilitiesCss, axPresetsCss, axAnimationsCss, axShellCss].join("\n");
+  // <head> may not exist yet at document_start; fall back to documentElement
+  // so the stylesheet still lands above any later content.
+  const target = document.head ?? document.documentElement;
+  if (target) {
+    target.appendChild(style);
+    injected = true;
+  } else if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      if (!injected) {
+        (document.head ?? document.documentElement).appendChild(style);
+        injected = true;
+      }
+    }, {
+      once: true
+    });
+  }
+  bootstrapLiquidGlassRuntime();
+}
+
+/** Compose a class list, ignoring falsy values. */
+function cx(...parts) {
+  return parts.filter(Boolean).join(" ");
+}
+;// ./src/frontend/components/core/ui_styles.ts
+// Theme + style runtime entry. Thin wrapper around the AlexQuant
+// design-token system in ./axTheme. Existing callsites import the same
+// three functions (addAnimationStyles / addGlobalStyle / applyColorTheme),
+// which now bootstrap the unified theme stylesheet and apply the chosen
+// light / dark / auto mode.
+
+
+
+
+/** Inject all CSS — vars + reset + utilities + presets + animations + shell. */
+function addGlobalStyle() {
+  ensureAxUICss();
+}
+
+/** Animations are bundled inside ensureAxUICss(); kept for back-compat. */
+function addAnimationStyles() {
+  ensureAxUICss();
+}
+
+/**
+ * Initialise / apply a colour theme. Recognised values:
+ *   - "default" / "auto" → boot-mode: load persisted preference, fall back
+ *                          to system preference if none. Does not overwrite
+ *                          the user's stored mode.
+ *   - "light"            → force light theme (persists choice).
+ *   - "dark"             → force dark theme (persists choice).
+ *
+ * Always idempotent: ensures CSS is injected and the controller is wired.
+ */
 function applyColorTheme(theme = "default") {
-  const root = document.documentElement;
-  root.style.setProperty("--ios-blue", "#007AFF");
-  root.style.setProperty("--ios-dark-blue", "#0062CC");
-  root.style.setProperty("--ios-green", "rgb(32, 169, 69)");
-  root.style.setProperty("--ios-orange", "rgb(215, 129, 0)");
-  root.style.setProperty("--ios-red", "rgb(215, 49, 38)");
-  root.style.setProperty("--ios-title-gradient", "linear-gradient(45deg, #4CAF50, #2196F3)");
-  requestAnimationFrame(() => {
-    document.body.classList.remove("theme-default", "theme-green", "theme-purple", "theme-dark");
-    document.body.classList.add(`theme-${theme}`);
-  });
+  ensureAxUICss();
+  initTheme();
+  if (theme === "light" || theme === "dark") {
+    const mode = theme;
+    setTheme(mode);
+  }
+  // "default" / "auto" / anything else → keep the persisted/system mode
+  // already applied by initTheme().
   return theme;
 }
 ;// ./src/shared/log/devTools.ts
@@ -79058,7 +81270,9 @@ function syncRecorderSettings(recorder, settings, defaults) {
     log.info("[Phase 1] Parallel kickoff: CSS + DOM + Auth + DB");
     addGlobalStyle();
     addAnimationStyles();
-    applyColorTheme("default");
+    // Initialise theme controller. Reads persisted preference (localStorage:
+    // alexquant.themeMode) when present; otherwise follows system preference.
+    applyColorTheme("auto");
     const layoutMode = initLayoutMode();
     log.debug("[Phase 1] CSS injected + color theme applied + layoutMode=" + layoutMode);
 
