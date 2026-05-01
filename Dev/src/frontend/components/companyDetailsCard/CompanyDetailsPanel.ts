@@ -54,16 +54,20 @@ export function openCompanyDetailsPanel(symbol: string): void {
   const overlay = ui_createElement("div", {
     props: { id: PANEL_ID },
     styleString:
-      "position: fixed; inset: 0; z-index: var(--z-modal-backdrop, 100500); background: rgba(0,0,0,0.4);" +
+      "position: fixed; inset: 0; z-index: var(--ax-z-modal-backdrop); background: var(--ax-modal-backdrop-bg);" +
       " display: flex; align-items: center; justify-content: center;" +
       " -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);",
   });
 
+  // Tier-3 glass + rim — gives the company-details modal the same floating
+  // weight as the news / settings overlays. Inline shadow/bg/blur removed
+  // because the class supplies them and rim mouse tracking auto-attaches.
   const modal = ui_createElement("div", {
+    className: "ax-glass-3 ax-glass-rim",
     styleString:
-      "background: rgba(248,248,252,0.97); border-radius: 20px; width: min(880px, 94vw);" +
+      "border-radius: var(--ax-radius-2xl); width: min(880px, 94vw);" +
       " max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;" +
-      " box-shadow: var(--ios-shadow), 0 0 0 1px rgba(255,255,255,0.5);" +
+      " color: var(--ax-fg);" +
       " transform: scale(0.95); opacity: 0; transition: transform 0.3s cubic-bezier(.2,.9,.3,1), opacity 0.25s ease;",
   });
 
@@ -71,8 +75,8 @@ export function openCompanyDetailsPanel(symbol: string): void {
   const header = ui_createElement("div", {
     styleString:
       "display: flex; align-items: center; padding: 16px 24px;" +
-      " border-bottom: 1px solid var(--ios-border); flex-shrink: 0;" +
-      " background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.3));",
+      " border-bottom: 1px solid var(--ax-border); flex-shrink: 0;" +
+      " background: var(--ax-glass-2-bg);",
   });
   header.appendChild(
     ui_createElement("span", {
@@ -84,7 +88,7 @@ export function openCompanyDetailsPanel(symbol: string): void {
   const titleEl = ui_createElement("span", {
     text: symbol,
     styleString:
-      "font-size: 18px; font-weight: 700; color: var(--ios-text-primary);" +
+      "font-size: 18px; font-weight: var(--ax-fw-bold); color: var(--ax-fg);" +
       " flex: 1; letter-spacing: -0.3px;",
   });
   header.appendChild(titleEl);
@@ -107,7 +111,7 @@ export function openCompanyDetailsPanel(symbol: string): void {
   // Small inline spinner for background refresh
   const refreshIndicator = ui_createElement("div", {
     styleString:
-      "width: 14px; height: 14px; border: 1.5px solid var(--ios-border);" +
+      "width: 14px; height: 14px; border: 1.5px solid var(--ax-border);" +
       ` border-top-color: ${DS_COLORS.info}; border-radius: ${DS_RADIUS.full};` +
       " animation: alexquant-spin 0.8s linear infinite; display: none; flex-shrink: 0;",
   });
@@ -118,8 +122,8 @@ export function openCompanyDetailsPanel(symbol: string): void {
   const closeBtn = ui_createElement("button", {
     text: "\u00d7",
     styleString:
-      "background: rgba(0,0,0,0.05); border: none; font-size: 18px; cursor: pointer;" +
-      ` color: var(--ios-text-secondary); width: 28px; height: 28px; border-radius: ${DS_RADIUS.full};` +
+      "background: var(--ax-bg-glass-inset); border: none; font-size: 18px; cursor: pointer;" +
+      ` color: var(--ax-fg-2); width: 28px; height: 28px; border-radius: ${DS_RADIUS.full};` +
       " display: flex; align-items: center; justify-content: center; line-height: 1;" +
       " transition: background 0.15s;",
   }) as HTMLButtonElement;
