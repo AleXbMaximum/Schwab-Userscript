@@ -321,7 +321,9 @@ function syncRecorderSettings(
     log.info("[Phase 1] Parallel kickoff: CSS + DOM + Auth + DB");
     addGlobalStyle();
     addAnimationStyles();
-    applyColorTheme("default");
+    // Initialise theme controller. Reads persisted preference (localStorage:
+    // alexquant.themeMode) when present; otherwise follows system preference.
+    applyColorTheme("auto");
     const layoutMode = initLayoutMode();
     log.debug(
       "[Phase 1] CSS injected + color theme applied + layoutMode=" + layoutMode,
