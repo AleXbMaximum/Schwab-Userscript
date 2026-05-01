@@ -11,6 +11,12 @@ import {
   SHARE_MODE_LABELS,
   type GlobalShareMode,
 } from "shared/utils/globalShareMode";
+import {
+  getCurrentMode,
+  setTheme,
+  onThemeChanged,
+  type AxThemeMode,
+} from "../core/axTheme/controller";
 
 type NavGroup = { label: string; items: { text: string; view: string }[] };
 type ChangeViewFn = (view: string) => void;
@@ -84,7 +90,10 @@ export function ui_createMain(
       role: "region",
       "aria-expanded": "true",
     },
-    className: "dock-container dock-expanded",
+    // `.ax-glass-rim` wires the mouse-tracked rim via the global observer
+    // in axTheme/liquidGlass.ts, giving the dock the recorder-style hover
+    // light that follows the pointer along its border.
+    className: "dock-container dock-expanded ax-glass-rim",
     styleString: isMobile
       ? "left:0; top:0; width:100vw; height:100vh; opacity:0; transform:scale(0.98); transition: opacity .3s ease, transform .3s ease; border-radius:0;"
       : "left:0; top:0; width:82vw; height:100vh; opacity:0; transform:scale(0.98); transition: opacity .3s ease, transform .3s ease, width .3s ease, height .3s ease; border-radius:0;",
@@ -534,9 +543,9 @@ function buildShareModeButton(): HTMLElement {
     },
   }) as HTMLInputElement;
   customInput.style.cssText =
-    "width:42px;padding:1px 3px;font-size:11px;text-align:center;" +
-    "border:1px solid rgba(0,0,0,0.15);border-radius:3px;" +
-    "background:rgba(0,0,0,0.04);color:#111;box-sizing:border-box;" +
+    "width:42px;padding:1px 3px;font-size: var(--ax-fs-sm);text-align:center;" +
+    "border:1px solid var(--ax-border);border-radius: var(--ax-radius-xs);" +
+    "background: var(--ax-bg-input);color: var(--ax-fg);box-sizing:border-box;" +
     "display:none;-moz-appearance:textfield;";
 
   // Stop click/keyboard events from bubbling to panel-close or host-page handlers
@@ -571,6 +580,51 @@ function buildShareModeButton(): HTMLElement {
 
   shareRow.appendChild(optionsContainer);
   panel.appendChild(shareRow);
+
+  // ── Theme Mode row ──────────────────────────────────────────────────────
+  const themeRow = ui_createElement("div", {
+    className: "dock-settings-row",
+  });
+  const themeLabel = ui_createElement("span", {
+    text: "Theme",
+    className: "dock-settings-label",
+  });
+  themeRow.appendChild(themeLabel);
+
+  const themeOptionsContainer = ui_createElement("div", {
+    className: "dock-settings-options",
+  });
+  const THEME_MODES: { mode: AxThemeMode; label: string }[] = [
+    { mode: "light", label: "Light" },
+    { mode: "dark", label: "Dark" },
+    { mode: "auto", label: "Auto" },
+  ];
+  const themeOptionEls: { mode: AxThemeMode; el: HTMLElement }[] = [];
+  for (const { mode, label } of THEME_MODES) {
+    const optBtn = ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: label,
+      events: {
+        click: (e) => {
+          (e as Event).stopPropagation();
+          setTheme(mode);
+        },
+      },
+    });
+    themeOptionEls.push({ mode, el: optBtn });
+    themeOptionsContainer.appendChild(optBtn);
+  }
+  themeRow.appendChild(themeOptionsContainer);
+  panel.appendChild(themeRow);
+
+  function syncThemeOptions(activeMode: AxThemeMode) {
+    for (const { mode, el } of themeOptionEls) {
+      el.classList.toggle("active", mode === activeMode);
+    }
+  }
+  syncThemeOptions(getCurrentMode());
+  onThemeChanged(() => syncThemeOptions(getCurrentMode()));
+
   wrapper.appendChild(panel);
 
   // ── Sync dropdown option highlight ──────────────────────────────────────
