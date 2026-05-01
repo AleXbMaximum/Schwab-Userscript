@@ -73,9 +73,9 @@ export function createAgentSelector(opts: {
   const dateInput = ui_createElement("input", {
     props: { type: "date", value: today, max: today },
     styleString:
-      "padding: 2px 5px; font-size: 11px; border: 1px solid var(--ios-border);" +
-      " border-radius: 6px; outline: none; font-family: var(--ios-font);" +
-      " background: rgba(255,255,255,0.6); color: var(--ios-text-secondary);",
+      "padding: 2px 5px; font-size: var(--ax-fs-sm); border: 1px solid var(--ax-border);" +
+      " border-radius: 6px; outline: none; font-family: var(--ax-font-body);" +
+      " background: var(--ax-bg-input); color: var(--ax-fg-2);",
   }) as HTMLInputElement;
   headerEl.appendChild(dateInput);
 

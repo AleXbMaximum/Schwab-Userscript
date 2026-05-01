@@ -97,7 +97,7 @@ export function renderEventDecomposition(
     ` padding:${DS_SPACING.md} ${DS_SPACING.lg}; background:${DS_COLORS.bgPanel};`;
   const emptyStateStyle =
     `padding:${DS_SPACING.lg}; border-radius:${DS_RADIUS.lg};` +
-    ` border:1px dashed rgba(60,60,67,0.18); background:${DS_COLORS.bgSubtle};` +
+    ` border:1px dashed var(--ax-border); background:${DS_COLORS.bgSubtle};` +
     ` font-size:12px; color:${DS_COLORS.textSecondary};`;
 
   function renderContent(ts: TermStructurePoint[]): void {

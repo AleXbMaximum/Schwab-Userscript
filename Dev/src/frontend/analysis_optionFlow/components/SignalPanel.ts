@@ -7,6 +7,7 @@ import {
   DS_OPACITY,
   DS_COMPONENTS,
 } from "frontend/components/core/theme";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 import { CHART_FONTS } from "frontend/charts/ChartTheme";
 import type {
   SignalResult,
@@ -60,10 +61,12 @@ function severityStyle(severity: SignalSeverity): {
     default:
       return {
         bg: DS_COLORS.bgMuted,
-        border: `rgba(142,142,147,${DS_OPACITY.status})`,
+        border: "var(--ax-tone-muted-border)",
         dotColor: DS_COLORS.raw.muted,
         lineColor: DS_COLORS.raw.muted,
-        fillColor: "rgba(142,142,147,0.10)",
+        fillColor: isDarkTheme()
+          ? "rgba(162,162,167,0.18)"
+          : "rgba(142,142,147,0.10)",
       };
   }
 }

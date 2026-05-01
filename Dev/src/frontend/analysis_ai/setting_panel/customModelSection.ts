@@ -250,8 +250,8 @@ export function createCustomModelSection(opts: {
     for (const profile of customModels) {
       const row = ui_createElement("div", {
         styleString:
-          "display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px;" +
-          " border: 1px solid var(--ios-border); background: rgba(255,255,255,0.5);",
+          "display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--ax-radius-md);" +
+          " border: 1px solid var(--ax-border); background: var(--ax-glass-2-bg);",
       });
       const provLabel =
         PROVIDER_OPTIONS.find((p) => p.value === profile.provider)?.label ??

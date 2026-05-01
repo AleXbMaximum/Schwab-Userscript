@@ -44,14 +44,14 @@ function injectThumbCSS(): void {
             -webkit-appearance: none; appearance: none;
             width: 16px; height: 16px; border-radius: 50%;
             background: #007AFF; border: 2px solid #fff;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            box-shadow: var(--ax-shadow-lg);
             cursor: pointer; pointer-events: auto;
             margin-top: -6px;
         }
         input[type=range].${THUMB_CLASS}::-moz-range-thumb {
             width: 16px; height: 16px; border-radius: 50%;
             background: #007AFF; border: 2px solid #fff;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+            box-shadow: var(--ax-shadow-lg);
             cursor: pointer; pointer-events: auto;
         }
         input[type=range].${THUMB_CLASS}::-webkit-slider-runnable-track {
@@ -75,16 +75,17 @@ export function renderZoneControlBar(
   const bar = ui_createElement("div", {
     styleString:
       "display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex-wrap: wrap;" +
-      " background: rgba(255,255,255,0.55);" +
-      " -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);" +
-      " border: 1px solid rgba(0,0,0,0.05); border-radius: 8px; margin-bottom: 6px;",
+      " background: var(--ax-glass-2-bg);" +
+      " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " border: 1px solid var(--ax-border-subtle); border-radius: var(--ax-radius-md); margin-bottom: 6px;",
   }) as ZoneControlBarHandle;
 
   const controlStyle =
-    "padding: 3px 6px; font-size: 11px; font-weight: 600; border-radius: 6px;" +
-    " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-    ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' +
-    " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" +
+    "padding: 3px 6px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: 6px;" +
+    " cursor: pointer; border: 1px solid var(--ax-border);" +
+    " font-family: var(--ax-font-body);" +
+    " background: var(--ax-bg-input); color: var(--ax-fg);" +
     " flex-shrink: 0;";
 
   // --- Date range inputs ---
@@ -94,9 +95,9 @@ export function renderZoneControlBar(
   });
 
   const dateStyle =
-    "padding: 3px 6px; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-    " border-radius: 6px; font-size: 11px; font-family: var(--ios-font, inherit);" +
-    " background: rgba(255,255,255,0.6); flex-shrink: 0; width: 120px;";
+    "padding: 3px 6px; border: 1px solid var(--ax-border);" +
+    " border-radius: 6px; font-size: var(--ax-fs-sm); font-family: var(--ax-font-body);" +
+    " background: var(--ax-bg-input); flex-shrink: 0; width: 120px;";
 
   const dateStartInput = ui_createElement("input", {
     props: { type: "date", value: dateStart },
@@ -196,7 +197,7 @@ export function renderZoneControlBar(
       mktHoursBtn.style.color = "#fff";
       mktHoursBtn.style.border = "1px solid #007AFF";
     } else {
-      mktHoursBtn.style.background = "rgba(255,255,255,0.6)";
+      mktHoursBtn.style.background = "var(--ax-bg-input)";
       mktHoursBtn.style.color = "var(--ios-text-secondary, #666)";
       mktHoursBtn.style.border =
         "1px solid var(--ios-border, rgba(230,230,230,0.7))";
@@ -245,7 +246,7 @@ export function renderZoneControlBar(
   const sliderTrack = ui_createElement("div", {
     styleString:
       "position: absolute; top: 8px; left: 0; right: 0; height: 4px;" +
-      " background: rgba(0,0,0,0.08); border-radius: 2px; pointer-events: none;",
+      " background: var(--ax-bg-glass-inset); border-radius: 2px; pointer-events: none;",
   });
 
   const sliderRange = ui_createElement("div", {

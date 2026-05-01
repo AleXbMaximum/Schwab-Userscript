@@ -139,8 +139,8 @@ async function buildAIAnalysisPage(
   const focusRow = ui_createElement("div", {
     styleString:
       "display: flex; align-items: center; gap: 8px;" +
-      " padding: 8px 16px; border: 1px solid var(--ios-border); border-radius: 14px;" +
-      " background: rgba(255,255,255,0.5);",
+      " padding: 8px 16px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-2xl);" +
+      " background: var(--ax-glass-2-bg);",
   });
   focusRow.appendChild(
     ui_createElement("span", {
@@ -155,9 +155,9 @@ async function buildAIAnalysisPage(
       placeholder: 'e.g. "Buy 180 call", "Sell covered puts at 160"',
     },
     styleString:
-      "flex: 1; padding: 5px 10px; font-size: 13px; border: 1px solid var(--ios-border);" +
-      " border-radius: 8px; outline: none; font-family: var(--ios-font);" +
-      " background: rgba(255,255,255,0.8); color: var(--ios-text-primary);",
+      "flex: 1; padding: 5px 10px; font-size: var(--ax-fs-lg); border: 1px solid var(--ax-border);" +
+      " border-radius: var(--ax-radius-md); outline: none; font-family: var(--ax-font-body);" +
+      " background: var(--ax-bg-input); color: var(--ax-fg);",
   }) as HTMLInputElement;
   focusRow.appendChild(focusInput);
   container.appendChild(focusRow);

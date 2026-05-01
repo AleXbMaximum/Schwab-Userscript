@@ -37,11 +37,11 @@ export function createDebateConfig(opts: {
   let debateHeat = opts.initialHeat;
 
   const segBtnStyle = (active: boolean) =>
-    "font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 8px; cursor: pointer;" +
+    "font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); padding: 4px 10px; border-radius: var(--ax-radius-md); cursor: pointer;" +
     " border: none; transition: background 0.15s;" +
     (active
-      ? " background: var(--ios-blue); color: #fff;"
-      : " background: rgba(0,122,255,0.08); color: var(--ios-blue);");
+      ? " background: var(--ax-blue); color: #fff;"
+      : " background: rgba(0,122,255,0.08); color: var(--ax-blue);");
 
   // ── Debate row ──────────────────────────────────────────────────────────
   const debateRow = ui_createElement("div", {

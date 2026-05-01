@@ -17,7 +17,7 @@ const COLORS = {
   flip: "#8E44AD",
   positive: "#20a945",
   negative: "#d73126",
-  dimmed: "rgba(142, 142, 147, 0.6)",
+  dimmed: "var(--ax-fg-muted)",
   delayed: "#d73126",
   label: "var(--ios-text-secondary)",
   value: "var(--ios-text-primary)",
@@ -25,12 +25,12 @@ const COLORS = {
 
 const barStyle =
   "position: sticky; top: 0; z-index: var(--z-sticky-state, 120);" +
-  " background: rgba(255, 255, 255, 0.82);" +
-  " -webkit-backdrop-filter: blur(16px) saturate(140%);" +
-  " backdrop-filter: blur(16px) saturate(140%);" +
-  " border-bottom: 1px solid rgba(0, 0, 0, 0.08);" +
+  " background: var(--ax-glass-2-bg);" +
+  " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+  " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+  " border-bottom: 1px solid var(--ax-border-subtle);" +
   " padding: 6px 12px 4px;" +
-  " font-family: var(--ios-font);";
+  " font-family: var(--ax-font-body);";
 
 const groupRowStyle =
   "display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap;";
@@ -58,10 +58,10 @@ const fieldValueStyle =
   " white-space: nowrap;";
 
 const groupDividerStyle =
-  "width: 1px; align-self: stretch; background: rgba(0, 0, 0, 0.1); margin: 4px 2px;";
+  "width: 1px; align-self: stretch; background: var(--ax-border); margin: 4px 2px;";
 
 const fieldDividerStyle =
-  "width: 1px; align-self: stretch; background: rgba(0, 0, 0, 0.06); margin: 2px 0;";
+  "width: 1px; align-self: stretch; background: var(--ax-border-subtle); margin: 2px 0;";
 
 const badgeBaseStyle =
   "display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px;" +
@@ -71,7 +71,7 @@ const eventBadgeColors: Record<string, { bg: string; fg: string }> = {
   earnings: { bg: "rgba(215, 129, 0, 0.15)", fg: "#D78100" },
   cpi: { bg: "rgba(88, 86, 214, 0.15)", fg: DS_COLORS.raw.purple },
   fomc: { bg: "rgba(0, 122, 255, 0.15)", fg: "#007AFF" },
-  custom: { bg: "rgba(142, 142, 147, 0.15)", fg: "#8E8E93" },
+  custom: { bg: "var(--ax-tone-muted-soft-bg)", fg: "#8E8E93" },
 };
 
 const filterTagStyle =
@@ -82,7 +82,7 @@ const filterTagStyle =
 
 const filterRowStyle =
   "display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 0 0 0;" +
-  " border-top: 1px solid rgba(0, 0, 0, 0.06); margin-top: 6px;";
+  " border-top: 1px solid var(--ax-border-subtle); margin-top: 6px;";
 
 const filterInlineStyle =
   "display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;" +

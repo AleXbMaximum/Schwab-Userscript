@@ -3,6 +3,7 @@ import { createPillGroup } from "frontend/components/core/pillGroup";
 import { baseChartOptions, niceLinearScale, CHART_COLORS } from "frontend/charts/ChartTheme";
 import { createLegacyChartPanel, type ChartPanelResult } from "frontend/charts/chartPanel";
 import { createReferenceLinePlugin } from "frontend/charts/plugins/referenceLinePlugin";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 import { OPTIONS_SEMANTIC_COLORS } from "frontend/charts/ChartTheme";
 import type { OptionCapture } from "backend/core/db/capture/optionMonitorTypes";
 import { FLOW_CHART_PROFILES } from "../chartProfiles";
@@ -123,14 +124,17 @@ function buildConfig(history: OptionCapture[], mode: PCMode) {
         },
         y: {
           ...niceLinearScale(raw),
-          grid: { color: "rgba(0,0,0,0.06)" },
+          grid: {
+            color: isDarkTheme()
+              ? "rgba(255,255,255,0.06)"
+              : "rgba(0,0,0,0.06)",
+          },
           title: { display: true, text: "P/C Ratio", font: { size: 10 } },
         },
       },
     },
     plugins: [
       createReferenceLinePlugin(1.0, "y", {
-        color: "rgba(142,142,147,0.5)",
         dash: [3, 3],
       }),
     ],

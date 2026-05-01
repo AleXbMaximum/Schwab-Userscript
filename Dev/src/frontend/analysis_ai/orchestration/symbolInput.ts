@@ -26,8 +26,8 @@ export function createSymbolInput(initialSymbol: string): SymbolInputResult {
   const symbolRow = ui_createElement("div", {
     styleString:
       "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" +
-      " padding: 12px 16px; border: 1px solid var(--ios-border); border-radius: 14px;" +
-      " background: rgba(255,255,255,0.5);",
+      " padding: 12px 16px; border: 1px solid var(--ax-border); border-radius: 14px;" +
+      " background: var(--ax-glass-2-bg);",
   });
   symbolRow.appendChild(
     ui_createElement("span", {
@@ -40,9 +40,9 @@ export function createSymbolInput(initialSymbol: string): SymbolInputResult {
   const symbolInput = ui_createElement("input", {
     props: { type: "text", placeholder: "e.g. AAPL" },
     styleString:
-      "padding: 5px 10px; font-size: 12px; font-weight: 700; border: 1px solid var(--ios-border);" +
-      " border-radius: 8px; outline: none; width: 130px; font-family: var(--ios-font);" +
-      " background: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.5px;",
+      "padding: 5px 10px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-bold); border: 1px solid var(--ax-border);" +
+      " border-radius: var(--ax-radius-md); outline: none; width: 130px; font-family: var(--ax-font-body);" +
+      " background: var(--ax-bg-input); text-transform: uppercase; letter-spacing: 0.5px;",
   }) as HTMLInputElement;
   symbolInput.value = initialSymbol;
   symbolRow.appendChild(symbolInput);

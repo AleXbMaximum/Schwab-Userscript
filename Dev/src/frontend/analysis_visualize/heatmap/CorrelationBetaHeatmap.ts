@@ -263,7 +263,7 @@ export function renderCorrelationBetaHeatmap(config: {
   const progressTrack = ui_createElement("div", {
     styleString:
       "width: min(560px, 90%); height: 8px; border-radius: 6px;" +
-      " background: rgba(0, 0, 0, 0.08); overflow: hidden;",
+      " background: var(--ax-bg-glass-inset); overflow: hidden;",
   });
   const progressFill = ui_createElement("div", {
     styleString:
@@ -305,9 +305,9 @@ export function renderCorrelationBetaHeatmap(config: {
       "display: flex; align-items: center; gap: 6px; margin-bottom: 4px;",
   });
   const rangeInputStyle =
-    "width: 48px; padding: 3px 5px; font-size: 10px; border-radius: 6px;" +
-    " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-    " font-family: var(--ios-font, inherit); background: rgba(255,255,255,0.6); text-align: center;";
+    "width: 48px; padding: 3px 5px; font-size: var(--ax-fs-xs); border-radius: 6px;" +
+    " border: 1px solid var(--ax-border);" +
+    " font-family: var(--ax-font-body); background: var(--ax-bg-input); text-align: center;";
   const minInput = document.createElement("input");
   minInput.type = "text";
   minInput.placeholder = "Min";
@@ -320,7 +320,7 @@ export function renderCorrelationBetaHeatmap(config: {
       " background: linear-gradient(90deg," +
       " rgb(215,49,38) 0%, rgb(215,129,0) 25%, rgb(255,255,255) 50%," +
       " rgb(144,238,144) 75%, rgb(32,169,69) 100%);" +
-      " border: 0.5px solid rgba(0,0,0,0.1);",
+      " border: 0.5px solid var(--ax-border);",
   });
 
   const maxInput = document.createElement("input");
@@ -532,7 +532,7 @@ export function renderCorrelationBetaHeatmap(config: {
       const errEl = ui_createElement("div", {
         text: "Failed to compute cross-asset matrix.",
         styleString:
-          "text-align: center; padding: 40px 0; font-size: 12px; color: var(--ios-danger, #d73126);",
+          "text-align: center; padding: 40px 0; font-size: var(--ax-fs-md); color: var(--ax-negative);",
       });
       panel.appendChild(errEl);
     } finally {

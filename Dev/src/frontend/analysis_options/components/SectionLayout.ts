@@ -31,7 +31,7 @@ const SECTIONS: SectionConfig<SectionId>[] = [
     tabLabel: "Diag",
     defaultExpanded: true,
     accentColor: "#8E8E93",
-    accentBg: "rgba(142, 142, 147, 0.08)",
+    accentBg: "var(--ax-tone-muted-soft-bg)",
   },
 ];
 

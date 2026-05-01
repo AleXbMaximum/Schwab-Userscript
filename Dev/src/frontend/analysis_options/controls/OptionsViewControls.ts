@@ -29,9 +29,9 @@ import {
 
 const barStyle =
   "display: flex; flex-direction: column; gap: 4px; padding: 4px 8px;" +
-  " border-bottom: 1px solid rgba(0,0,0,0.06);" +
-  " background: rgba(255,255,255,0.55);" +
-  " font-family: var(--ios-font);";
+  " border-bottom: 1px solid var(--ax-border-subtle);" +
+  " background: var(--ax-glass-2-bg);" +
+  " font-family: var(--ax-font-body);";
 
 const controlsRowStyle =
   "display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;" +
@@ -45,9 +45,9 @@ const groupLabelStyle =
   " letter-spacing: 0.2px; white-space: nowrap;";
 
 const selectBaseStyle =
-  "padding: 3px 6px; border: 1px solid var(--ios-border); border-radius: 8px;" +
-  " font-size: 11px; font-weight: 600; color: var(--ios-text-primary);" +
-  " background: rgba(255,255,255,0.86); font-family: var(--ios-font);" +
+  "padding: 3px 6px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md);" +
+  " font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); color: var(--ax-fg);" +
+  " background: var(--ax-bg-input); font-family: var(--ax-font-body);" +
   " min-height: 24px; outline: none;";
 
 const selectSmallStyle = selectBaseStyle + " min-width: 94px;";

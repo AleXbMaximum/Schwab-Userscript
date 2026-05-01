@@ -28,8 +28,11 @@ export function renderDecisionSummary(
 
   const panel = ui_createElement("div", {
     styleString:
-      "background: rgba(255,255,255,0.55); border: 1px solid var(--ios-border);" +
-      " border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 16px;",
+      "background: var(--ax-glass-2-bg); border: 1px solid var(--ax-glass-2-border);" +
+      " box-shadow: var(--ax-glass-2-shadow), var(--ax-glass-2-edge);" +
+      " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " border-radius: var(--ax-radius-xl); padding: 16px; display: flex; flex-direction: column; gap: 16px;",
   });
 
   // Action badge row
@@ -103,7 +106,7 @@ export function renderDecisionSummary(
   const summaryEl = ui_createElement("div", {
     styleString:
       "font-size: 13px; color: var(--ios-text-primary); line-height: 1.5; margin: 0;" +
-      " padding: 10px 12px; background: rgba(0,0,0,0.03); border-radius: 8px;",
+      " padding: 10px 12px; background: var(--ax-bg-glass-inset); border-radius: 8px;",
   });
   summaryEl.innerHTML = renderMarkdown(decision.summary);
   panel.appendChild(summaryEl);

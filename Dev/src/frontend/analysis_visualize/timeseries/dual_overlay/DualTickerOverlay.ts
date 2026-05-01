@@ -68,8 +68,8 @@ export function renderDualTickerOverlay(config: {
   });
 
   const inputStyle =
-    "padding: 3px 8px; font-size: 11px; border-radius: 6px;" +
-    " border: 1px solid rgba(0,0,0,0.15); background: rgba(255,255,255,0.9);" +
+    "padding: 3px 8px; font-size: var(--ax-fs-sm); border-radius: 6px;" +
+    " border: 1px solid var(--ax-border-strong); background: var(--ax-bg-input);" +
     " color: inherit; width: 70px; text-transform: uppercase; outline: none;" +
     " font-family: inherit;";
 

@@ -77,11 +77,11 @@ export function renderGreeksExposure(
     tabBtns.forEach((btn, i) => {
       const isActive = i === activeTab;
       btn.style.cssText =
-        `padding: 4px 10px; font-size: 10px; font-weight: 700; border-radius: 12px; cursor: pointer;` +
-        ` border: 1px solid ${isActive ? "var(--ios-blue)" : "var(--ios-border)"};` +
-        ` background: ${isActive ? "var(--ios-blue)" : "rgba(255,255,255,0.6)"};` +
-        ` color: ${isActive ? "#fff" : "var(--ios-text-primary)"};` +
-        ` font-family: var(--ios-font); transition: all 0.15s;`;
+        `padding: 4px 10px; font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-xl); cursor: pointer;` +
+        ` border: 1px solid ${isActive ? "var(--ax-blue)" : "var(--ax-border)"};` +
+        ` background: ${isActive ? "var(--ax-blue)" : "var(--ax-bg-input)"};` +
+        ` color: ${isActive ? "#fff" : "var(--ax-fg)"};` +
+        ` font-family: var(--ax-font-body); transition: all 0.15s;`;
     });
   };
 

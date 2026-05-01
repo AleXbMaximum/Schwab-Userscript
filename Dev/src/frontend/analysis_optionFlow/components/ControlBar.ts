@@ -20,16 +20,17 @@ export function renderControlBar(
     styleString:
       "display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap;" +
       " position: relative; z-index: var(--z-page-popover, 210);" +
-      " background: rgba(255,255,255,0.7);" +
-      " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" +
-      " border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; margin-bottom: 8px;",
+      " background: var(--ax-glass-2-bg);" +
+      " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " border: 1px solid var(--ax-border-subtle); border-radius: var(--ax-radius-lg); margin-bottom: 8px;",
   }) as ControlBarHandle;
 
   const controlStyle =
-    "padding: 4px 8px; font-size: 12px; font-weight: 600; border-radius: 8px;" +
-    " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-    ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' +
-    " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" +
+    "padding: 4px 8px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md);" +
+    " cursor: pointer; border: 1px solid var(--ax-border);" +
+    " font-family: var(--ax-font-body);" +
+    " background: var(--ax-bg-input); color: var(--ax-fg);" +
     " flex-shrink: 0;";
 
   // --- Symbol select ---
@@ -56,10 +57,10 @@ export function renderControlBar(
   const refreshBtn = ui_createElement("button", {
     text: "Refresh",
     styleString:
-      "padding: 4px 12px; font-size: 11px; font-weight: 700; border-radius: 8px;" +
-      " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-      ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' +
-      " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" +
+      "padding: 4px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-md);" +
+      " cursor: pointer; border: 1px solid var(--ax-border);" +
+      " font-family: var(--ax-font-body);" +
+      " background: var(--ax-bg-input); color: var(--ax-fg);" +
       " flex-shrink: 0; transition: opacity 0.2s;",
     events: {
       click: () => {

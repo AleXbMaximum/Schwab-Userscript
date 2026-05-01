@@ -108,7 +108,7 @@ export function buildHeatmapPanelScaffold<D>(opts: {
   const legendBar = ui_createElement("div", {
     styleString:
       `height: 10px; width: 120px; border-radius: 5px;` +
-      ` border: 1px solid rgba(0,0,0,0.12); background: ${HORIZ_GRADIENT};`,
+      ` border: 1px solid var(--ax-border); background: ${HORIZ_GRADIENT};`,
   });
   const legendMaxLabel = ui_createElement("span", {
     text: "+",
@@ -160,7 +160,7 @@ export function buildHeatmapPanelScaffold<D>(opts: {
     ui_createElement("div", {
       styleString:
         "position: absolute; top: 0; right: -12px; width: 12px; height: 100%;" +
-        " background: linear-gradient(to right, rgba(0,0,0,0.04), rgba(0,0,0,0));" +
+        " background: var(--ax-bg-sticky-shadow);" +
         " pointer-events: none; z-index: 1;",
     }),
   );
@@ -182,7 +182,7 @@ export function buildHeatmapPanelScaffold<D>(opts: {
     ui_createElement("div", {
       styleString:
         "position: absolute; top: 0; left: -12px; width: 12px; height: 100%;" +
-        " background: linear-gradient(to left, rgba(0,0,0,0.04), rgba(0,0,0,0));" +
+        " background: var(--ax-bg-sticky-shadow-reverse);" +
         " pointer-events: none; z-index: 1;",
     }),
   );

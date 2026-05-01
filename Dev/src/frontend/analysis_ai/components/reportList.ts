@@ -103,18 +103,18 @@ export function createReportList(opts: {
 
       const card = ui_createElement("div", {
         styleString:
-          "border: 1px solid var(--ios-border); border-radius: 10px; padding: 8px 12px;" +
-          " background: rgba(255,255,255,0.45); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" +
+          "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 8px 12px;" +
+          " background: var(--ax-glass-2-bg); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" +
           (rec.status === "completed" ? " cursor: pointer;" : "") +
           " transition: background 0.15s;",
       });
 
       if (rec.status === "completed") {
         card.addEventListener("mouseenter", () => {
-          card.style.background = "rgba(255,255,255,0.8)";
+          card.style.background = "var(--ax-bg-card)";
         });
         card.addEventListener("mouseleave", () => {
-          card.style.background = "rgba(255,255,255,0.45)";
+          card.style.background = "var(--ax-glass-2-bg)";
         });
       }
 

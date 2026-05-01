@@ -94,10 +94,10 @@ export function renderExpectedMove(
     (["straddle", "rnd"] as ExpectedMoveMode[]).forEach((m) => {
       const isActive = m === currentMode;
       modeButtons[m].style.cssText =
-        `padding: 4px 12px; font-size: 11px; font-weight: 700; border-radius: 12px; cursor: pointer;` +
-        ` border: 1px solid ${isActive ? "var(--ios-blue)" : "var(--ios-border)"};` +
-        ` background: ${isActive ? "var(--ios-blue)" : "rgba(255,255,255,0.6)"};` +
-        ` color: ${isActive ? "#fff" : "var(--ios-text-primary)"}; font-family: var(--ios-font);`;
+        `padding: 4px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-xl); cursor: pointer;` +
+        ` border: 1px solid ${isActive ? "var(--ax-blue)" : "var(--ax-border)"};` +
+        ` background: ${isActive ? "var(--ax-blue)" : "var(--ax-bg-input)"};` +
+        ` color: ${isActive ? "#fff" : "var(--ax-fg)"}; font-family: var(--ax-font-body);`;
     });
   };
 
@@ -166,8 +166,8 @@ export function renderExpectedMove(
       const chip = ui_createElement("span", {
         styleString:
           "display: inline-flex; align-items: baseline; gap: 4px;" +
-          " padding: 2px 8px; border-radius: 6px; background: rgba(0,0,0,0.03);" +
-          " border: 1px solid rgba(0,0,0,0.05); white-space: nowrap;",
+          " padding: 2px 8px; border-radius: 6px; background: var(--ax-bg-glass-inset);" +
+          " border: 1px solid var(--ax-border-subtle); white-space: nowrap;",
       });
       chip.appendChild(
         ui_createElement("span", {
