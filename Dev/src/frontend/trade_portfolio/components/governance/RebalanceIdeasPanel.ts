@@ -94,8 +94,8 @@ export function renderRebalanceIdeasPanel(
     props: { title: "Rebalance profile list" },
     styleString:
       "width:clamp(240px, 28vw, 360px); max-width:100%; flex:0 1 340px; height:30px; padding:0 8px;" +
-      " font-size:12px; border:1px solid var(--ios-border); border-radius:8px;" +
-      " background:rgba(255,255,255,0.92); color:var(--ios-text-primary);",
+      " font-size:var(--ax-fs-md); border:1px solid var(--ax-border); border-radius:var(--ax-radius-md);" +
+      " background:var(--ax-bg-input); color:var(--ax-fg);",
   }) as HTMLSelectElement;
   const importFileBtn = ui_createElement("button", {
     text: "Import",
@@ -153,7 +153,7 @@ export function renderRebalanceIdeasPanel(
   const watchlistInput = ui_createElement("input", {
     props: { type: "text", placeholder: "Add to watchlist\u2026" },
     styleString:
-      "width:100px; padding:4px 8px; font-size:12px; border:1px solid var(--ios-border); border-radius:6px; background:rgba(255,255,255,0.92); color:var(--ios-text-primary); font-family:inherit; outline:none;",
+      "width:100px; padding:4px 8px; font-size:var(--ax-fs-md); border:1px solid var(--ax-border); border-radius:6px; background:var(--ax-bg-input); color:var(--ax-fg); font-family:inherit; outline:none;",
   }) as HTMLInputElement;
   const watchlistAddBtn = ui_createElement("button", {
     text: "+",
@@ -206,8 +206,8 @@ export function renderRebalanceIdeasPanel(
   });
   const controlsBar = ui_createElement("div", {
     styleString:
-      "display:flex; flex-direction:column; gap:6px; padding:8px; border-radius:8px;" +
-      " border:1px solid var(--ios-border); background:rgba(255,255,255,0.55);",
+      "display:flex; flex-direction:column; gap:6px; padding:8px; border-radius:var(--ax-radius-md);" +
+      " border:1px solid var(--ax-border); background:var(--ax-glass-2-bg);",
   });
   const controlsRow = ui_createElement("div", {
     styleString:
@@ -274,8 +274,8 @@ export function renderRebalanceIdeasPanel(
   );
   const horizonSelect = ui_createElement("select", {
     styleString:
-      "padding:3px 6px; font-size:12px; font-weight:700; border:1px solid var(--ios-border);" +
-      " border-radius:6px; background:rgba(255,255,255,0.92); color:var(--ios-text-primary);" +
+      "padding:3px 6px; font-size:var(--ax-fs-md); font-weight:var(--ax-fw-bold); border:1px solid var(--ax-border);" +
+      " border-radius:6px; background:var(--ax-bg-input); color:var(--ax-fg);" +
       " font-family:inherit; cursor:pointer; outline:none;",
   }) as HTMLSelectElement;
   for (const opt of BETA_HORIZONS) {
@@ -856,7 +856,7 @@ export function renderRebalanceIdeasPanel(
 
     function appendDataRow(key: string, zebraIdx: number) {
       const tr = document.createElement("tr");
-      if (zebraIdx % 2 === 1) tr.style.background = "rgba(0,0,0,0.02)";
+      if (zebraIdx % 2 === 1) tr.style.background = "var(--ax-bg-glass-inset)";
 
       // Ticker cell
       const tdSym = document.createElement("td");
@@ -1035,7 +1035,7 @@ export function renderRebalanceIdeasPanel(
             sectionKeys,
             curValues,
             linked,
-            "border-top:2px solid var(--ios-border); background:rgba(0,0,0,0.05); font-weight:700;",
+            "border-top:2px solid var(--ios-border); background:var(--ax-bg-glass-inset); font-weight:700;",
             curRefMap,
             tgtRefMap,
             devRefMap,

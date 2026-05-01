@@ -7,7 +7,7 @@ const AXIS_LABEL_STYLE =
 const CHIP_STYLE =
   "display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;" +
   " font-size: 10px; font-weight: 600; border-radius: 6px; cursor: grab;" +
-  " background: rgba(0,0,0,0.04); color: var(--ios-text-primary);" +
+  " background: var(--ax-bg-glass-inset); color: var(--ios-text-primary);" +
   " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
   " transition: opacity 150ms, border-color 150ms, background 150ms;";
 
@@ -15,10 +15,10 @@ const CHIP_ACTIVE_STYLE =
   "background: rgba(0,122,255,0.1); border-color: rgba(0,122,255,0.5); color: rgb(0,122,255);";
 
 const TICKER_INPUT_STYLE =
-  "width: 70px; padding: 3px 6px; font-size: 10px; border-radius: 6px;" +
-  " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-  " font-family: var(--ios-font, inherit); text-transform: uppercase;" +
-  " background: rgba(255,255,255,0.6);";
+  "width: 70px; padding: 3px 6px; font-size: var(--ax-fs-xs); border-radius: 6px;" +
+  " border: 1px solid var(--ax-border);" +
+  " font-family: var(--ax-font-body); text-transform: uppercase;" +
+  " background: var(--ax-bg-input);";
 
 export type MovingBetaAxisState = {
   watchlistTickers: string[];

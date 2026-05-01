@@ -78,13 +78,13 @@ function renderBiasGauge(
 
   const barContainer = ui_createElement("div", {
     styleString:
-      "height: 6px; background: rgba(0,0,0,0.06); border-radius: 4px; position: relative; overflow: hidden;",
+      "height: 6px; background: var(--ax-bg-glass-inset); border-radius: 4px; position: relative; overflow: hidden;",
   });
 
   barContainer.appendChild(
     ui_createElement("div", {
       styleString:
-        "position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: rgba(0,0,0,0.15); transform: translateX(-50%);",
+        "position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: var(--ax-border); transform: translateX(-50%);",
     }),
   );
 
@@ -217,7 +217,7 @@ function renderKeyLevelsBar(
 
   barWrapper.appendChild(
     ui_createElement("div", {
-      styleString: `position: absolute; top: ${lineTop}px; left: 0; right: 0; height: 2px; background: rgba(0,0,0,0.1); border-radius: 1px;`,
+      styleString: `position: absolute; top: ${lineTop}px; left: 0; right: 0; height: 2px; background: var(--ax-border); border-radius: 1px;`,
     }),
   );
 

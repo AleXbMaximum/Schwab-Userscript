@@ -145,9 +145,9 @@ export async function runComparison(ctx: ComparisonContext): Promise<void> {
 
     const compBody = ui_createElement("div", {
       styleString:
-        "padding: 14px 16px; border: 1px solid var(--ios-border); border-radius: 12px;" +
-        " background: rgba(255,255,255,0.5); font-size: 13px; line-height: 1.5;" +
-        " color: var(--ios-text-primary); white-space: pre-wrap; font-family: var(--ios-font);",
+        "padding: 14px 16px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-xl);" +
+        " background: var(--ax-glass-2-bg); font-size: var(--ax-fs-lg); line-height: 1.5;" +
+        " color: var(--ax-fg); white-space: pre-wrap; font-family: var(--ax-font-body);",
     });
     compBody.textContent = compText;
     resultsSection.appendChild(compBody);

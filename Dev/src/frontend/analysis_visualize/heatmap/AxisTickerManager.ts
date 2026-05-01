@@ -1,21 +1,21 @@
 import { ui_createElement } from "../../components/core/createElement";
 
 const AXIS_LABEL_STYLE =
-  "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary, #8e8e93);" +
+  "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); color: var(--ax-fg-2);" +
   " text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px;";
 
 const CHIP_STYLE =
   "display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;" +
-  " font-size: 10px; font-weight: 600; border-radius: 6px; cursor: grab;" +
-  " background: rgba(0,0,0,0.04); color: var(--ios-text-primary);" +
-  " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
+  " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-sm); cursor: grab;" +
+  " background: var(--ax-bg-glass-inset); color: var(--ax-fg);" +
+  " border: 1px solid var(--ax-border);" +
   " transition: opacity 150ms, border-color 150ms;";
 
 const TICKER_INPUT_STYLE =
-  "width: 70px; padding: 3px 6px; font-size: 10px; border-radius: 6px;" +
-  " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-  " font-family: var(--ios-font, inherit); text-transform: uppercase;" +
-  " background: rgba(255,255,255,0.6);";
+  "width: 70px; padding: 3px 6px; font-size: var(--ax-fs-xs); border-radius: 6px;" +
+  " border: 1px solid var(--ax-border);" +
+  " font-family: var(--ax-font-body); text-transform: uppercase;" +
+  " background: var(--ax-bg-input);";
 
 export type AxisTickerState = {
   rowTickers: string[];
@@ -105,7 +105,7 @@ export function createAxisTickerManager(
         e.preventDefault();
         if (!dragState || dragState.ticker === ticker) return;
         (e as DragEvent).dataTransfer!.dropEffect = "move";
-        chip.style.borderColor = "rgba(0,122,255,0.5)";
+        chip.style.borderColor = "var(--ax-blue)";
       });
 
       chip.addEventListener("dragleave", () => {

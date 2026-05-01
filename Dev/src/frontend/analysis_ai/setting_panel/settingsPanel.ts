@@ -227,7 +227,7 @@ export function createAISettingsPanel(opts: {
       placeholder: "Enter API key",
     },
     styleString:
-      "padding: 5px 8px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 6px; outline: none; font-family: var(--ios-font); background: rgba(255,255,255,0.8);" +
+      "padding: 5px 8px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border); border-radius: 6px; outline: none; font-family: var(--ax-font-body); background: var(--ax-bg-input);" +
       " width: 100%; box-sizing: border-box;",
   }) as HTMLInputElement;
 

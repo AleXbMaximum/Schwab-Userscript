@@ -13,9 +13,9 @@ import type {
 // ── Styles ──
 
 const LABEL_STYLE = DS_TYPOGRAPHY.heading + " margin-bottom: 10px;";
-const BADGE_BG = "rgba(142,142,147,0.08)";
+const BADGE_BG = "var(--ax-bg-chip)";
 const CELL_STYLE =
-  "padding: 5px 10px; border-bottom: 1px solid rgba(0,0,0,0.04); font-size: 12px;";
+  "padding: 5px 10px; border-bottom: 1px solid var(--ax-border-subtle); font-size: 12px;";
 const CELL_RIGHT =
   CELL_STYLE +
   " text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;";
@@ -31,7 +31,7 @@ function badge(
     styleString:
       `display: inline-flex; flex-direction: column; align-items: center;` +
       ` padding: 8px 14px; background: ${bg}; border-radius: 12px; min-width: 70px;` +
-      ` border: 1px solid rgba(0,0,0,0.04);`,
+      ` border: 1px solid var(--ax-border-subtle);`,
     children: [
       ui_createElement("span", {
         text: value,
@@ -93,10 +93,10 @@ export function renderDatabaseInfoPanel(): HTMLElement & {
   titleRow.appendChild(ui_createElement("span", { text: "Database Info" }));
 
   const BTN_STYLE =
-    "padding: 3px 10px; font-size: 11px; font-weight: 600; border-radius: 8px; cursor: pointer;" +
-    " border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-    " background: rgba(255,255,255,0.6); color: var(--ios-text-secondary);" +
-    " font-family: var(--ios-font, inherit); transition: all 0.15s;";
+    "padding: 3px 10px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md); cursor: pointer;" +
+    " border: 1px solid var(--ax-border);" +
+    " background: var(--ax-bg-input); color: var(--ax-fg-2);" +
+    " font-family: var(--ax-font-body); transition: all 0.15s;";
 
   const loadBtn = ui_createElement("button", {
     text: "Load",
@@ -226,7 +226,7 @@ export function renderDatabaseInfoPanel(): HTMLElement & {
       th.textContent = col;
       th.style.cssText =
         "text-align: left; padding: 6px 10px; font-size: 11px; font-weight: 600;" +
-        " color: var(--ios-text-secondary); border-bottom: 1px solid rgba(0,0,0,0.08);";
+        " color: var(--ios-text-secondary); border-bottom: 1px solid var(--ax-border);";
       if (col !== "Store") th.style.textAlign = "right";
       headerRow.appendChild(th);
     }
@@ -240,7 +240,7 @@ export function renderDatabaseInfoPanel(): HTMLElement & {
       mainRow.style.cursor = "pointer";
       mainRow.style.transition = "background 0.1s";
       mainRow.addEventListener("mouseenter", () => {
-        mainRow.style.background = "rgba(0,0,0,0.02)";
+        mainRow.style.background = "var(--ax-bg-row-hover)";
       });
       mainRow.addEventListener("mouseleave", () => {
         mainRow.style.background = "";
@@ -293,7 +293,7 @@ export function renderDatabaseInfoPanel(): HTMLElement & {
       const detailCell = document.createElement("td");
       detailCell.colSpan = 3;
       detailCell.style.cssText =
-        "padding: 0; border-bottom: 1px solid rgba(0,0,0,0.04);";
+        "padding: 0; border-bottom: 1px solid var(--ax-border-subtle);";
       detailRow.appendChild(detailCell);
       tbody.appendChild(detailRow);
 

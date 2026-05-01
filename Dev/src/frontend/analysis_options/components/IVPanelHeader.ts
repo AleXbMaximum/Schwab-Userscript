@@ -23,7 +23,7 @@ const pillActiveStyle =
 
 const pillInactiveStyle =
   pillBaseStyle +
-  " background: rgba(255,255,255,0.6); color: var(--ios-text-primary); border-color: var(--ios-border);";
+  " background: var(--ax-bg-input); color: var(--ax-fg); border-color: var(--ax-border);";
 
 export type IVPanelHeaderCallbacks = {
   onMetricChange: (metric: IVMetric) => void;

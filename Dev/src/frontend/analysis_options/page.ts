@@ -53,9 +53,9 @@ export function options_renderPage(
   symbolInput.placeholder = "Enter symbol (e.g. NVDA)";
   symbolInput.value = "";
   symbolInput.style.cssText =
-    "padding: 8px 14px; font-size: 12px; font-weight: 600; border: 1px solid var(--ios-border);" +
-    " border-radius: 10px; outline: none; width: 180px; font-family: var(--ios-font);" +
-    " background: rgba(255,255,255,0.8); transition: border-color 0.2s;";
+    "padding: 8px 14px; font-size: var(--ax-fs-md); font-weight: var(--ax-fw-semibold); border: 1px solid var(--ax-border);" +
+    " border-radius: var(--ax-radius-lg); outline: none; width: 180px; font-family: var(--ax-font-body);" +
+    " background: var(--ax-bg-input); transition: border-color 0.2s;";
   symbolInput.addEventListener("focus", () => {
     symbolInput.style.borderColor = "var(--ios-blue)";
   });
@@ -65,15 +65,15 @@ export function options_renderPage(
 
   const tickerSelect = document.createElement("select");
   tickerSelect.style.cssText =
-    "padding: 8px 12px; font-size: 13px; font-weight: 600; border: 1px solid var(--ios-border);" +
-    " border-radius: 10px; outline: none; min-width: 130px; font-family: var(--ios-font);" +
-    " background: rgba(255,255,255,0.8); color: var(--ios-text-primary);";
+    "padding: 8px 12px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-semibold); border: 1px solid var(--ax-border);" +
+    " border-radius: var(--ax-radius-lg); outline: none; min-width: 130px; font-family: var(--ax-font-body);" +
+    " background: var(--ax-bg-input); color: var(--ax-fg);";
 
   const loadBtn = ui_createElement("button", {
     text: "Load",
     styleString:
-      "padding: 8px 20px; font-size: 13px; font-weight: 700; border: none; border-radius: 10px;" +
-      " background: var(--ios-blue); color: #fff; cursor: pointer; font-family: var(--ios-font);" +
+      "padding: 8px 20px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-bold); border: none; border-radius: var(--ax-radius-lg);" +
+      " background: var(--ax-blue); color: #fff; cursor: pointer; font-family: var(--ax-font-body);" +
       " transition: opacity 0.2s;",
   });
 
@@ -136,9 +136,9 @@ export function options_renderPage(
   };
 
   const buttonStyle =
-    "padding: 7px 12px; font-size: 11px; font-weight: 700; border-radius: 10px; cursor: pointer;" +
-    " border: 1px solid var(--ios-border); background: rgba(255,255,255,0.75); color: var(--ios-text-primary);" +
-    " font-family: var(--ios-font);";
+    "padding: 7px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-lg); cursor: pointer;" +
+    " border: 1px solid var(--ax-border); background: var(--ax-bg-input); color: var(--ax-fg);" +
+    " font-family: var(--ax-font-body);";
 
   const getCurrentSymbol = (): string =>
     symbolInput.value.trim().toUpperCase() ||

@@ -26,11 +26,11 @@ export function renderPortfolioControlBar(
     styleString:
       "position: sticky; top: var(--portfolio-control-sticky-top, 44px); z-index: var(--z-sticky-control, 110);" +
       " display: flex; align-items: center; gap: 12px; flex-wrap: wrap;" +
-      " padding: 10px 16px; background: rgba(255, 255, 255, 0.72);" +
-      " border-bottom: 1px solid rgba(0, 0, 0, 0.06);" +
-      " -webkit-backdrop-filter: blur(12px) saturate(130%);" +
-      " backdrop-filter: blur(12px) saturate(130%);" +
-      " font-family: var(--ios-font);",
+      " padding: 10px 16px; background: var(--ax-glass-2-bg);" +
+      " border-bottom: 1px solid var(--ax-border-subtle);" +
+      " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " font-family: var(--ax-font-body);",
   }) as HTMLElement & {
     cleanup?: () => void;
     update?: (next: PortfolioControlState) => void;
@@ -44,9 +44,9 @@ export function renderPortfolioControlBar(
 
   const pauseBtn = ui_createElement("button", {
     styleString:
-      "padding: 6px 12px; border-radius: 10px; border: 1px solid var(--ios-border);" +
-      " background: rgba(255,255,255,0.8); color: var(--ios-text-primary); cursor: pointer;" +
-      " font-size: 12px; font-weight: 700; font-family: var(--ios-font);",
+      "padding: 6px 12px; border-radius: var(--ax-radius-lg); border: 1px solid var(--ax-border);" +
+      " background: var(--ax-bg-input); color: var(--ax-fg); cursor: pointer;" +
+      " font-size: var(--ax-fs-md); font-weight: var(--ax-fw-bold); font-family: var(--ax-font-body);",
   }) as HTMLButtonElement;
 
   const statusDot = ui_createElement("span", {
@@ -72,7 +72,7 @@ export function renderPortfolioControlBar(
   const segmentWrap = ui_createElement("div", {
     styleString:
       "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 10px;" +
-      " overflow: hidden; background: rgba(0,0,0,0.03);",
+      " overflow: hidden; background: var(--ax-bg-glass-inset);",
   });
 
   const segmentButtons: Record<PortfolioFocusMode, HTMLButtonElement> = {
@@ -107,8 +107,8 @@ export function renderPortfolioControlBar(
 
   const severitySelect = ui_createElement("select", {
     styleString:
-      "padding: 5px 8px; border-radius: 8px; border: 1px solid var(--ios-border);" +
-      " background: rgba(255,255,255,0.8); font-size: 11px; font-weight: 600; cursor: pointer;",
+      "padding: 5px 8px; border-radius: var(--ax-radius-md); border: 1px solid var(--ax-border);" +
+      " background: var(--ax-bg-input); font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); cursor: pointer;",
   }) as HTMLSelectElement;
 
   const severityOptions: Array<{
@@ -159,8 +159,8 @@ export function renderPortfolioControlBar(
   bar.appendChild(appetiteGroup);
 
   const sectionBtnStyle =
-    "padding: 5px 10px; border-radius: 8px; border: 1px solid var(--ios-border); background: rgba(255,255,255,0.8);" +
-    " font-size: 11px; font-weight: 700; color: var(--ios-text-primary); cursor: pointer;";
+    "padding: 5px 10px; border-radius: var(--ax-radius-md); border: 1px solid var(--ax-border); background: var(--ax-bg-input);" +
+    " font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); color: var(--ax-fg); cursor: pointer;";
 
   const expandBtn = ui_createElement("button", {
     text: "Expand All",
@@ -179,11 +179,11 @@ export function renderPortfolioControlBar(
     (Object.keys(segmentButtons) as PortfolioFocusMode[]).forEach((mode) => {
       const btn = segmentButtons[mode];
       if (mode === focusMode) {
-        btn.style.background = "var(--ios-blue)";
+        btn.style.background = "var(--ax-blue)";
         btn.style.color = "#fff";
       } else {
         btn.style.background = "transparent";
-        btn.style.color = "var(--ios-text-secondary)";
+        btn.style.color = "var(--ax-fg-2)";
       }
     });
   };
@@ -193,14 +193,14 @@ export function renderPortfolioControlBar(
 
     pauseBtn.textContent = localState.paused ? "Resume" : "Pause";
     pauseBtn.style.background = localState.paused
-      ? "var(--ios-blue)"
-      : "rgba(255,255,255,0.8)";
+      ? "var(--ax-blue)"
+      : "var(--ax-bg-input)";
     pauseBtn.style.color = localState.paused
       ? "#fff"
-      : "var(--ios-text-primary)";
+      : "var(--ax-fg)";
     pauseBtn.style.borderColor = localState.paused
-      ? "var(--ios-blue)"
-      : "var(--ios-border)";
+      ? "var(--ax-blue)"
+      : "var(--ax-border)";
 
     statusDot.style.color = localState.paused
       ? "var(--ios-gray)"

@@ -56,7 +56,7 @@ function renderContributorsTable(
     const row = ui_createElement("button", {
       styleString:
         "display: grid; grid-template-columns: 60px 1fr 1fr 1fr; gap: 4px; padding: 3px 6px; border: none;" +
-        ` border-bottom: 1px solid rgba(0,0,0,0.03); width: 100%; text-align: left; cursor: pointer;` +
+        ` border-bottom: 1px solid var(--ax-border-subtle); width: 100%; text-align: left; cursor: pointer;` +
         ` background: ${isFocused ? "rgba(0,122,255,0.08)" : "transparent"}; font-family: var(--ios-font);`,
       events: {
         click: () => setFocusedStrike(c.strike),
@@ -226,9 +226,9 @@ export function renderEnhancedGex(
     const toggleBtn = ui_createElement("button", {
       text: `\u25B6 Top ${a.topContributors.length} Contributors (click row to drill-down)`,
       styleString:
-        "padding: 4px 12px; font-size: 10px; font-weight: 600; border-radius: 8px; cursor: pointer;" +
-        " border: 1px solid var(--ios-border); background: rgba(255,255,255,0.6);" +
-        " color: var(--ios-text-secondary); font-family: var(--ios-font); margin-top: 6px;",
+        "padding: 4px 12px; font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md); cursor: pointer;" +
+        " border: 1px solid var(--ax-border); background: var(--ax-bg-input);" +
+        " color: var(--ax-fg-2); font-family: var(--ax-font-body); margin-top: 6px;",
       events: {
         click: () => {
           isOpen = !isOpen;

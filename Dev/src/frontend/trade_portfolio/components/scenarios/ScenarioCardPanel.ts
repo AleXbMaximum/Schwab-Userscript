@@ -74,7 +74,7 @@ const PILL_STYLE =
   "padding: 3px 10px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer;" +
   " border: 1px solid var(--ios-border); transition: all 0.15s;";
 const PILL_ACTIVE =
-  " background: var(--ios-blue); color: #fff; border-color: var(--ios-blue);";
+  " background: var(--ax-blue); color: #fff; border-color: var(--ax-blue);";
 const PILL_INACTIVE =
   " background: transparent; color: var(--ios-text-secondary);";
 
@@ -295,7 +295,7 @@ function createScenarioCard(
     styleString:
       "display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px;" +
       " font-size: 11px; color: var(--ios-text-secondary);" +
-      " margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(0,0,0,0.06);",
+      " margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--ax-border-subtle);",
   });
   footerRow.appendChild(
     ui_createElement("span", {

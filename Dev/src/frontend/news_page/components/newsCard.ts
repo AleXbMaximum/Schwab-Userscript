@@ -61,10 +61,10 @@ export function renderNewsCard(
     : "";
   const hlBg = item.isHeadline
     ? " background: rgba(215, 129, 0, 0.04);"
-    : " background: rgba(255,255,255,0.4);";
+    : " background: var(--ax-glass-2-bg);";
   const card = ui_createElement("div", {
     styleString:
-      "border: 1px solid var(--ios-border); border-radius: 10px; padding: 11px 14px;" +
+      "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 11px 14px;" +
       hlBg +
       " display: flex; flex-direction: column; gap: 6px;" +
       " transition: background 0.15s;" +
@@ -74,10 +74,10 @@ export function renderNewsCard(
 
   const defaultBg = item.isHeadline
     ? "rgba(215, 129, 0, 0.04)"
-    : "rgba(255,255,255,0.4)";
+    : "var(--ax-glass-2-bg)";
   const hoverBg = item.isHeadline
     ? "rgba(215, 129, 0, 0.08)"
-    : "rgba(255,255,255,0.75)";
+    : "var(--ax-bg-card)";
   if (item.url) {
     card.addEventListener("mouseenter", () => {
       card.style.background = hoverBg;
@@ -151,8 +151,8 @@ export function renderNewsCard(
       ui_createElement("span", {
         text: symbol,
         styleString:
-          "font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 4px;" +
-          " background: rgba(0,0,0,0.05); color: var(--ios-text-secondary);",
+          "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); padding: 1px 5px; border-radius: var(--ax-radius-xs);" +
+          " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);",
       }),
     );
   }

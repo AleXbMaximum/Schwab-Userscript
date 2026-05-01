@@ -29,7 +29,7 @@ function ensureMarkdownStyles(): void {
 .md-h3   { font-size: 12px; font-weight: 700; margin: 8px 0 2px; color: var(--ios-text-primary); }
 .md-li   { padding-left: 14px; text-indent: -11px; margin: 1px 0; }
 .md-li2  { padding-left: 26px; text-indent: -11px; margin: 1px 0; }
-.md-code { background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
+.md-code { background: var(--ax-bg-glass-inset); padding: 1px 4px; border-radius: 3px; font-size: 0.9em;
            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .md-hr   { border: none; border-top: 1px solid var(--ios-border); margin: 8px 0; }
 .md-spacer { height: 5px; }

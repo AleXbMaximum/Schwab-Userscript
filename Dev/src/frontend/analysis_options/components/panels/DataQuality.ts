@@ -43,7 +43,7 @@ function gradeColor(grade: string): GradeColor {
 
 const sectionHeaderStyle =
   "font-size: 12px; font-weight: 700; color: var(--ios-text-primary); margin: 0 0 6px 0; padding-bottom: 4px;" +
-  " border-bottom: 1px solid rgba(0,0,0,0.06);";
+  " border-bottom: 1px solid var(--ax-border-subtle);";
 
 const metricRowStyle =
   "display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding: 2px 0;" +
@@ -124,7 +124,7 @@ export function renderDataQuality(
 
     const barTrack = ui_createElement("div", {
       styleString:
-        "flex: 1; height: 6px; border-radius: 999px; background: rgba(0,0,0,0.06); overflow: hidden;",
+        "flex: 1; height: 6px; border-radius: 999px; background: var(--ax-bg-glass-inset); overflow: hidden;",
     });
 
     const barFill = ui_createElement("div", {

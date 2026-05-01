@@ -126,8 +126,8 @@ export function createPipelineConfigPanel(opts: {
   const pipelineConfig = ui_createElement("div", {
     styleString:
       "display: flex; flex-direction: column; gap: 8px;" +
-      " padding: 16px; background: rgba(255,255,255,0.7); -webkit-backdrop-filter: blur(12px);" +
-      " backdrop-filter: blur(12px); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;",
+      " padding: 16px; background: var(--ax-glass-2-bg); -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate)); border: 1px solid var(--ax-border-subtle); border-radius: var(--ax-radius-xl);",
   });
 
   // ── Streaming & web search toggles ────────────────────────────────────
@@ -203,8 +203,8 @@ export function createPipelineConfigPanel(opts: {
     );
     const sel = ui_createElement("select", {
       styleString:
-        "padding: 4px 6px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 6px;" +
-        " font-family: var(--ios-font); background: rgba(255,255,255,0.8); outline: none; cursor: pointer;",
+        "padding: 4px 6px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border); border-radius: 6px;" +
+        " font-family: var(--ax-font-body); background: var(--ax-bg-input); outline: none; cursor: pointer;",
     }) as HTMLSelectElement;
 
     const defOpt = document.createElement("option");

@@ -162,8 +162,8 @@ export function createMobileCardView(opts: {
       const badgeEl = ui_createElement("span", {
         text: badgeParts.join(" "),
         styleString:
-          "font-size: 10px; color: var(--ios-text-secondary); font-weight: 500;" +
-          ` background: rgba(0,0,0,0.04); padding: 1px 5px; border-radius: ${DS_RADIUS.sm};`,
+          "font-size: var(--ax-fs-xs); color: var(--ax-fg-2); font-weight: var(--ax-fw-medium);" +
+          ` background: var(--ax-bg-glass-inset); padding: 1px 5px; border-radius: ${DS_RADIUS.sm};`,
       });
       symWrap.appendChild(badgeEl);
     }
@@ -222,7 +222,7 @@ export function createMobileCardView(opts: {
     if (ticker.holdings.length > 0) {
       const childContainer = ui_createElement("div", {
         styleString:
-          "display: none; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid rgba(0,0,0,0.06);",
+          "display: none; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--ax-border-subtle);",
       });
 
       for (const pos of ticker.holdings) {

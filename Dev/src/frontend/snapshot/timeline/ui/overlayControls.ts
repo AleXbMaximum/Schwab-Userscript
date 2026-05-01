@@ -43,10 +43,10 @@ export function createIndexOverlayDropdown(
   const dropdown = ui_createElement("div", {
     styleString:
       "position:absolute; top:100%; left:0; z-index:10; margin-top:2px;" +
-      ` background:rgba(255,255,255,0.96); border:1px solid ${DS_COLORS.border};` +
-      ` border-radius: ${DS_RADIUS.md}; box-shadow:var(--ios-shadow-sm);` +
+      ` background: var(--ax-bg-card); color: var(--ax-fg); border:1px solid ${DS_COLORS.border};` +
+      ` border-radius: ${DS_RADIUS.md}; box-shadow: var(--ax-shadow-sm);` +
       " padding:4px 0; min-width:130px; display:none;" +
-      ' font-family:var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);',
+      " font-family: var(--ax-font-body);",
   });
 
   const selectedSet = new Set(initial);

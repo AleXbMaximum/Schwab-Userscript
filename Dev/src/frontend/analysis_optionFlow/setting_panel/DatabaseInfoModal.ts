@@ -8,18 +8,19 @@ export function showDatabaseInfoPopup(_anchor: HTMLElement): void {
     .forEach((el) => el.remove());
 
   const overlay = ui_createElement("div", {
+    className: "ax-shell-element",
     styleString:
       "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: var(--z-modal-backdrop, 100500);" +
-      " background: rgba(0,0,0,0.45);",
+      " background: var(--ax-modal-backdrop-bg);",
     props: { "data-dbinfo-modal": "true" },
   });
 
   const modal = ui_createElement("div", {
+    className: "ax-shell-element ax-glass-3 ax-glass-rim",
     styleString:
       "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal-content, 100600);" +
-      " background: rgba(255,255,255,0.97); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);" +
-      " border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 90%; max-height: 80vh; overflow-y: auto;" +
-      " box-shadow: var(--ios-shadow); font-family: var(--ios-font, inherit);",
+      " border-radius: var(--ax-radius-2xl); padding: 24px 28px; max-width: 720px; width: 90%; max-height: 80vh; overflow-y: auto;" +
+      " font-family: var(--ax-font-body); color: var(--ax-fg);",
     props: { "data-dbinfo-modal": "true" },
   });
 
@@ -33,8 +34,8 @@ export function showDatabaseInfoPopup(_anchor: HTMLElement): void {
     text: "\u2715",
     styleString:
       "position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border-radius: 8px;" +
-      " border: 1px solid var(--ios-border); background: rgba(120,120,128,0.12);" +
-      " color: var(--ios-text-secondary); cursor: pointer; font-size: 15px; line-height: 1;" +
+      " border: 1px solid var(--ax-border); background: var(--ax-bg-chip);" +
+      " color: var(--ax-fg-2); cursor: pointer; font-size: 15px; line-height: 1;" +
       " display: inline-flex; align-items: center; justify-content: center;",
     events: { click: closeAll },
   });
@@ -70,18 +71,19 @@ export function showPurgeWarning(
     .forEach((el) => el.remove());
 
   const overlay = ui_createElement("div", {
+    className: "ax-shell-element",
     styleString:
       "position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: var(--z-modal-backdrop, 100500);" +
-      " background: rgba(0,0,0,0.45);",
+      " background: var(--ax-modal-backdrop-bg);",
     props: { "data-purge-modal": "true" },
   });
 
   const modal = ui_createElement("div", {
+    className: "ax-shell-element ax-glass-3 ax-glass-rim",
     styleString:
       "position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal-content, 100600);" +
-      " background: rgba(255,255,255,0.97); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);" +
-      " border-radius: 16px; padding: 24px 28px; max-width: 360px; width: 90%;" +
-      " box-shadow: var(--ios-shadow); font-family: var(--ios-font, inherit);",
+      " border-radius: var(--ax-radius-2xl); padding: 24px 28px; max-width: 360px; width: 90%;" +
+      " font-family: var(--ax-font-body); color: var(--ax-fg);",
     props: { "data-purge-modal": "true" },
   });
 
@@ -111,9 +113,9 @@ export function showPurgeWarning(
   const cancelBtn = ui_createElement("button", {
     text: "Cancel",
     styleString:
-      "padding: 8px 20px; font-size: 13px; font-weight: 600; border-radius: 10px; cursor: pointer;" +
-      " border: 1px solid var(--ios-border, rgba(200,200,200,0.8)); background: rgba(255,255,255,0.7);" +
-      " color: var(--ios-text-primary); font-family: inherit;",
+      "padding: 8px 20px; font-size: var(--ax-fs-lg); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-lg); cursor: pointer;" +
+      " border: 1px solid var(--ax-border); background: var(--ax-bg-input);" +
+      " color: var(--ax-fg); font-family: inherit;",
     events: { click: closeAll },
   });
 

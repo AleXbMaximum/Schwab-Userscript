@@ -53,8 +53,8 @@ export class TickerGridManager {
   private buildCard(sym: string, isFirst: boolean): CardRefs {
     const card = ui_createElement("div", {
       styleString:
-        "padding: 10px 12px; border: 1px solid rgba(60,60,67,0.14); border-radius: 10px;" +
-        " background: rgba(255,255,255,0.92); cursor: grab; user-select: none; transition: all 0.15s;" +
+        "padding: 10px 12px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg);" +
+        " background: var(--ax-bg-card); cursor: grab; user-select: none; transition: all 0.15s;" +
         (isFirst
           ? " border-color: rgba(0,122,255,0.35); background: rgba(0,122,255,0.05);"
           : ""),
@@ -171,8 +171,8 @@ export class TickerGridManager {
       mc?.getTopNForSymbol(sym) ?? DEFAULT_MONITOR_SETTINGS.defaultTopN,
     );
     topNInput.style.cssText =
-      "width: 56px; padding: 3px 6px; font-size: 12px; border: 1px solid var(--ios-border);" +
-      " border-radius: 6px; outline: none; font-family: var(--ios-font, inherit); background: rgba(255,255,255,0.95); text-align: center;";
+      "width: 56px; padding: 3px 6px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border);" +
+      " border-radius: 6px; outline: none; font-family: var(--ax-font-body); background: var(--ax-bg-input); text-align: center;";
     topNInput.addEventListener("change", () => {
       if (!mc) return;
       const next = Number.parseInt(topNInput.value, 10);

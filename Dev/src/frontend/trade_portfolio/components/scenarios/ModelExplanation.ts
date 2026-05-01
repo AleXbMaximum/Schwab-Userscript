@@ -33,8 +33,8 @@ export function createModelExplanation(
   const container = ui_createElement("div", {
     styleString:
       "font-size: 11px; color: var(--ios-text-secondary); line-height: 1.5;" +
-      " padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,0.02);" +
-      " border: 1px dashed rgba(0,0,0,0.08); margin-top: 10px;",
+      " padding: 8px 10px; border-radius: 8px; background: var(--ax-bg-glass-inset);" +
+      " border: 1px dashed var(--ax-border); margin-top: 10px;",
   });
 
   if (modelType === "threeFactor") {

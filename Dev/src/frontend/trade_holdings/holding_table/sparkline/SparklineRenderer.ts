@@ -1,3 +1,5 @@
+import { isDarkTheme } from "frontend/components/core/axTheme";
+
 export const SPARKLINE_WIDTH = 52;
 export const SPARKLINE_HEIGHT = 20;
 
@@ -24,7 +26,8 @@ const COLOR_TIERS: readonly ColorTier[] = [
 ];
 
 const BASELINE_DASH: readonly [number, number] = [2, 2];
-const BASELINE_STROKE = "rgba(142,142,147,0.62)";
+const baselineStroke = (): string =>
+  isDarkTheme() ? "rgba(162,162,167,0.55)" : "rgba(142,142,147,0.62)";
 const BASELINE_WIDTH = 0.9;
 
 export interface SparklineColors {
@@ -126,7 +129,7 @@ export function drawIntradaySparkline(
     const baseY = toY(prevClose);
     ctx.save();
     ctx.setLineDash(BASELINE_DASH);
-    ctx.strokeStyle = BASELINE_STROKE;
+    ctx.strokeStyle = baselineStroke();
     ctx.lineWidth = BASELINE_WIDTH;
     ctx.beginPath();
     ctx.moveTo(pad, baseY);

@@ -34,16 +34,19 @@ export function openNewsPanel(symbol?: string | null): void {
   const overlay = ui_createElement("div", {
     props: { id: "alexquant-news-panel" },
     styleString:
-      "position: fixed; inset: 0; z-index: var(--z-modal-backdrop, 100500); background: rgba(0,0,0,0.45);" +
+      "position: fixed; inset: 0; z-index: var(--ax-z-modal-backdrop); background: var(--ax-modal-backdrop-bg);" +
       " display: flex; align-items: center; justify-content: center;" +
       " -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);",
   });
 
+  // Glass tier-3 + rim makes the modal float properly on top of Schwab's
+  // dimmed/inverted backdrop.
   const modal = ui_createElement("div", {
+    className: "ax-glass-3 ax-glass-rim",
     styleString:
-      "background: rgba(248,248,252,0.96); border-radius: 18px; width: min(650px, 93vw);" +
+      "border-radius: var(--ax-radius-2xl); width: min(650px, 93vw);" +
       " max-height: 85vh; display: flex; flex-direction: column; overflow: hidden;" +
-      " box-shadow: var(--ios-shadow); border: 1px solid rgba(255,255,255,0.5);" +
+      " color: var(--ax-fg);" +
       " transform: scale(0.96); opacity: 0; transition: transform 0.25s ease, opacity 0.25s ease;",
   });
 

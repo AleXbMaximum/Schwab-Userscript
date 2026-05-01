@@ -190,7 +190,7 @@ export function renderMovingBetaChart(config: {
   const progressTrack = ui_createElement("div", {
     styleString:
       "width: min(560px, 90%); height: 8px; border-radius: 6px;" +
-      " background: rgba(0, 0, 0, 0.08); overflow: hidden;",
+      " background: var(--ax-bg-glass-inset); overflow: hidden;",
   });
   const progressFill = ui_createElement("div", {
     styleString:
@@ -468,7 +468,7 @@ export function renderMovingBetaChart(config: {
       const errEl = ui_createElement("div", {
         text: "Failed to load rolling data.",
         styleString:
-          "text-align: center; padding: 40px 0; font-size: 12px; color: var(--ios-danger, #d73126);",
+          "text-align: center; padding: 40px 0; font-size: var(--ax-fs-md); color: var(--ax-negative);",
       });
       panel.appendChild(errEl);
     } finally {

@@ -143,10 +143,10 @@ export function optionFlow_renderPage(
   const copyOutBtn = ui_createElement("button", {
     text: "Copy Out",
     styleString:
-      "padding: 4px 12px; font-size: 11px; font-weight: 700; border-radius: 8px;" +
-      " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-      ' font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);' +
-      " background: rgba(255,255,255,0.6); color: var(--ios-text-primary);" +
+      "padding: 4px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-md);" +
+      " cursor: pointer; border: 1px solid var(--ax-border);" +
+      " font-family: var(--ax-font-body);" +
+      " background: var(--ax-bg-input); color: var(--ax-fg);" +
       " flex-shrink: 0; transition: opacity 0.2s, color 0.2s, border-color 0.2s;",
   }) as HTMLButtonElement;
 

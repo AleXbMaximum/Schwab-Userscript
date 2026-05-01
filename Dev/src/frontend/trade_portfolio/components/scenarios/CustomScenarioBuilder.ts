@@ -14,7 +14,7 @@ export function createCustomScenarioBuilder(
   const wrap = ui_createElement("div", {
     styleString:
       "padding: 10px 12px; border-radius: 10px; border: 1px solid var(--ios-border);" +
-      " background: rgba(0,0,0,0.02);",
+      " background: var(--ax-bg-glass-inset);",
   });
 
   // Title row with mode pills
@@ -60,7 +60,7 @@ export function createCustomScenarioBuilder(
         "padding: 2px 8px; font-size: 9px; font-weight: 600; border-radius: 5px; cursor: pointer;" +
         " border: 1px solid var(--ios-border); transition: all 0.15s;" +
         (m.key === inputMode
-          ? " background: var(--ios-blue); color: #fff; border-color: var(--ios-blue);"
+          ? " background: var(--ax-blue); color: #fff; border-color: var(--ax-blue);"
           : " background: transparent; color: var(--ios-text-secondary);"),
     }) as HTMLButtonElement;
     btn.addEventListener("click", () => {
@@ -82,9 +82,9 @@ export function createCustomScenarioBuilder(
   });
 
   const inputStyle =
-    "width: 56px; padding: 4px 6px; font-size: 11px; font-weight: 600;" +
-    " border: 1px solid var(--ios-border); border-radius: 6px; text-align: right;" +
-    " font-variant-numeric: tabular-nums; background: rgba(255,255,255,0.8);" +
+    "width: 56px; padding: 4px 6px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold);" +
+    " border: 1px solid var(--ax-border); border-radius: 6px; text-align: right;" +
+    " font-variant-numeric: tabular-nums; background: var(--ax-bg-input);" +
     " outline: none; transition: border-color 0.15s;";
 
   const createField = (
@@ -164,7 +164,7 @@ export function createCustomScenarioBuilder(
         "padding: 2px 8px; font-size: 9px; font-weight: 600; border-radius: 5px; cursor: pointer;" +
         " border: 1px solid var(--ios-border); transition: all 0.15s;" +
         (active
-          ? " background: var(--ios-blue); color: #fff; border-color: var(--ios-blue);"
+          ? " background: var(--ax-blue); color: #fff; border-color: var(--ax-blue);"
           : " background: transparent; color: var(--ios-text-secondary);") +
         (isAnchorModel ? " opacity: 0.55; cursor: not-allowed;" : "");
       modeBtns[i].disabled = isAnchorModel;
@@ -204,7 +204,7 @@ export function createCustomScenarioBuilder(
     props: { type: "button" },
     styleString:
       "padding: 5px 16px; font-size: 11px; font-weight: 700; border-radius: 8px;" +
-      " border: none; background: var(--ios-blue); color: #fff; cursor: pointer;" +
+      " border: none; background: var(--ax-blue); color: #fff; cursor: pointer;" +
       " transition: opacity 0.15s;",
   });
   runBtn.addEventListener("mouseenter", () => {

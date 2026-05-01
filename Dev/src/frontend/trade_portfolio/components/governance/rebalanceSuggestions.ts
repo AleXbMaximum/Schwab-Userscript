@@ -249,8 +249,8 @@ export function renderTradeSuggestions(
       ui_createElement("span", {
         text: suggestion.action,
         styleString:
-          `font-size:10px; font-weight:700; color:${accent}; border:1px solid ${accent};` +
-          " background:rgba(255,255,255,0.72); padding:2px 6px; border-radius:999px; min-width:52px; text-align:center;",
+          `font-size:var(--ax-fs-xs); font-weight:var(--ax-fw-bold); color:${accent}; border:1px solid ${accent};` +
+          " background:var(--ax-glass-2-bg); padding:2px 6px; border-radius:999px; min-width:52px; text-align:center;",
       }),
     );
     top.appendChild(
@@ -328,7 +328,7 @@ export function renderTradeSuggestions(
 
   const summaryRow = ui_createElement("div", {
     styleString:
-      "display:flex; flex-wrap:wrap; gap:10px; padding:6px 8px; margin-top:3px; border-radius:6px; background:rgba(0,0,0,0.025);",
+      "display:flex; flex-wrap:wrap; gap:10px; padding:6px 8px; margin-top:3px; border-radius:6px; background:var(--ax-bg-glass-inset);",
   });
   const addItem = (label: string, value: string) => {
     const item = ui_createElement("div", {

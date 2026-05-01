@@ -67,7 +67,7 @@ function nodeChipStyle(status: NodeStatus): string {
     case "pending":
       return (
         base +
-        " background: rgba(0,0,0,0.03); color: var(--ios-text-secondary); border-color: var(--ios-border); cursor: default;"
+        " background: var(--ax-bg-glass-inset); color: var(--ios-text-secondary); border-color: var(--ios-border); cursor: default;"
       );
     case "running":
       return (
