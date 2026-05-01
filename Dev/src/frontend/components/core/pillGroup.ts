@@ -13,9 +13,9 @@ export interface PillGroupResult<T> {
 }
 
 const PILL_STYLE =
-  "padding: 5px 12px; font-size: 11px; font-weight: 600; border-radius: 8px;" +
-  " cursor: pointer; border: 1px solid var(--ios-border, rgba(230,230,230,0.7));" +
-  " font-family: var(--ios-font, inherit); transition: all 0.15s; white-space: nowrap;";
+  "padding: 5px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md);" +
+  " cursor: pointer; border: 1px solid var(--ax-border);" +
+  " font-family: var(--ax-font-body); transition: all 0.15s; white-space: nowrap;";
 
 function setActive(btn: HTMLElement): void {
   btn.style.background = DS_COLORS.info;
@@ -24,9 +24,9 @@ function setActive(btn: HTMLElement): void {
 }
 
 function setInactive(btn: HTMLElement): void {
-  btn.style.background = "rgba(255,255,255,0.6)";
-  btn.style.color = "var(--ios-text-primary)";
-  btn.style.borderColor = "var(--ios-border, rgba(230,230,230,0.7))";
+  btn.style.background = "var(--ax-bg-input)";
+  btn.style.color = "var(--ax-fg)";
+  btn.style.borderColor = "var(--ax-border)";
 }
 
 export function createPillGroup<T>(
