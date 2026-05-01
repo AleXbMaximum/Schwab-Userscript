@@ -13,16 +13,25 @@ export function createTooltipHost(): {
 } {
   const host = document.createElement("alexquant-tip");
   host.style.cssText =
-    "position: fixed; z-index: var(--z-tooltip, 100700); pointer-events: none;";
+    "position: fixed; z-index: var(--ax-z-tooltip); pointer-events: none;";
   document.body.appendChild(host);
   const shadow = host.attachShadow({ mode: "closed" });
   const tooltip = document.createElement("div");
+  // CSS custom properties inherit into shadow DOM, so --ax-* tokens resolve
+  // here against the document's current theme.
   tooltip.style.cssText =
-    "position: fixed; background: rgba(255,255,255,0.97); border: 1px solid rgba(0,0,0,0.15);" +
-    " border-radius: 8px; padding: 8px 12px; font-size: 12px; pointer-events: none;" +
-    " display: none; box-shadow: 0 2px 12px rgba(0,0,0,0.18);" +
-    ' font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;' +
-    " max-width: 320px; color: #333; line-height: 1.4;";
+    "position: fixed;" +
+    " background: var(--ax-bg-tooltip);" +
+    " border: 1px solid var(--ax-border-tooltip);" +
+    " border-radius: var(--ax-radius-md);" +
+    " padding: 8px 12px; font-size: var(--ax-fs-md);" +
+    " pointer-events: none; display: none;" +
+    " box-shadow: var(--ax-shadow-tooltip);" +
+    " font-family: var(--ax-font-body);" +
+    " color: var(--ax-fg);" +
+    " max-width: 320px; line-height: 1.4;" +
+    " backdrop-filter: blur(12px) saturate(160%);" +
+    " -webkit-backdrop-filter: blur(12px) saturate(160%);";
   shadow.appendChild(tooltip);
   return { host, tooltip };
 }

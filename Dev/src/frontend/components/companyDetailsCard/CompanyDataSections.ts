@@ -138,7 +138,7 @@ function buildPeople(b: BarronsDataBundle): HTMLElement | null {
         ui_createElement("div", {
           styleString:
             `display: flex; align-items: center; gap: 6px; padding: 5px 10px;` +
-            ` ${DS_COMPONENTS.metricCell} flex-direction: row; background: rgba(0,0,0,0.025);`,
+            ` ${DS_COMPONENTS.metricCell} flex-direction: row; background: var(--ax-bg-glass-inset);`,
           children: [
             ui_createElement("span", {
               text: p.name,
@@ -158,7 +158,7 @@ function buildPeople(b: BarronsDataBundle): HTMLElement | null {
                     text: `${p.age}`,
                     styleString:
                       `font-size: 10px; color: ${DS_COLORS.muted}; flex-shrink: 0;` +
-                      ` background: rgba(0,0,0,0.04); border-radius: 4px; padding: 1px 5px;`,
+                      ` background: var(--ax-bg-glass-inset); border-radius: 4px; padding: 1px 5px;`,
                   }),
                 ]
               : []),
