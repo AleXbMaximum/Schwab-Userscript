@@ -150,8 +150,8 @@ export function betaBgColor(beta: number | null): string {
   if (beta == null) return "transparent";
   if (beta < 0) return "rgba(74,144,217,0.12)";
   if (beta < 0.5) return "rgba(124,181,236,0.10)";
-  if (beta < 0.8) return "rgba(142,142,147,0.06)";
-  if (beta <= 1.2) return "rgba(0,0,0,0.03)";
+  if (beta < 0.8) return "var(--ax-tone-muted-soft-bg)";
+  if (beta <= 1.2) return "var(--ax-bg-glass-inset)";
   if (beta <= 1.5) return "rgba(215,129,0,0.10)";
   if (beta <= 2.0) return "rgba(226,92,62,0.12)";
   return "rgba(215,49,38,0.15)";
@@ -275,14 +275,14 @@ export function buildSegmentControl(
 ): { el: HTMLElement; setActive: (key: string) => void } {
   const wrap = ui_createElement("div", {
     styleString:
-      "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 8px; overflow: hidden; background: rgba(0,0,0,0.03);",
+      "display: inline-flex; border: 1px solid var(--ios-border); border-radius: 8px; overflow: hidden; background: var(--ax-bg-glass-inset);",
   });
   const buttons: Record<string, HTMLButtonElement> = {};
   const sync = (ak: string) => {
     for (const [k, btn] of Object.entries(buttons)) {
       const isActive = k === ak;
-      btn.style.background = isActive ? "var(--ios-blue)" : "transparent";
-      btn.style.color = isActive ? "#fff" : "var(--ios-text-secondary)";
+      btn.style.background = isActive ? "var(--ax-blue)" : "transparent";
+      btn.style.color = isActive ? "#fff" : "var(--ax-fg-2)";
     }
   };
   for (const opt of options) {

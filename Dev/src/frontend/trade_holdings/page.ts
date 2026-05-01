@@ -117,8 +117,8 @@ export function holdings_renderPage(
 
     const select = ui_createElement("select", {
       styleString:
-        "padding: 6px 10px; border: 1px solid var(--ios-border); border-radius: 10px; font-size: 12px;" +
-        " font-family: var(--ios-font); background: rgba(255,255,255,0.6); cursor: pointer;" +
+        "padding: 6px 10px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); font-size: var(--ax-fs-md);" +
+        " font-family: var(--ax-font-body); background: var(--ax-bg-input); cursor: pointer;" +
         " outline: none; transition: border-color 0.2s, box-shadow 0.2s;",
     }) as HTMLSelectElement;
 
@@ -254,9 +254,9 @@ export function holdings_renderPage(
         "</svg>",
     },
     styleString:
-      "width: 32px; height: 32px; border-radius: 10px; cursor: pointer;" +
-      " border: 1px solid var(--ios-border); color: var(--ios-text-secondary);" +
-      " background: rgba(255,255,255,0.75); display: flex; align-items: center; justify-content: center;" +
+      "width: 32px; height: 32px; border-radius: var(--ax-radius-lg); cursor: pointer;" +
+      " border: 1px solid var(--ax-border); color: var(--ax-fg-2);" +
+      " background: var(--ax-bg-input); display: flex; align-items: center; justify-content: center;" +
       " transition: all 0.15s;",
   }) as HTMLButtonElement;
   rebalanceWrap.appendChild(rebalanceBtn);
@@ -266,8 +266,8 @@ export function holdings_renderPage(
       "position: absolute; top: 38px; right: 0; z-index: var(--z-page-popover, 210);" +
       " width: min(max-content, calc(100vw - 24px)); max-width: calc(100vw - 24px);" +
       " max-height: 80vh; overflow-y: auto;" +
-      " border: 1px solid var(--ios-border); border-radius: 12px;" +
-      " background: rgba(255,255,255,0.96); box-shadow: var(--ios-shadow);" +
+      " border: 1px solid var(--ax-border); border-radius: var(--ax-radius-xl);" +
+      " background: var(--ax-bg-card); box-shadow: var(--ax-shadow-lg);" +
       " display: none;",
   });
   rebalanceWrap.appendChild(rebalancePopover);
@@ -344,12 +344,12 @@ export function holdings_renderPage(
     rebalanceBtn.setAttribute("aria-expanded", open ? "true" : "false");
     rebalanceBtn.style.background = open
       ? "rgba(0,122,255,0.12)"
-      : "rgba(255,255,255,0.75)";
+      : "var(--ax-bg-input)";
     rebalanceBtn.style.borderColor = open
       ? "rgba(0,122,255,0.4)"
-      : "var(--ios-border)";
+      : "var(--ax-border)";
     rebalanceBtn.style.color = open
-      ? "var(--ios-blue)"
+      ? "var(--ax-blue)"
       : "var(--ios-text-secondary)";
     if (open) {
       const latestData = headerController?.getLatestFrame?.();

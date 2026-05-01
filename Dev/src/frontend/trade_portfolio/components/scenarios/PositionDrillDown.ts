@@ -45,7 +45,7 @@ export function createPositionDrillDown(
   for (const pos of positions) {
     if (pos.modelUsed === "none" && pos.totalPnl === 0) continue;
     const tr = document.createElement("tr");
-    tr.style.cssText = "border-bottom: 1px solid rgba(0,0,0,0.04);";
+    tr.style.cssText = "border-bottom: 1px solid var(--ax-border-subtle);";
 
     const cells = [
       { text: pos.underlyingKey, align: "left" },

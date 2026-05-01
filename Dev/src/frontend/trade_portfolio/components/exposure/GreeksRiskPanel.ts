@@ -48,8 +48,8 @@ export function renderGreeksRiskPanel(
   ) => {
     const item = ui_createElement("div", {
       styleString:
-        "display: flex; flex-direction: column; padding: 10px 14px; border-radius: 12px;" +
-        " background: rgba(255,255,255,0.5); border: 1px solid var(--ios-border);" +
+        "display: flex; flex-direction: column; padding: 10px 14px; border-radius: var(--ax-radius-xl);" +
+        " background: var(--ax-glass-2-bg); border: 1px solid var(--ax-border);" +
         " min-width: 100px; flex: 1;",
     });
     item.appendChild(
@@ -140,7 +140,7 @@ export function renderGreeksRiskPanel(
     const tbody = document.createElement("tbody");
     underlyings.forEach((u, idx) => {
       const row = document.createElement("tr");
-      row.style.cssText = idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+      row.style.cssText = idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
 
       const cells = [
         { text: u.key, color: "var(--ios-text-primary)", weight: "600" },
@@ -232,7 +232,7 @@ export function renderGreeksRiskPanel(
         updatedUnderlyings.forEach((u, idx) => {
           const row = document.createElement("tr");
           row.style.cssText =
-            idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+            idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
           const cells = [
             { text: u.key, color: "var(--ios-text-primary)", weight: "600" },
             {

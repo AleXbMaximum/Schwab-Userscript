@@ -176,7 +176,7 @@ export function buildCrossBenchmarkTable(
 
   entries.forEach((entry, idx) => {
     const row = document.createElement("tr");
-    row.style.cssText = idx % 2 === 1 ? "background: rgba(0,0,0,0.02);" : "";
+    row.style.cssText = idx % 2 === 1 ? "background: var(--ax-bg-glass-inset);" : "";
 
     // Ticker
     const tickerTd = document.createElement("td");

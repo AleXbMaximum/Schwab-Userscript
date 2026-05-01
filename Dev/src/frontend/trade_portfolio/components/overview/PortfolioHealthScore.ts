@@ -138,7 +138,7 @@ export function renderPortfolioHealthScore(
 
   const ringInner = ui_createElement("div", {
     styleString:
-      "width: 68px; height: 68px; border-radius: 50%; background: rgba(255,255,255,0.92);" +
+      "width: 68px; height: 68px; border-radius: 50%; background: var(--ax-bg-card);" +
       " display: flex; flex-direction: column; align-items: center; justify-content: center;",
   });
 
@@ -221,7 +221,7 @@ export function renderPortfolioHealthScore(
           text: driver,
           styleString:
             "padding: 6px 10px; border-radius: 8px; font-size: 11px; line-height: 1.35;" +
-            " background: rgba(0,0,0,0.03); color: var(--ios-text-secondary); border: 1px solid rgba(0,0,0,0.06);",
+            " background: var(--ax-bg-glass-inset); color: var(--ios-text-secondary); border: 1px solid var(--ax-border-subtle);",
         }),
       );
     });

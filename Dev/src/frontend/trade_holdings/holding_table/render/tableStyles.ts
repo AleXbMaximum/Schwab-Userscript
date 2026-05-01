@@ -46,7 +46,7 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-row--child {
-    background-color: var(--ios-secondary-bg);
+    background-color: var(--ax-bg-subtle);
 }
 
 .table-row--summary {
@@ -54,7 +54,7 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-row--summary td {
-    border-top: 1px solid rgba(180, 190, 210, 0.5);
+    border-top: 1px solid var(--ax-border);
     padding-top: 10px;
 }
 
@@ -66,12 +66,12 @@ const TABLE_CSS_STYLES = `
 
 .table-row--group {
     font-weight: 700;
-    background-color: rgba(27, 95, 167, 0.08);
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group {
-    background-color: rgba(27, 95, 167, 0.15);
-    color: black;
+    background-color: var(--ax-bg-group-strong);
+    color: var(--ax-fg);
 }
 
 .table-header-cell {
@@ -79,10 +79,10 @@ const TABLE_CSS_STYLES = `
     text-align: right;
     cursor: pointer;
     font-weight: 700;
-    color: var(--ios-text-primary);
+    color: var(--ax-fg);
     padding: 8px 10px;
     background-color: inherit;
-    border-bottom: 1px solid rgba(60, 60, 67, 0.12);
+    border-bottom: 1px solid var(--ax-border-subtle);
     user-select: none;
     position: relative;
     transition: opacity 0.2s ease;
@@ -91,10 +91,10 @@ const TABLE_CSS_STYLES = `
 .table-header-cell--sticky {
     position: sticky;
     left: 0;
-    z-index: var(--z-table-sticky-header, 32);
+    z-index: var(--ax-z-table-sticky-header);
     text-align: left;
     background-color: inherit;
-    border-right: 1px solid rgba(0, 0, 0, 0.10);
+    border-right: 1px solid var(--ax-border-subtle);
 }
 
 .table-header-cell--sticky::after {
@@ -104,18 +104,18 @@ const TABLE_CSS_STYLES = `
     right: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to right, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0));
+    background: var(--ax-bg-sticky-fade);
     pointer-events: none;
 }
 
 .table-header-cell--sticky-right {
     position: sticky;
     right: 0;
-    z-index: var(--z-table-sticky-header, 32);
+    z-index: var(--ax-z-table-sticky-header);
     text-align: center;
     cursor: default;
     background-color: inherit;
-    border-left: 1px solid rgba(0, 0, 0, 0.10);
+    border-left: 1px solid var(--ax-border-subtle);
 }
 
 .table-header-cell--sticky-right::before {
@@ -125,13 +125,13 @@ const TABLE_CSS_STYLES = `
     left: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to left, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0));
+    background: var(--ax-bg-sticky-fade-reverse);
     pointer-events: none;
 }
 
 .table-header-cell--derived {
     font-weight: 500;
-    color: var(--ios-table-header);
+    color: var(--ax-table-head);
 }
 
 .table-header-cell--spacer {
@@ -144,11 +144,11 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-header-cell--drop-left {
-    box-shadow: inset 3px 0 0 0 var(--ios-blue);
+    box-shadow: inset 3px 0 0 0 var(--ax-blue);
 }
 
 .table-header-cell--drop-right {
-    box-shadow: inset -3px 0 0 0 var(--ios-blue);
+    box-shadow: inset -3px 0 0 0 var(--ax-blue);
 }
 
 .table-cell-symbol,
@@ -166,11 +166,11 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-cell-numeric--positive {
-    color: var(--ios-green);
+    color: var(--ax-positive);
 }
 
 .table-cell-numeric--negative {
-    color: var(--ios-red);
+    color: var(--ax-negative);
 }
 
 .table-cell-spacer {
@@ -181,7 +181,7 @@ const TABLE_CSS_STYLES = `
 .table-cell-symbol {
     text-align: left;
     font-weight: 700;
-    color: var(--ios-table-header);
+    color: var(--ax-table-head);
     position: relative;
 }
 
@@ -219,21 +219,21 @@ const TABLE_CSS_STYLES = `
 .table-cell-sticky {
     position: sticky;
     left: 0;
-    z-index: var(--z-table-sticky-cell, 30);
-    background-color: var(--ios-background);
-    border-right: 1px solid rgba(0, 0, 0, 0.10);
+    z-index: var(--ax-z-table-sticky-cell);
+    background-color: var(--ax-bg-table);
+    border-right: 1px solid var(--ax-border-subtle);
 }
 
 .table-row--child .table-cell-sticky {
-    background-color: var(--ios-secondary-bg);
+    background-color: var(--ax-bg-subtle);
 }
 
 .table-row--group .table-cell-sticky {
-    background-color: rgba(27, 95, 167, 0.08);
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group .table-cell-sticky {
-    background-color: rgba(27, 95, 167, 0.15);
+    background-color: var(--ax-bg-group-strong);
 }
 
 .table-cell-sticky::after {
@@ -243,28 +243,28 @@ const TABLE_CSS_STYLES = `
     right: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to right, rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0));
+    background: var(--ax-bg-sticky-shadow);
     pointer-events: none;
 }
 
 .table-cell-sticky-right {
     position: sticky;
     right: 0;
-    z-index: var(--z-table-sticky-cell, 30);
-    background-color: var(--ios-background);
-    border-left: 1px solid rgba(0, 0, 0, 0.10);
+    z-index: var(--ax-z-table-sticky-cell);
+    background-color: var(--ax-bg-table);
+    border-left: 1px solid var(--ax-border-subtle);
 }
 
 .table-row--child .table-cell-sticky-right {
-    background-color: var(--ios-secondary-bg);
+    background-color: var(--ax-bg-subtle);
 }
 
 .table-row--group .table-cell-sticky-right {
-    background-color: rgba(27, 95, 167, 0.08);
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group .table-cell-sticky-right {
-    background-color: rgba(27, 95, 167, 0.15);
+    background-color: var(--ax-bg-group-strong);
 }
 
 .table-cell-sticky-right::before {
@@ -274,18 +274,18 @@ const TABLE_CSS_STYLES = `
     left: -18px;
     width: 18px;
     height: 100%;
-    background: linear-gradient(to left, rgba(0, 0, 0, 0.07), rgba(0, 0, 0, 0));
+    background: var(--ax-bg-sticky-shadow-reverse);
     pointer-events: none;
 }
 
 .table-action-btn {
-    font-size: 11px;
+    font-size: var(--ax-fs-sm);
     padding: 3px 8px;
-    border-radius: 6px;
+    border-radius: var(--ax-radius-sm);
     cursor: pointer;
-    border: 1px solid rgba(0, 0, 0, 0.13);
-    background: rgba(255, 255, 255, 0.85);
-    font-family: var(--ios-font, -apple-system, BlinkMacSystemFont, sans-serif);
+    border: 1px solid var(--ax-border);
+    background: var(--ax-bg-glass-inset);
+    font-family: var(--ax-font-body);
     white-space: nowrap;
     line-height: 1.4;
     vertical-align: middle;
@@ -293,21 +293,21 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-action-btn:hover {
-    background: var(--ios-background);
-    border-color: rgba(0, 0, 0, 0.22);
+    background: var(--ax-bg-row-hover);
+    border-color: var(--ax-border-strong);
 }
 
 .table-action-btn--info {
-    color: var(--ios-teal, #5AC8FA);
+    color: var(--ax-cyan);
 }
 
 .table-action-btn--news {
-    color: var(--ios-blue, #007AFF);
+    color: var(--ax-blue);
     margin-left: 4px;
 }
 
 .table-action-btn--ai {
-    color: var(--ios-purple, #AF52DE);
+    color: var(--ax-purple);
     margin-left: 4px;
 }
 
@@ -325,7 +325,7 @@ const TABLE_CSS_STYLES = `
 
 .table-group-title {
     font-weight: 700;
-    color: var(--ios-text-primary);
+    color: var(--ax-fg);
 }
 
 .table-asset-badges {
@@ -352,7 +352,7 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-badge-letter {
-    color: var(--ios-text-primary);
+    color: var(--ax-fg);
     line-height: 1;
 }
 
@@ -366,15 +366,15 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-badge-count--positive {
-    color: var(--ios-green);
+    color: var(--ax-positive);
 }
 
 .table-badge-count--negative {
-    color: var(--ios-red);
+    color: var(--ax-negative);
 }
 
 .table-row-border-top {
-    border-top: 3px solid var(--ios-border);
+    border-top: 3px solid var(--ax-border);
 }
 
 .table-cell-symbol--has-sparkline {
@@ -396,13 +396,13 @@ const TABLE_CSS_STYLES = `
 .table-header-cell[data-sort="desc"]::after {
     content: ' ▼';
     font-size: 0.75em;
-    color: var(--ios-blue, #007AFF);
+    color: var(--ax-blue);
 }
 
 .table-header-cell[data-sort="asc"]::after {
     content: ' ▲';
     font-size: 0.75em;
-    color: var(--ios-blue, #007AFF);
+    color: var(--ax-blue);
 }
 `;
 

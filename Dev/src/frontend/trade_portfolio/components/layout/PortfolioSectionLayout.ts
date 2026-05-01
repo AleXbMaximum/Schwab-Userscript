@@ -40,7 +40,7 @@ const SECTIONS: SectionConfig<PortfolioSectionId>[] = [
     tabLabel: "Govern",
     defaultExpanded: true,
     accentColor: DS_COLORS.raw.muted,
-    accentBg: "rgba(142, 142, 147, 0.08)",
+    accentBg: "var(--ax-tone-muted-soft-bg)",
   },
 ];
 

@@ -266,7 +266,7 @@ export function renderBetaExposurePanel(
   const tickerInput = ui_createElement("input", {
     props: { type: "text", placeholder: "Add ticker\u2026" },
     styleString:
-      "flex: 1; min-width: 0; padding: 4px 8px; font-size: 12px; border: 1px solid var(--ios-border); border-radius: 6px; background: var(--ios-bg-secondary, #f5f5f5); color: var(--ios-text-primary); font-family: inherit; outline: none;",
+      "flex: 1; min-width: 0; padding: 4px 8px; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border); border-radius: var(--ax-radius-sm); background: var(--ax-bg-input); color: var(--ax-fg); font-family: var(--ax-font-body); outline: none;",
   }) as HTMLInputElement;
   const tickerAddBtn = ui_createElement("button", {
     text: "+",

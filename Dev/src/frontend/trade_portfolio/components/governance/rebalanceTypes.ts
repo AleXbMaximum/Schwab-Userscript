@@ -113,12 +113,12 @@ export const tdStyle =
   DS_COMPONENTS.tableCell + " font-variant-numeric: tabular-nums;";
 export const tableStyle = DS_COMPONENTS.table;
 export const cellInputStyle =
-  "padding:1px 3px; font-size:12px; border:1px solid var(--ios-border); border-radius:3px;" +
-  " font-family:var(--ios-font); background:rgba(255,255,255,0.86); color:var(--ios-text-primary);" +
+  "padding:1px 3px; font-size:var(--ax-fs-md); border:1px solid var(--ax-border); border-radius:3px;" +
+  " font-family:var(--ax-font-body); background:var(--ax-bg-input); color:var(--ax-fg);" +
   " outline:none; width:60px; text-align:right;";
 export const emptyStateStyle =
   "padding:10px; font-size:12px; color:var(--ios-text-secondary); border-radius:8px;" +
-  " border:1px dashed rgba(0,0,0,0.14); text-align:center;";
+  " border:1px dashed var(--ax-border); text-align:center;";
 
 // ── Utility functions ──
 

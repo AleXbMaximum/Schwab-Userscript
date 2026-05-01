@@ -303,7 +303,7 @@ export function riskManagement_renderPage(
       text,
       styleString:
         "font-size: 9px; font-weight: 600; padding: 1px 6px; border-radius: 4px;" +
-        " background: rgba(0, 0, 0, 0.04); color: var(--ios-text-secondary); white-space: nowrap;",
+        " background: var(--ax-bg-chip); color: var(--ios-text-secondary); white-space: nowrap;",
     });
   };
 

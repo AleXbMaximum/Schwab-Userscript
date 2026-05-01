@@ -86,11 +86,11 @@ export function renderPortfolioStateVector(
   const bar = ui_createElement("div", {
     styleString:
       "position: sticky; top: 0; z-index: var(--z-sticky-state, 120);" +
-      " background: rgba(255, 255, 255, 0.82);" +
-      " -webkit-backdrop-filter: blur(16px) saturate(140%);" +
-      " backdrop-filter: blur(16px) saturate(140%);" +
-      " border-bottom: 1px solid rgba(0, 0, 0, 0.08);" +
-      " padding: 8px 16px 6px; font-family: var(--ios-font);",
+      " background: var(--ax-glass-2-bg);" +
+      " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+      " border-bottom: 1px solid var(--ax-border-subtle);" +
+      " padding: 8px 16px 6px; font-family: var(--ax-font-body);",
   }) as HTMLElement & {
     cleanup?: () => void;
     update?: (next: PortfolioStateVectorPayload) => void;
