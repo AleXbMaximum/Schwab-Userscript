@@ -11,9 +11,9 @@ import { formatTimeAgo } from "../../shared/utils/time";
 const SNAPSHOT_NEWS_MAX_ITEMS = 8;
 
 const NEWS_ACTION_BUTTON_STYLE =
-  "padding:4px 8px; border:1px solid var(--ios-border); border-radius:8px;" +
-  " background:rgba(255,255,255,0.55); color:var(--ios-text-secondary);" +
-  " font-size:10px; font-weight:600; cursor:pointer;";
+  "padding:4px 8px; border:1px solid var(--ax-border); border-radius: var(--ax-radius-md);" +
+  " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);" +
+  " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;";
 
 function bindHoverBackground(
   el: HTMLElement,
@@ -41,7 +41,7 @@ export function createSnapshotNewsSection(
     styleString:
       `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` +
       ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` +
-      " border-top:1px solid rgba(0,0,0,0.10);",
+      " border-top: 1px solid var(--ax-border);",
   });
 
   const headerRow = ui_createElement("div", {
@@ -75,8 +75,8 @@ export function createSnapshotNewsSection(
   }) as HTMLButtonElement;
   bindHoverBackground(
     collapseBtn,
-    "rgba(255,255,255,0.55)",
-    "rgba(255,255,255,0.9)",
+    "var(--ax-bg-glass-inset)",
+    "var(--ax-bg-row-hover)",
   );
 
   const markAllReadBtn = ui_createElement("button", {
@@ -86,8 +86,8 @@ export function createSnapshotNewsSection(
   }) as HTMLButtonElement;
   bindHoverBackground(
     markAllReadBtn,
-    "rgba(255,255,255,0.55)",
-    "rgba(255,255,255,0.9)",
+    "var(--ax-bg-glass-inset)",
+    "var(--ax-bg-row-hover)",
   );
   markAllReadBtn.addEventListener("click", () => {
     void newsService.markAllRead();
@@ -105,11 +105,11 @@ export function createSnapshotNewsSection(
       text: "Open News",
       props: { type: "button" },
       styleString:
-        "padding:4px 8px; border:1px solid rgba(0,122,255,0.25); border-radius:8px;" +
+        "padding:4px 8px; border:1px solid var(--ax-tone-info-border); border-radius: var(--ax-radius-md);" +
         ` background:${DS_COLORS.bgInfo}; color:${DS_COLORS.raw.info};` +
-        " font-size:10px; font-weight:600; cursor:pointer;",
+        " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;",
     });
-    bindHoverBackground(openBtn, DS_COLORS.bgInfo, "rgba(0,122,255,0.12)");
+    bindHoverBackground(openBtn, DS_COLORS.bgInfo, "var(--ax-tone-info-bg)");
     openBtn.addEventListener("click", () => openNewsPage());
     headerRow.appendChild(openBtn);
   }
@@ -155,7 +155,7 @@ export function createSnapshotNewsSection(
           styleString:
             DS_TYPOGRAPHY.caption +
             ` padding:${DS_SPACING.md} ${DS_SPACING.sm}; text-align:center;` +
-            " border:1px dashed rgba(0,0,0,0.12); border-radius:8px;",
+            " border:1px dashed var(--ax-border-strong); border-radius: var(--ax-radius-md);",
         }),
       );
       return;
@@ -177,7 +177,7 @@ export function createSnapshotNewsSection(
         styleString:
           DS_COMPONENTS.newsItem +
           ` padding:${DS_SPACING.sm} ${DS_SPACING.md};` +
-          " border:1px solid rgba(0,0,0,0.06);" +
+          " border:1px solid var(--ax-border-subtle);" +
           " transition:background .15s, border-color .15s, box-shadow .15s;" +
           (item.url ? " cursor:pointer;" : ""),
       });
@@ -236,13 +236,13 @@ export function createSnapshotNewsSection(
 
       if (item.url) {
         row.addEventListener("mouseenter", () => {
-          row.style.background = "rgba(255,255,255,0.86)";
-          row.style.borderColor = "rgba(0,122,255,0.22)";
-          row.style.boxShadow = "0 2px 10px rgba(0,0,0,0.06)";
+          row.style.background = "var(--ax-bg-row-hover)";
+          row.style.borderColor = "var(--ax-tone-info-border)";
+          row.style.boxShadow = "var(--ax-shadow-sm)";
         });
         row.addEventListener("mouseleave", () => {
           row.style.background = "";
-          row.style.borderColor = "rgba(0,0,0,0.06)";
+          row.style.borderColor = "var(--ax-border-subtle)";
           row.style.boxShadow = "";
         });
         row.addEventListener("click", () => {

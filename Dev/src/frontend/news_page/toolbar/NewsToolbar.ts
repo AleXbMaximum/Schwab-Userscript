@@ -43,9 +43,9 @@ export function buildNewsToolbar(deps: NewsToolbarDeps): NewsToolbarResult {
 
   const symbolFilterSelect = ui_createElement("select", {
     styleString:
-      "border: 1px solid var(--ios-border); border-radius: 8px; padding: 5px 8px;" +
-      " font-size: 12px; outline: none; min-width: 120px; background: rgba(255,255,255,0.6);" +
-      " color: var(--ios-text-primary);",
+      "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md); padding: 5px 8px;" +
+      " font-size: var(--ax-fs-md); outline: none; min-width: 120px; background: var(--ax-bg-input);" +
+      " color: var(--ax-fg);",
   }) as HTMLSelectElement;
   symbolFilterSelect.addEventListener("change", () => {
     const next = symbolFilterSelect.value;
@@ -56,8 +56,8 @@ export function buildNewsToolbar(deps: NewsToolbarDeps): NewsToolbarResult {
   const searchInput = ui_createElement("input", {
     props: { type: "text", placeholder: "Search headlines..." },
     styleString:
-      "border: 1px solid var(--ios-border); border-radius: 8px; padding: 5px 10px;" +
-      " font-size: 12px; outline: none; width: 180px; background: rgba(255,255,255,0.6);" +
+      "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md); padding: 5px 10px;" +
+      " font-size: var(--ax-fs-md); outline: none; width: 180px; background: var(--ax-bg-input);" +
       " transition: border-color 0.15s;",
   }) as HTMLInputElement;
   searchInput.addEventListener("input", () => {

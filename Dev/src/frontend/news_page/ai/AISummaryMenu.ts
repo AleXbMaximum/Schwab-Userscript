@@ -61,9 +61,9 @@ export function buildAISummaryMenu(deps: AISummaryMenuDeps): void {
 
   const resultArea = ui_createElement("div", {
     styleString:
-      "font-size: 12px; color: var(--ios-text-primary); line-height: 1.5;" +
+      "font-size: var(--ax-fs-md); color: var(--ax-fg); line-height: 1.5;" +
       " max-height: 200px; overflow-y: auto; white-space: pre-wrap; display: none;" +
-      " background: rgba(0,0,0,0.02); border-radius: 8px; padding: 10px 12px;",
+      " background: var(--ax-bg-glass-inset); border-radius: var(--ax-radius-md); padding: 10px 12px;",
   });
   aiSummaryArea.appendChild(resultArea);
 
