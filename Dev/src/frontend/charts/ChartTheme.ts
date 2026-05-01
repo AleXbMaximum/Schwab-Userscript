@@ -1,89 +1,153 @@
-// Canvas and Chart.js colors. Keep semantic values aligned with the frontend raw tokens.
+// Canvas and Chart.js colors. Theme-aware: returns light or dark palette
+// depending on the current AlexQuant theme controller state.
+//
+// Existing callsites import `CHART_COLORS`, `OPTIONS_SEMANTIC_COLORS`,
+// `CHART_TOOLTIP_CONFIG`, `CHART_LEGEND_CONFIG`, etc. as constants — those
+// references still resolve, but now they are getters in disguise
+// (Object.freeze proxy) so each property read returns the current-theme
+// value. Static destructuring at module load (`const { success } = CHART_COLORS`)
+// snapshots the value, so prefer reading the field at call time inside
+// chart callbacks for proper theme reactivity.
 
 import {
   niceScaleFromValues,
   type NiceScaleOptions,
 } from "shared/utils/math/scale";
-import { DS_COLORS } from "frontend/components/core/theme";
+import { getAxRawColors } from "frontend/components/core/axTokens/colors";
+import {
+  AX_CHART_COLORS_LIGHT,
+  getAxChartColors,
+} from "frontend/components/core/axTheme/chartTheme";
+import { isDarkTheme } from "frontend/components/core/axTheme/controller";
 
-export const CHART_COLORS = {
-  success: "rgb(32, 169, 69)", // --ios-green
-  warning: "rgb(215, 129, 0)", // --ios-orange
-  danger: "rgb(215, 49, 38)", // --ios-red
-  info: "#007AFF", // --ios-blue
-  neutral: "rgb(142, 142, 147)", // --ios-gray
+// ── Theme-aware palette proxy ───────────────────────────────────────────
+// Each property read goes through getAxChartColors(), so chart callbacks
+// pick up the active theme without any additional plumbing.
+type ChartColorSet = typeof AX_CHART_COLORS_LIGHT;
 
-  categorical: [
-    "#007AFF", // Blue
-    "#4CAF50", // Green
-    "#D78100", // Orange (matches DS_COLORS.raw.neutral)
-    DS_COLORS.raw.purple, // Purple
-    "#FF2D55", // Pink
-    "#00C7BE", // Teal
-    "#FFD60A", // Yellow
-    "#BF5AF2", // Violet
-  ],
+function makeReactive<T extends object>(): T {
+  return new Proxy(
+    {},
+    {
+      get(_t, prop: string) {
+        return (getAxChartColors() as unknown as Record<string, unknown>)[prop];
+      },
+      ownKeys() {
+        return Object.keys(AX_CHART_COLORS_LIGHT);
+      },
+      getOwnPropertyDescriptor(_t, prop: string) {
+        if (prop in (AX_CHART_COLORS_LIGHT as unknown as Record<string, unknown>)) {
+          return { configurable: true, enumerable: true, writable: false, value: undefined };
+        }
+        return undefined;
+      },
+    },
+  ) as T;
+}
 
-  heatmapScale: [
-    "rgb(215, 49, 38)", // -100% (worst loss)
-    "rgb(215, 129, 0)", // -50% (matches --ios-orange)
-    "rgb(255, 255, 255)", // 0% (neutral)
-    "rgb(144, 238, 144)", // +50%
-    "rgb(32, 169, 69)", // +100% (best gain)
-  ],
+export const CHART_COLORS: ChartColorSet = makeReactive<ChartColorSet>();
 
-  successAlpha: "rgba(32, 169, 69, 0.15)",
-  warningAlpha: "rgba(215, 129, 0, 0.15)",
-  dangerAlpha: "rgba(215, 49, 38, 0.15)",
-  infoAlpha: "rgba(0, 122, 255, 0.15)",
+// ── Options-chain domain colors (theme-aware) ───────────────────────────
+// Saturated palette → candle bodies, walls, GEX bars; `forward` / `gammaFlip`
+// are options-specific hues without a palette equivalent.
+function rgba(hex: string, alpha: number): string {
+  if (hex.startsWith("rgba") || hex.startsWith("rgb(")) return hex;
+  const m = hex.match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const r = parseInt(m[1].slice(0, 2), 16);
+  const g = parseInt(m[1].slice(2, 4), 16);
+  const b = parseInt(m[1].slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
-  textPrimary: "#1c1c1e",
-  textSecondary: "#3a3a3c",
-  grid: "#f0f0f0",
-  gridDark: "#bbb",
-} as const;
+type OptionsSemanticSet = {
+  spot: string;
+  forward: string;
+  putWall: string;
+  callWall: string;
+  maxPain: string;
+  gammaFlip: string;
+  bullish: string;
+  bearish: string;
+  neutral: string;
+  bgPositive: string;
+  bgNegative: string;
+  bgNeutral: string;
+  bgInfo: string;
+  fillPositive: string;
+  fillNegative: string;
+  fillInfo: string;
+  arrowUp: string;
+  arrowDown: string;
+  diamond: string;
+};
 
-export const OPTIONS_SEMANTIC_COLORS = {
-  spot: "#007AFF",
-  forward: "#00C7BE", // cyan, draw as dashed
-  putWall: "#d73126",
-  callWall: "#20a945",
-  maxPain: "#D78100",
-  gammaFlip: "#8E44AD",
+function buildOptionsSemantic(dark: boolean): OptionsSemanticSet {
+  const r = dark ? AX_CHART_COLORS_LIGHT : AX_CHART_COLORS_LIGHT; // placeholder, replaced below
+  // Rebuild from raw palette to ensure correct light/dark hex.
+  const raw = getAxRawColors();
+  void r;
+  return {
+    spot: raw.info,
+    forward: "#00C7BE",
+    putWall: raw.red,
+    callWall: raw.green,
+    maxPain: raw.neutral,
+    gammaFlip: "#8E44AD",
+    bullish: raw.green,
+    bearish: raw.red,
+    neutral: raw.muted,
+    bgPositive: rgba(raw.green, 0.06),
+    bgNegative: rgba(raw.red, 0.06),
+    bgNeutral: rgba(raw.muted, 0.06),
+    bgInfo: rgba(raw.info, 0.06),
+    fillPositive: rgba(raw.green, 0.5),
+    fillNegative: rgba(raw.red, 0.5),
+    fillInfo: rgba(raw.info, 0.5),
+    arrowUp: "▲",
+    arrowDown: "▼",
+    diamond: "◆",
+  };
+}
 
-  bullish: "#20a945",
-  bearish: "#d73126",
-  neutral: "#8E8E93",
+let _optionsSemLight: OptionsSemanticSet | null = null;
+let _optionsSemDark: OptionsSemanticSet | null = null;
 
-  bgPositive: "rgba(32, 169, 69, 0.06)",
-  bgNegative: "rgba(215, 49, 38, 0.06)",
-  bgNeutral: "rgba(142, 142, 147, 0.06)",
-  bgInfo: "rgba(0, 122, 255, 0.06)",
+function getOptionsSemantic(): OptionsSemanticSet {
+  if (isDarkTheme()) {
+    if (!_optionsSemDark) _optionsSemDark = buildOptionsSemantic(true);
+    return _optionsSemDark;
+  }
+  if (!_optionsSemLight) _optionsSemLight = buildOptionsSemantic(false);
+  return _optionsSemLight;
+}
 
-  fillPositive: "rgba(32, 169, 69, 0.5)",
-  fillNegative: "rgba(215, 49, 38, 0.5)",
-  fillInfo: "rgba(0, 122, 255, 0.5)",
+export const OPTIONS_SEMANTIC_COLORS: OptionsSemanticSet =
+  new Proxy({} as OptionsSemanticSet, {
+    get(_t, prop: string) {
+      return (getOptionsSemantic() as unknown as Record<string, unknown>)[prop];
+    },
+  }) as OptionsSemanticSet;
 
-  arrowUp: "\u25B2",
-  arrowDown: "\u25BC",
-  diamond: "\u25C6",
-} as const;
+// ── Helpers (theme-aware) ───────────────────────────────────────────────
 
 export function getColorForPercentage(
   percentage: number,
   thresholds: { low: number; medium: number } = { low: 50, medium: 75 },
 ): string {
-  if (percentage >= thresholds.medium) return CHART_COLORS.danger;
-  if (percentage >= thresholds.low) return CHART_COLORS.warning;
-  return CHART_COLORS.success;
+  const c = getAxChartColors();
+  if (percentage >= thresholds.medium) return c.danger;
+  if (percentage >= thresholds.low) return c.warning;
+  return c.success;
 }
 
 export function getColorForValue(value: number): string {
-  return value >= 0 ? CHART_COLORS.success : CHART_COLORS.danger;
+  const c = getAxChartColors();
+  return value >= 0 ? c.success : c.danger;
 }
 
 export function getHeatmapColor(normalizedValue: number): string {
-  const colors = CHART_COLORS.heatmapScale;
+  const colors = getAxChartColors().heatmapScale;
   const clamped = Math.max(-1, Math.min(1, normalizedValue));
   const index = ((clamped + 1) / 2) * (colors.length - 1);
   const lower = Math.floor(index);
@@ -102,78 +166,100 @@ export function getHeatmapColor(normalizedValue: number): string {
   )}, ${Math.round(colorLower.b + (colorUpper.b - colorLower.b) * fraction)})`;
 }
 
-function parseColor(rgb: string): { r: number; g: number; b: number } {
-  const match = rgb.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-  if (!match) return { r: 255, g: 255, b: 255 };
-  return {
-    r: parseInt(match[1], 10),
-    g: parseInt(match[2], 10),
-    b: parseInt(match[3], 10),
-  };
+function parseColor(input: string): { r: number; g: number; b: number } {
+  const m = input.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+  if (m)
+    return {
+      r: parseInt(m[1], 10),
+      g: parseInt(m[2], 10),
+      b: parseInt(m[3], 10),
+    };
+  const h = input.match(/^#?([0-9a-f]{6})$/i);
+  if (h)
+    return {
+      r: parseInt(h[1].slice(0, 2), 16),
+      g: parseInt(h[1].slice(2, 4), 16),
+      b: parseInt(h[1].slice(4, 6), 16),
+    };
+  return { r: 255, g: 255, b: 255 };
 }
 
 export const CHART_FONTS = {
-  // 9px — standard chart labels and ticks
   label: "600 9px -apple-system, BlinkMacSystemFont, sans-serif",
   labelBold: "700 9px -apple-system, BlinkMacSystemFont, sans-serif",
   labelSmall: "500 9px -apple-system, BlinkMacSystemFont, sans-serif",
   tick: "10px -apple-system, BlinkMacSystemFont, sans-serif",
   tickSmall: "9px -apple-system, BlinkMacSystemFont, sans-serif",
   axis: "500 10px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 8px — dense/compact canvas elements (contour labels, event badges, compact cells)
   dense: "600 8px -apple-system, BlinkMacSystemFont, sans-serif",
   denseBold: "700 8px -apple-system, BlinkMacSystemFont, sans-serif",
   denseLight: "500 8px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 10px semibold/bold — heatmap axis, summary headers, spot labels
   axisSemibold: "600 10px -apple-system, BlinkMacSystemFont, sans-serif",
   axisBold: "700 10px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 11px — heatmap headers and cell values
   heatmap: "600 11px -apple-system, BlinkMacSystemFont, sans-serif",
   heatmapBold: "700 11px -apple-system, BlinkMacSystemFont, sans-serif",
   heatmapLight: "500 11px -apple-system, BlinkMacSystemFont, sans-serif",
-  // 12px — row labels for large heatmaps
   rowLabel: "500 12px -apple-system, BlinkMacSystemFont, sans-serif",
 } as const;
 
 export const CHART_ANIMATIONS = {
-  initial: {
-    duration: 800,
-    easing: "easeInOutCubic" as const,
-  },
-  update: {
-    duration: 300,
-    easing: "easeOutCubic" as const,
-  },
-  none: {
-    duration: 0,
-  },
+  initial: { duration: 800, easing: "easeInOutCubic" as const },
+  update: { duration: 300, easing: "easeOutCubic" as const },
+  none: { duration: 0 },
 } as const;
 
-export const CHART_TOOLTIP_CONFIG = {
-  enabled: true,
-  mode: "index" as const,
-  intersect: false,
-  backgroundColor: "rgba(255, 255, 255, 0.95)",
-  titleColor: CHART_COLORS.textPrimary,
-  bodyColor: CHART_COLORS.textSecondary,
-  borderColor: "rgba(0, 0, 0, 0.1)",
-  borderWidth: 1,
-  padding: 14,
-  cornerRadius: 8,
-  displayColors: true,
-} as const;
+// ── Theme-aware tooltip / legend / axis configs ─────────────────────────
+
+type TooltipConfig = {
+  enabled: boolean;
+  mode: "index";
+  intersect: boolean;
+  backgroundColor: string;
+  titleColor: string;
+  bodyColor: string;
+  borderColor: string;
+  borderWidth: number;
+  padding: number;
+  cornerRadius: number;
+  displayColors: boolean;
+};
+
+function buildTooltipConfig(): TooltipConfig {
+  const raw = getAxRawColors();
+  const colors = getAxChartColors();
+  return {
+    enabled: true,
+    mode: "index",
+    intersect: false,
+    backgroundColor: raw.tooltipBg,
+    titleColor: colors.textPrimary,
+    bodyColor: colors.textSecondary,
+    borderColor: raw.tooltipBorder,
+    borderWidth: 1,
+    padding: 14,
+    cornerRadius: 8,
+    displayColors: true,
+  };
+}
+
+export const CHART_TOOLTIP_CONFIG: TooltipConfig =
+  new Proxy({} as TooltipConfig, {
+    get(_t, prop: string) {
+      return (buildTooltipConfig() as Record<string, unknown>)[prop];
+    },
+  }) as TooltipConfig;
+
+export function getChartTooltipConfig(): TooltipConfig {
+  return buildTooltipConfig();
+}
 
 export const CHART_LEGEND_CONFIG = {
   display: false,
   position: "right" as const,
   align: "center" as const,
   labels: {
-    font: {
-      family:
-        'var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)',
-      size: 12,
-    },
-    color: CHART_COLORS.textSecondary,
+    font: { family: "var(--ax-font-body)", size: 12 },
+    color: "var(--ax-fg-2)",
     padding: 10,
     usePointStyle: true,
     pointStyle: "circle" as const,
@@ -183,29 +269,28 @@ export const CHART_LEGEND_CONFIG = {
 const CHART_LEGEND_TOP = {
   display: true,
   position: "top" as const,
-  labels: {
-    font: { size: 11 },
-    boxWidth: 14,
-    padding: 10,
-    usePointStyle: true,
-  },
+  labels: { font: { size: 11 }, boxWidth: 14, padding: 10, usePointStyle: true },
 } as const;
 
 export const TIME_X_AXIS = {
   grid: { display: false },
-  ticks: {
-    font: { size: 11 },
-    maxRotation: 45,
-    autoSkip: true,
-    maxTicksLimit: 12,
-  },
+  ticks: { font: { size: 11 }, maxRotation: 45, autoSkip: true, maxTicksLimit: 12 },
 } as const;
 
 export function yAxis(title?: string, extra?: Record<string, unknown>) {
+  const tickColor = getAxChartColors().textSecondary;
   return {
-    grid: { color: "rgba(0,0,0,0.06)" },
+    grid: { color: isDarkTheme() ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" },
+    ticks: { color: tickColor },
     ...(title
-      ? { title: { display: true, text: title, font: { size: 10 } } }
+      ? {
+          title: {
+            display: true,
+            text: title,
+            font: { size: 10 },
+            color: tickColor,
+          },
+        }
       : {}),
     ...extra,
   };
@@ -217,41 +302,44 @@ export function baseChartOptions(overrides?: Record<string, unknown>) {
     maintainAspectRatio: false,
     interaction: { mode: "index" as const, intersect: false },
     plugins: {
-      legend: CHART_LEGEND_TOP,
-      tooltip: { ...CHART_TOOLTIP_CONFIG },
+      legend: {
+        ...CHART_LEGEND_TOP,
+        labels: {
+          ...CHART_LEGEND_TOP.labels,
+          color: getAxChartColors().textSecondary,
+        },
+      },
+      tooltip: { ...buildTooltipConfig() },
     },
     ...overrides,
   };
 }
 
-/**
- * Compute Chart.js-ready `min`, `max`, and `ticks.stepSize` from data values.
- * Spread the result into a Chart.js scale config:
- *   `y: { ...yAxis('Price'), ...niceLinearScale(values) }`
- */
 export function niceLinearScale(
   values: (number | null | undefined)[],
   opts?: Partial<Omit<NiceScaleOptions, "dataMin" | "dataMax">>,
-): { min: number; max: number; ticks: { stepSize: number } } {
+): { min: number; max: number; ticks: { stepSize: number; color: string } } {
   const s = niceScaleFromValues(values, opts);
-  return { min: s.min, max: s.max, ticks: { stepSize: s.step } };
+  return {
+    min: s.min,
+    max: s.max,
+    ticks: { stepSize: s.step, color: getAxChartColors().textSecondary },
+  };
 }
 
-/**
- * Create tick config for a category axis with numeric labels (e.g. strike prices).
- * Shows labels only at "nice" round intervals instead of arbitrary autoSkip values.
- * Spread into `ticks`: `x: { ticks: { font: …, ...niceStrikeTicks(labels) } }`
- */
 export function niceStrikeTicks(labels: string[]): {
   autoSkip: false;
+  color: string;
   callback: (value: any, index: number) => string | null;
 } {
   const nums = labels.map(Number);
   const valid = nums.filter((n) => !isNaN(n));
+  const color = getAxChartColors().textSecondary;
 
   if (valid.length < 3) {
     return {
       autoSkip: false,
+      color,
       callback: (_v: any, i: number) => labels[i] ?? null,
     };
   }
@@ -260,12 +348,14 @@ export function niceStrikeTicks(labels: string[]): {
   if (step <= 0) {
     return {
       autoSkip: false,
+      color,
       callback: (_v: any, i: number) => labels[i] ?? null,
     };
   }
 
   return {
     autoSkip: false,
+    color,
     callback: (_value: any, index: number): string | null => {
       const s = nums[index];
       if (isNaN(s)) return labels[index] ?? null;
