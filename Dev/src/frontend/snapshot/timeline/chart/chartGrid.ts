@@ -2,6 +2,7 @@ import type { TimeAxisMapping } from "../timelineTypes";
 import type { NiceScaleResult } from "../../../../shared/utils/math/scale";
 import { getGapMode, getMarketBoundaries } from "../data/timeAxisMapping";
 import { SNAPSHOT_CHART_PAD } from "./chartTypes";
+import { isDarkTheme } from "../../../components/core/axTheme/controller";
 
 /** Draw session background colors for compressed gap mode. */
 export function drawSessionBackgrounds(
@@ -20,16 +21,17 @@ export function drawSessionBackgrounds(
     const x2 = Math.min(pad.left + chartW, seg.endPx);
     if (x2 - x1 < 0.5) continue;
 
+    const dark = isDarkTheme();
     let bgColor: string | null = null;
     if (seg.isGap) {
-      bgColor = "rgba(142,142,147,0.06)";
+      bgColor = dark ? "rgba(142,142,147,0.10)" : "rgba(142,142,147,0.06)";
     } else {
       switch (seg.sessionType) {
         case "pre":
-          bgColor = "rgba(59,130,246,0.04)";
+          bgColor = dark ? "rgba(59,130,246,0.08)" : "rgba(59,130,246,0.04)";
           break;
         case "post":
-          bgColor = "rgba(245,158,11,0.04)";
+          bgColor = dark ? "rgba(245,158,11,0.08)" : "rgba(245,158,11,0.04)";
           break;
         default:
           bgColor = null;
@@ -52,7 +54,7 @@ export function drawGridLines(
   chartH: number,
 ): void {
   const pad = SNAPSHOT_CHART_PAD;
-  ctx.strokeStyle = "rgba(0,0,0,0.08)";
+  ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)";
   ctx.lineWidth = 1;
   for (const tick of nice.ticks) {
     const y = toY(tick);
@@ -78,7 +80,7 @@ export function drawBaselineLine(
   const y0 = toY(baseline);
   if (y0 >= pad.top && y0 <= pad.top + chartH) {
     ctx.beginPath();
-    ctx.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)";
     ctx.lineWidth = 1;
     ctx.moveTo(pad.left, y0);
     ctx.lineTo(pad.left + chartW, y0);
@@ -103,8 +105,7 @@ export function drawMarketBoundaries(
   ctx.save();
   ctx.setLineDash([4, 4]);
   ctx.lineWidth = 1;
-  ctx.font =
-    '10px var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)';
+  ctx.font = "10px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif";
   ctx.textBaseline = "top";
   ctx.textAlign = "center";
   for (const b of boundaries) {

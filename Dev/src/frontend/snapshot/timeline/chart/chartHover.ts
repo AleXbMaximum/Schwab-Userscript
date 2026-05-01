@@ -1,4 +1,5 @@
 import { DS_COLORS, ds_signColorRaw } from "../../../components/core/theme";
+import { isDarkTheme } from "../../../components/core/axTheme/controller";
 import type { AccountHistoryPoint } from "../../../../backend/core/db/account/accountHistoryTypes";
 import { formatMetricValue, formatTimeLabel } from "../timelineFormatters";
 import { findCandleBucketByTs } from "../data/candleAggregation";
@@ -86,7 +87,7 @@ export function drawSnapshotChartHover(
   }
 
   // Vertical dashed line
-  ctx.strokeStyle = "rgba(0,0,0,0.18)";
+  ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.18)";
   ctx.lineWidth = 1;
   ctx.setLineDash([3, 3]);
   ctx.beginPath();
@@ -104,7 +105,7 @@ export function drawSnapshotChartHover(
         ? ds_signColorRaw(value - metric.baseline)
         : metric.color;
     ctx.fill();
-    ctx.strokeStyle = "#fff";
+    ctx.strokeStyle = isDarkTheme() ? "#1a1a1f" : "#fff";
     ctx.lineWidth = 1.5;
     ctx.stroke();
   }
@@ -132,7 +133,7 @@ export function drawSnapshotChartHover(
       ctx.arc(olX, olY, 3, 0, Math.PI * 2);
       ctx.fillStyle = ol.color;
       ctx.fill();
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = isDarkTheme() ? "#1a1a1f" : "#fff";
       ctx.lineWidth = 1;
       ctx.stroke();
     }
@@ -221,9 +222,9 @@ export function drawSnapshotChartHover(
   ctx.lineTo(tx, ty + r);
   ctx.quadraticCurveTo(tx, ty, tx + r, ty);
   ctx.closePath();
-  ctx.fillStyle = "rgba(255,255,255,0.96)";
+  ctx.fillStyle = isDarkTheme() ? "rgba(20,20,25,0.96)" : "rgba(255,255,255,0.96)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,0.12)";
+  ctx.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.12)";
   ctx.lineWidth = 1;
   ctx.stroke();
 
