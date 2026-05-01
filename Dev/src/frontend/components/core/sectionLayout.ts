@@ -117,10 +117,11 @@ export function createSectionLayout<TId extends string>(
   const navBarStyle =
     `display: flex; align-items: center; gap: ${navGap}; padding: ${navPadding};` +
     " min-width: 0;" +
-    " background: rgba(255, 255, 255, 0.7);" +
-    " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" +
-    " border-bottom: 1px solid rgba(0, 0, 0, 0.06);" +
-    ` position: sticky; top: ${navBarStickyTop}; z-index: var(--z-sticky-nav, 100); border-radius: 8px;`;
+    " background: var(--ax-glass-2-bg);" +
+    " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+    " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" +
+    " border-bottom: 1px solid var(--ax-border-subtle);" +
+    ` position: sticky; top: ${navBarStickyTop}; z-index: var(--z-sticky-nav, 100); border-radius: var(--ax-radius-md);`;
 
   const navTabsStyle =
     "display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0;";
@@ -130,15 +131,15 @@ export function createSectionLayout<TId extends string>(
     " margin-left: auto; min-width: 0;";
 
   const navPillBase =
-    `padding: ${pillPadding}; font-size: 11px; font-weight: 600; border-radius: 10px;` +
-    " cursor: pointer; border: 1px solid var(--ios-border);" +
-    " font-family: var(--ios-font); transition: all 0.15s;" +
-    " white-space: nowrap; background: rgba(255, 255, 255, 0.6);" +
-    " color: var(--ios-text-primary);";
+    `padding: ${pillPadding}; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-lg);` +
+    " cursor: pointer; border: 1px solid var(--ax-border);" +
+    " font-family: var(--ax-font-body); transition: all 0.15s;" +
+    " white-space: nowrap; background: var(--ax-bg-input);" +
+    " color: var(--ax-fg);";
 
   const sectionWrapperStyle =
-    "border-radius: 12px; border: 1px solid rgba(0, 0, 0, 0.06);" +
-    " background: rgba(255, 255, 255, 0.5); overflow: visible;";
+    "border-radius: var(--ax-radius-xl); border: 1px solid var(--ax-border-subtle);" +
+    " background: var(--ax-glass-2-bg); overflow: visible;";
 
   const buildHeaderStyle = (cfg: SectionConfig<TId>): string =>
     "display: flex; align-items: center; justify-content: space-between;" +
@@ -243,9 +244,9 @@ export function createSectionLayout<TId extends string>(
         pill.style.color = "#fff";
         pill.style.borderColor = cfg.accentColor;
       } else {
-        pill.style.background = "rgba(255, 255, 255, 0.6)";
-        pill.style.color = "var(--ios-text-primary)";
-        pill.style.borderColor = "var(--ios-border)";
+        pill.style.background = "var(--ax-bg-input)";
+        pill.style.color = "var(--ax-fg)";
+        pill.style.borderColor = "var(--ax-border)";
       }
     }
   };

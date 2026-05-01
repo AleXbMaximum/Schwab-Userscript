@@ -10,21 +10,21 @@ const SETTINGS_GEAR_ICON_SVG =
   "</svg>";
 
 const SETTINGS_BUTTON_STYLE =
-  "width: 32px; height: 32px; border-radius: 10px; cursor: pointer;" +
-  " border: 1px solid var(--ios-border); color: var(--ios-text-secondary);" +
-  " background: rgba(255,255,255,0.75); display: flex; align-items: center; justify-content: center;" +
+  "width: 32px; height: 32px; border-radius: var(--ax-radius-lg); cursor: pointer;" +
+  " border: 1px solid var(--ax-border); color: var(--ax-fg-2);" +
+  " background: var(--ax-bg-input); display: flex; align-items: center; justify-content: center;" +
   " transition: all 0.15s;";
 
 const SETTINGS_PANEL_STYLE =
   "position: absolute; top: 38px; right: 0; z-index: var(--z-page-popover, 210);" +
   " width: min(640px, calc(100vw - 28px)); max-height: min(86vh, 900px); overflow-y: auto;" +
-  " padding: 14px; border: 1px solid var(--ios-border); border-radius: 14px;" +
-  " background: rgba(248,248,250,0.97); box-shadow: var(--ios-shadow);" +
+  " padding: 14px; border: 1px solid var(--ax-border); border-radius: 14px;" +
+  " background: var(--ax-bg-card); box-shadow: var(--ax-shadow-lg);" +
   " display: none; flex-direction: column; gap: 10px;";
 
 const SECTION_HEADER_STYLE =
-  "padding: 12px 16px; border-bottom: 1px solid rgba(60,60,67,0.10);" +
-  " background: rgba(250,250,252,0.92);";
+  "padding: 12px 16px; border-bottom: 1px solid var(--ax-border-subtle);" +
+  " background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent);";
 
 const SECTION_BODY_STYLE =
   DS_COMPONENTS.settingGroupBody + " padding: 4px 16px 8px;";
@@ -32,12 +32,12 @@ const SECTION_BODY_STYLE =
 const MATRIX_ROW_STYLE =
   "display: grid; grid-template-columns: minmax(160px, 1fr) 96px 72px 132px;" +
   " align-items: center; column-gap: 4px; min-height: 44px; padding: 6px 0;" +
-  " border-bottom: 1px solid rgba(60,60,67,0.10);";
+  " border-bottom: 1px solid var(--ax-border-subtle);";
 
 const FORM_ROW_STYLE =
   "display: grid; grid-template-columns: minmax(160px, 1fr) 220px;" +
   " align-items: center; column-gap: 4px; min-height: 44px; padding: 6px 0;" +
-  " border-bottom: 1px solid rgba(60,60,67,0.10);";
+  " border-bottom: 1px solid var(--ax-border-subtle);";
 
 const ROW_LABEL_STYLE =
   "font-size: 13px; font-weight: 600; color: var(--ios-text-primary);";
@@ -52,18 +52,18 @@ const ROW_CONTROL_GROUP_STYLE =
   "display:inline-flex; align-items:center; justify-content:flex-end; gap:4px;";
 
 const TOGGLE_BUTTON_STYLE =
-  "width: 84px; height: 28px; border-radius: 8px; border: 1px solid var(--ios-border);" +
-  " font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(120,120,128,0.12);" +
-  " color: var(--ios-text-secondary); transition: all 0.15s;";
+  "width: 84px; height: 28px; border-radius: 8px; border: 1px solid var(--ax-border);" +
+  " font-size: 12px; font-weight: 600; cursor: pointer; background: var(--ax-bg-chip);" +
+  " color: var(--ax-fg-2); transition: all 0.15s;";
 
 const NUMBER_INPUT_STYLE =
-  "width: 10ch; padding: 4px 6px; text-align: right; font-size: 12px; border: 1px solid var(--ios-border);" +
-  " border-radius: 8px; background: rgba(255,255,255,0.95); color: var(--ios-text-primary); outline: none;";
+  "width: 10ch; padding: 4px 6px; text-align: right; font-size: var(--ax-fs-md); border: 1px solid var(--ax-border);" +
+  " border-radius: var(--ax-radius-md); background: var(--ax-bg-input); color: var(--ax-fg); outline: none;";
 
 const AUTO_VALUE_STYLE =
   "display:inline-flex; align-items:center; justify-content:center; height:24px; padding:0 10px;" +
-  " border:1px solid var(--ios-border); border-radius:999px; background:rgba(120,120,128,0.10);" +
-  " font-size:12px; color:var(--ios-text-secondary); font-weight:500; text-transform:capitalize;";
+  " border:1px solid var(--ax-border); border-radius:999px; background:var(--ax-bg-chip);" +
+  " font-size:12px; color:var(--ax-fg-2); font-weight:500; text-transform:capitalize;";
 
 export interface SettingsPopoverScaffold {
   wrap: HTMLElement;
@@ -101,9 +101,9 @@ function applyGearButtonState(button: HTMLButtonElement, open: boolean): void {
   button.setAttribute("aria-expanded", open ? "true" : "false");
   button.style.background = open
     ? "rgba(0,122,255,0.12)"
-    : "rgba(255,255,255,0.75)";
-  button.style.borderColor = open ? "rgba(0,122,255,0.4)" : "var(--ios-border)";
-  button.style.color = open ? "var(--ios-blue)" : "var(--ios-text-secondary)";
+    : "var(--ax-bg-input)";
+  button.style.borderColor = open ? "rgba(0,122,255,0.4)" : "var(--ax-border)";
+  button.style.color = open ? "var(--ax-blue)" : "var(--ax-fg-2)";
 }
 
 export interface SettingsPopoverController {
@@ -223,13 +223,13 @@ export function createSettingsToggleButton(
     button.textContent = current ? "On" : "Off";
     button.style.background = current
       ? "rgba(0,122,255,0.14)"
-      : "rgba(120,120,128,0.12)";
+      : "var(--ax-bg-chip)";
     button.style.borderColor = current
       ? "rgba(0,122,255,0.35)"
-      : "var(--ios-border)";
+      : "var(--ax-border)";
     button.style.color = current
-      ? "var(--ios-blue)"
-      : "var(--ios-text-secondary)";
+      ? "var(--ax-blue)"
+      : "var(--ax-fg-2)";
   };
   const setOn = (next: boolean, opts?: { silent?: boolean }): void => {
     current = next;
@@ -378,16 +378,16 @@ export function createSettingsJsonEditorModal(opts: {
 }): SettingsJsonEditorModal {
   const backdrop = ui_createElement("div", {
     styleString:
-      "position: fixed; inset: 0; z-index: var(--z-page-popover, 260);" +
-      " background: rgba(0,0,0,0.26); display: none; align-items: center; justify-content: center;" +
+      "position: fixed; inset: 0; z-index: var(--ax-z-page-popover);" +
+      " background: var(--ax-modal-backdrop-light); display: none; align-items: center; justify-content: center;" +
       " padding: 24px;",
   }) as HTMLDivElement;
 
   const modal = ui_createElement("div", {
     styleString:
       "width: min(900px, calc(100vw - 48px)); height: min(70vh, 720px); min-height: 420px;" +
-      " border: 1px solid var(--ios-border); border-radius: 14px; overflow: hidden;" +
-      " background: rgba(255,255,255,0.99); box-shadow: var(--ios-shadow);" +
+      " border: 1px solid var(--ax-border); border-radius: 14px; overflow: hidden;" +
+      " background: var(--ax-bg-card); box-shadow: var(--ax-shadow-lg);" +
       " display: flex; flex-direction: column;",
   }) as HTMLDivElement;
   backdrop.appendChild(modal);
@@ -396,7 +396,7 @@ export function createSettingsJsonEditorModal(opts: {
     props: { rows: 14 },
     styleString:
       DS_COMPONENTS.settingTextarea +
-      " height: 100%; min-height: 0; resize: none; background: rgba(255,255,255,0.96);",
+      " height: 100%; min-height: 0; resize: none; background: var(--ax-bg-card);",
   }) as HTMLTextAreaElement;
 
   const refreshValue = (): void => {
@@ -408,8 +408,8 @@ export function createSettingsJsonEditorModal(opts: {
     text: "✕",
     props: { type: "button", "aria-label": `Close ${opts.title}` },
     styleString:
-      "width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--ios-border);" +
-      " background: rgba(120,120,128,0.12); color: var(--ios-text-secondary); cursor: pointer;" +
+      "width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--ax-border);" +
+      " background: var(--ax-bg-chip); color: var(--ax-fg-2); cursor: pointer;" +
       " font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;",
   }) as HTMLButtonElement;
 
@@ -440,7 +440,7 @@ export function createSettingsJsonEditorModal(opts: {
     ui_createElement("div", {
       styleString:
         "display:flex; align-items:center; justify-content:space-between; gap:8px;" +
-        " padding: 12px 14px; border-bottom: 1px solid rgba(60,60,67,0.12); background: rgba(250,250,252,0.96);",
+        " padding: 12px 14px; border-bottom: 1px solid var(--ax-border-subtle); background: var(--ax-bg-toolbar);",
       children: [
         ui_createElement("span", {
           text: opts.title,
@@ -475,7 +475,7 @@ export function createSettingsJsonEditorModal(opts: {
     ui_createElement("div", {
       styleString:
         "display:flex; align-items:center; justify-content:space-between; gap:8px;" +
-        " padding: 10px 14px; border-top: 1px solid rgba(60,60,67,0.12); background: rgba(250,250,252,0.96);",
+        " padding: 10px 14px; border-top: 1px solid var(--ax-border-subtle); background: var(--ax-bg-toolbar);",
       children: [
         formatBtn,
         ui_createElement("div", {
@@ -609,7 +609,7 @@ const PHASE_LABELS: { phase: OrchestratorPhase; label: string }[] = [
 const PHASE_MATRIX_ROW_STYLE =
   "display: grid; grid-template-columns: minmax(130px, 1fr) auto 132px;" +
   " align-items: center; column-gap: 8px; min-height: 44px; padding: 6px 0;" +
-  " border-bottom: 1px solid rgba(60,60,67,0.10);";
+  " border-bottom: 1px solid var(--ax-border-subtle);";
 
 const PHASE_CELL_BASE_STYLE =
   "width: 30px; height: 22px; border: 1px solid var(--ios-border); cursor: pointer;" +
@@ -617,7 +617,7 @@ const PHASE_CELL_BASE_STYLE =
   " transition: all 0.15s; padding: 0;";
 
 const STATUS_DOT_STYLE =
-  "width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0;" +
+  "width: 8px; height: 8px; border-radius: 50%; background: var(--ax-gray); flex-shrink: 0;" +
   " transition: background 0.3s;";
 
 /** Apply visual styling to a phase cell button based on override state and default. */
@@ -856,14 +856,14 @@ export function createPhaseBadge(phase: OrchestratorPhase): {
       text: "var(--ios-blue)",
     },
     overnight: {
-      bg: "rgba(120,120,128,0.08)",
-      border: "rgba(120,120,128,0.20)",
-      text: "var(--ios-text-secondary)",
+      bg: "var(--ax-tone-muted-soft-bg)",
+      border: "var(--ax-tone-muted-border)",
+      text: "var(--ax-fg-2)",
     },
     closed: {
-      bg: "rgba(120,120,128,0.06)",
-      border: "rgba(120,120,128,0.15)",
-      text: "var(--ios-text-secondary)",
+      bg: "var(--ax-tone-muted-soft-bg)",
+      border: "var(--ax-tone-muted-border)",
+      text: "var(--ax-fg-2)",
     },
   };
 

@@ -106,37 +106,37 @@ export function ui_badge(
 ): HTMLElement {
   const colors: Record<string, { bg: string; text: string; border: string }> = {
     positive: {
-      bg: "rgba(32,169,69,0.06)",
-      text: "#20a945",
-      border: "rgba(32,169,69,0.25)",
+      bg: "var(--ax-tone-positive-soft-bg)",
+      text: "var(--ax-positive)",
+      border: "var(--ax-tone-positive-border)",
     },
     negative: {
-      bg: "rgba(215,49,38,0.06)",
-      text: "#d73126",
-      border: "rgba(215,49,38,0.25)",
+      bg: "var(--ax-tone-negative-soft-bg)",
+      text: "var(--ax-negative)",
+      border: "var(--ax-tone-negative-border)",
     },
     neutral: {
-      bg: "rgba(215,129,0,0.06)",
-      text: "#D78100",
-      border: "rgba(215,129,0,0.25)",
+      bg: "var(--ax-tone-neutral-soft-bg)",
+      text: "var(--ax-orange)",
+      border: "var(--ax-tone-neutral-border)",
     },
     info: {
-      bg: "rgba(0,122,255,0.06)",
-      text: "#007AFF",
-      border: "rgba(0,122,255,0.25)",
+      bg: "var(--ax-tone-info-soft-bg)",
+      text: "var(--ax-blue)",
+      border: "var(--ax-tone-info-border)",
     },
     muted: {
-      bg: "rgba(142,142,147,0.06)",
-      text: "#8E8E93",
-      border: "rgba(142,142,147,0.25)",
+      bg: "var(--ax-tone-muted-soft-bg)",
+      text: "var(--ax-fg-muted)",
+      border: "var(--ax-tone-muted-border)",
     },
   };
   const c = colors[variant];
   return ui_createElement("span", {
     text,
     styleString:
-      `display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px;` +
-      ` font-size: 10px; font-weight: 600; line-height: 1.2;` +
+      `display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--ax-radius-sm);` +
+      ` font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); line-height: 1.2;` +
       ` background: ${c.bg}; color: ${c.text}; border: 1px solid ${c.border};`,
   });
 }
