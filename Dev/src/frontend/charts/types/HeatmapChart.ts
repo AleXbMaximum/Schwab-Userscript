@@ -1,4 +1,5 @@
 import { CHART_COLORS, CHART_FONTS, getHeatmapColor } from "../ChartTheme";
+import { isDarkTheme } from "frontend/components/core/axTheme/controller";
 import { clamp, normalize } from "shared/utils/math/numeric";
 import {
   formatCompactDollar,
@@ -39,7 +40,10 @@ class HeatmapChart implements HeatmapChartHandle {
   }
   private static readonly CELL_GAP = 1;
   private static readonly CELL_RADIUS = 2;
-  private static readonly GRID_BG = "rgba(0, 0, 0, 0.035)";
+  // Theme-aware grid background — getter so each draw resolves the current theme.
+  private get gridBg(): string {
+    return isDarkTheme() ? "rgba(255, 255, 255, 0.035)" : "rgba(0, 0, 0, 0.035)";
+  }
 
   public get cellHeight(): number {
     return this.options.cellHeight;
@@ -495,7 +499,7 @@ class HeatmapChart implements HeatmapChartHandle {
     // Grid background so cell gaps are visible
     const gridW = this.totalGridWidth;
     const gridH = rows.length * cellHeight;
-    ctx.fillStyle = HeatmapChart.GRID_BG;
+    ctx.fillStyle = this.gridBg;
     this.traceRoundRect(startX, startY, gridW, gridH, 4);
     ctx.fill();
 

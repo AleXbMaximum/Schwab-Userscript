@@ -56,6 +56,23 @@ class ChartManager {
     };
     window.addEventListener("resize", handler);
     window.addEventListener("orientationchange", handler);
+
+    // Re-render every active chart when the theme switches so palette /
+    // tooltip / grid / text colors pick up the new variants. Chart.js options
+    // are snapshotted at creation, so a `chart.update()` is enough — themed
+    // helpers (yAxis / themedChartOptions / niceLinearScale) re-resolve on
+    // each draw.
+    window.addEventListener("themeChanged", () => {
+      for (const canvas of this.activeCanvases) {
+        const chart = this.charts.get(canvas);
+        if (!chart) continue;
+        try {
+          chart.update("none");
+        } catch {
+          /* non-critical */
+        }
+      }
+    });
   }
 
   createOrUpdate<

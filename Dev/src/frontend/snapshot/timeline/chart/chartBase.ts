@@ -3,6 +3,7 @@ import type { AccountHistoryPoint } from "../../../../backend/core/db/account/ac
 import type { TimeAxisMapping, SnapshotMetricDef, IndexOverlayLine, ChartRenderMode } from "../timelineTypes";
 import { getGapMode } from "../data/timeAxisMapping";
 import { downsampleLTTB } from "../data/downsample";
+import { DS_COLORS } from "../../../components/core/theme";
 import { arrayMinMax, buildTrueGapOriginalIndices, buildLineSegments } from "../data/dataUtils";
 import { aggregateCandles, resolveCandleBucketMs } from "../data/candleAggregation";
 import { SNAPSHOT_CHART_PAD } from "./chartTypes";
@@ -59,9 +60,8 @@ export function drawSnapshotChartBase(
   const chartH = Math.max(1, cssHeight - pad.top - pad.bottom);
 
   if (points.length === 0) {
-    ctx.fillStyle = "#8E8E93";
-    ctx.font =
-      '13px var(--ios-font, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)';
+    ctx.fillStyle = DS_COLORS.raw.muted;
+    ctx.font = "13px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif";
     ctx.fillText("Waiting for history points...", pad.left + 2, pad.top + 18);
     return null;
   }
