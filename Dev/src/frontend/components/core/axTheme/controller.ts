@@ -1,17 +1,31 @@
 // Central theme state management.
 // Single source of truth for the current theme mode.
-// Persists to localStorage so the chosen theme survives reloads.
+//
+// Persistence is dual-write: IndexedDB (`kv:ui.themeMode`) is canonical;
+// `localStorage:alexquant.themeMode` is a synchronous boot fast-path cache
+// because IndexedDB opens asynchronously and the body class drives a host-page
+// filter hijack that must be live before Schwab paints. See STORAGE.md.
+//
+// Mode is now a pure light/dark toggle — Auto / system-preference
+// tracking has been removed. Old persisted "auto" values are migrated
+// once on first read (resolved against the current OS preference and
+// rewritten as a concrete light/dark value).
 
-export type AxThemeMode = "light" | "dark" | "auto";
+import type { KVStore } from "backend/core/db/core/KVStore";
+
+import { isEco } from "./renderMode/controller";
+
+export type AxThemeMode = "light" | "dark";
 export type AxEffectiveTheme = "light" | "dark";
 
 const THEME_STORAGE_KEY = "alexquant.themeMode";
+const THEME_KV_KEY = "ui.themeMode";
 
-let _mode: AxThemeMode = "auto";
-let _effective: AxEffectiveTheme = "light";
+let _mode: AxThemeMode = "dark";
+let _effective: AxEffectiveTheme = "dark";
 let _initialized = false;
+let _kv: KVStore | null = null;
 const _observers = new Set<(effective: AxEffectiveTheme) => void>();
-let _mediaQuery: MediaQueryList | null = null;
 
 export function isDarkTheme(): boolean {
   return _effective === "dark";
@@ -33,51 +47,78 @@ export function onThemeChanged(cb: (effective: AxEffectiveTheme) => void): () =>
   };
 }
 
-/** Set theme mode and persist. */
+/** Set theme mode and persist (dual-write: localStorage + KV when attached). */
 export function setTheme(mode: AxThemeMode): void {
   _mode = mode;
-  const next = resolveEffective(mode);
-  applyEffective(next);
+  applyEffective(mode);
   try {
     localStorage.setItem(THEME_STORAGE_KEY, mode);
   } catch {
     /* non-critical */
   }
+  if (_kv) {
+    void _kv.set(THEME_KV_KEY, mode).catch(() => {
+      /* non-critical: localStorage already has the value */
+    });
+  }
 }
 
-/** Initialize theme from persisted preference + system detection. Call once at boot. */
+/**
+ * Reconcile the in-memory mode against the canonical KV value once the
+ * IndexedDB-backed KVStore is ready. Call before any UI is rendered so a
+ * cross-device divergence (KV says light, localStorage says dark) cannot
+ * produce a visible flip. If KV is empty, backfill it from the value
+ * already loaded from localStorage at boot.
+ */
+export async function hydrateThemeFromKV(kv: KVStore): Promise<void> {
+  _kv = kv;
+  let stored: AxThemeMode | undefined;
+  try {
+    stored = await kv.get<AxThemeMode>(THEME_KV_KEY);
+  } catch {
+    return;
+  }
+  if (stored === "light" || stored === "dark") {
+    if (stored !== _mode) setTheme(stored);
+  } else {
+    void kv.set(THEME_KV_KEY, _mode).catch(() => {
+      /* non-critical */
+    });
+  }
+}
+
+/** Initialize theme from persisted preference. Call once at boot. */
 export function initTheme(): void {
   if (_initialized) return;
   _initialized = true;
 
+  let stored: string | null = null;
   try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark" || stored === "auto") {
-      _mode = stored;
-    }
+    stored = localStorage.getItem(THEME_STORAGE_KEY);
   } catch {
-    /* fallback to auto */
+    /* fallback to default */
   }
 
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    _mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    _mediaQuery.addEventListener("change", () => {
-      if (_mode === "auto") applyEffective(resolveEffective("auto"));
-    });
-  }
-
-  applyEffective(resolveEffective(_mode), false);
-}
-
-function resolveEffective(mode: AxThemeMode): AxEffectiveTheme {
-  if (mode === "auto") {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return "light";
+  if (stored === "light" || stored === "dark") {
+    _mode = stored;
+  } else if (stored === "auto") {
+    // Migration: a user previously chose Auto. Resolve once to a concrete
+    // mode based on current OS preference and persist that, so future
+    // reads land in the light/dark branch above.
+    const prefersDark =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    _mode = prefersDark ? "dark" : "light";
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, _mode);
+    } catch {
+      /* non-critical */
     }
-    const mq = _mediaQuery ?? window.matchMedia("(prefers-color-scheme: dark)");
-    return mq.matches ? "dark" : "light";
   }
-  return mode;
+  // else: keep default "dark"
+
+  applyEffective(_mode, false);
 }
 
 /**
@@ -136,7 +177,9 @@ function applyEffective(theme: AxEffectiveTheme, animate = true): void {
 
   const root = document.documentElement;
 
-  if (animate) {
+  // Skip the cross-fade transition in Eco mode — its 350ms full-tree
+  // transition is exactly the kind of motion Eco strips out elsewhere.
+  if (animate && !isEco()) {
     root.classList.add("theme-transitioning");
     setTimeout(() => root.classList.remove("theme-transitioning"), 350);
   }

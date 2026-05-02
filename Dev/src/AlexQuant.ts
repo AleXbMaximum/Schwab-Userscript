@@ -20,6 +20,11 @@ import {
   addAnimationStyles,
   applyColorTheme,
 } from "./frontend/components/core/ui_styles";
+import {
+  initRenderMode,
+  hydrateRenderModeFromKV,
+  hydrateThemeFromKV,
+} from "./frontend/components/core/axTheme";
 import { initLayoutMode, getLayoutMode } from "./frontend/components/core/layoutMode";
 import { logService } from "./shared/log/core/LogService";
 import { installLogDevTools } from "./shared/log/devTools";
@@ -322,8 +327,12 @@ function syncRecorderSettings(
     addGlobalStyle();
     addAnimationStyles();
     // Initialise theme controller. Reads persisted preference (localStorage:
-    // alexquant.themeMode) when present; otherwise follows system preference.
-    applyColorTheme("auto");
+    // alexquant.themeMode) when present; otherwise falls back to dark.
+    applyColorTheme();
+    // Render-mode controller (Full / Eco) — idempotent; ensureAxUICss
+    // already calls this before bootstrapping liquid glass, but the
+    // explicit call here documents the boot order and keeps it visible.
+    initRenderMode();
     const layoutMode = initLayoutMode();
     log.debug(
       "[Phase 1] CSS injected + color theme applied + layoutMode=" + layoutMode,
@@ -352,6 +361,21 @@ function syncRecorderSettings(
       hasCustomerId: !!initCtx.customerId,
       customerId: maskTail(initCtx.customerId, 6),
       cip: initCtx.cip ?? null,
+    });
+
+    // Reconcile boot-critical UI prefs (theme / render mode) against the
+    // canonical KV values before the UI skeleton renders. localStorage was
+    // the synchronous fast-path at document-start; KV is the source of truth.
+    // Awaited so any cross-device divergence is resolved before paint —
+    // KV reads are sub-frame here and do not extend the critical path.
+    const kvStore = new KVStore(db);
+    await Promise.all([
+      hydrateThemeFromKV(kvStore),
+      hydrateRenderModeFromKV(kvStore),
+    ]).catch((err) => {
+      log.warn("[Phase 1] UI pref hydrate failed (non-fatal)", {
+        error: (err as Error)?.message ?? String(err),
+      });
     });
 
     log.info("[Phase 2+3] Storage hydration + UI skeleton (parallel)");
@@ -416,8 +440,6 @@ function syncRecorderSettings(
 
     log.info("[Phase 2] Storage hydration starting");
     try {
-      const kvStore = new KVStore(db);
-
       storage = storageOperator(ctx as any, kvStore) as any;
       ctx.storage = storage as any;
 

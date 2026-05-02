@@ -17,7 +17,6 @@ import {
   onThemeChanged,
   type AxThemeMode,
 } from "../core/axTheme/controller";
-
 type NavGroup = { label: string; items: { text: string; view: string }[] };
 type ChangeViewFn = (view: string) => void;
 
@@ -597,7 +596,6 @@ function buildShareModeButton(): HTMLElement {
   const THEME_MODES: { mode: AxThemeMode; label: string }[] = [
     { mode: "light", label: "Light" },
     { mode: "dark", label: "Dark" },
-    { mode: "auto", label: "Auto" },
   ];
   const themeOptionEls: { mode: AxThemeMode; el: HTMLElement }[] = [];
   for (const { mode, label } of THEME_MODES) {

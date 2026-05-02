@@ -2,7 +2,7 @@
 // design-token system in ./axTheme. Existing callsites import the same
 // three functions (addAnimationStyles / addGlobalStyle / applyColorTheme),
 // which now bootstrap the unified theme stylesheet and apply the chosen
-// light / dark / auto mode.
+// light / dark mode.
 
 import { ensureAxUICss } from "./axTheme/runtime";
 import { initTheme, setTheme, type AxThemeMode } from "./axTheme/controller";
@@ -19,11 +19,11 @@ export function addAnimationStyles(): void {
 
 /**
  * Initialise / apply a colour theme. Recognised values:
- *   - "default" / "auto" → boot-mode: load persisted preference, fall back
- *                          to system preference if none. Does not overwrite
- *                          the user's stored mode.
- *   - "light"            → force light theme (persists choice).
- *   - "dark"             → force dark theme (persists choice).
+ *   - "default" → boot-mode: load persisted preference (falls back to
+ *                  the dark default if none). Does not overwrite the
+ *                  user's stored mode.
+ *   - "light"   → force light theme (persists choice).
+ *   - "dark"    → force dark theme (persists choice).
  *
  * Always idempotent: ensures CSS is injected and the controller is wired.
  */
@@ -35,7 +35,7 @@ export function applyColorTheme(theme = "default"): string {
     const mode: AxThemeMode = theme;
     setTheme(mode);
   }
-  // "default" / "auto" / anything else → keep the persisted/system mode
-  // already applied by initTheme().
+  // "default" / anything else → keep the persisted mode already applied
+  // by initTheme().
   return theme;
 }
