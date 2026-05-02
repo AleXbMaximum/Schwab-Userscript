@@ -1,5 +1,6 @@
 import { CHART_COLORS, CHART_FONTS, getHeatmapColor } from "../ChartTheme";
 import { isDarkTheme } from "frontend/components/core/axTheme/controller";
+import { withShadow } from "frontend/components/core/axTheme/renderMode/canvasShadow";
 import { clamp, normalize } from "shared/utils/math/numeric";
 import {
   formatCompactDollar,
@@ -307,18 +308,22 @@ class HeatmapChart implements HeatmapChartHandle {
       const cw = this.colW(col);
       const x = startX + this.colX(col);
       const y = startY + row * cellHeight;
-      this.ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-      this.ctx.shadowBlur = 8;
-      this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      this.ctx.lineWidth = 2;
-      this.traceRoundRect(
-        x + gap,
-        y + gap,
-        cw - gap * 2,
-        cellHeight - gap * 2,
-        rad,
+      withShadow(
+        this.ctx,
+        { color: "rgba(0, 0, 0, 0.4)", blur: 8 },
+        () => {
+          this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          this.ctx.lineWidth = 2;
+          this.traceRoundRect(
+            x + gap,
+            y + gap,
+            cw - gap * 2,
+            cellHeight - gap * 2,
+            rad,
+          );
+          this.ctx.stroke();
+        },
       );
-      this.ctx.stroke();
     }
 
     if (this.hoveredSummaryCol != null) {
@@ -326,18 +331,22 @@ class HeatmapChart implements HeatmapChartHandle {
       const cw = this.colW(col);
       const x = startX + this.colX(col);
       const summaryRowY = startY + this.options.rows.length * cellHeight + 8;
-      this.ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-      this.ctx.shadowBlur = 8;
-      this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      this.ctx.lineWidth = 2;
-      this.traceRoundRect(
-        x + gap,
-        summaryRowY + gap,
-        cw - gap * 2,
-        cellHeight - gap * 2,
-        rad,
+      withShadow(
+        this.ctx,
+        { color: "rgba(0, 0, 0, 0.4)", blur: 8 },
+        () => {
+          this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          this.ctx.lineWidth = 2;
+          this.traceRoundRect(
+            x + gap,
+            summaryRowY + gap,
+            cw - gap * 2,
+            cellHeight - gap * 2,
+            rad,
+          );
+          this.ctx.stroke();
+        },
       );
-      this.ctx.stroke();
     }
 
     this.ctx.restore();
@@ -947,17 +956,20 @@ class HeatmapChart implements HeatmapChartHandle {
     ctx.lineCap = "round";
 
     // Pass 1: soft glow
-    ctx.beginPath();
-    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-    for (let i = 1; i < pathPoints.length; i++) {
-      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-    }
-    ctx.shadowColor = "rgba(0, 122, 255, 0.45)";
-    ctx.shadowBlur = 10;
-    ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
-    ctx.lineWidth = 6;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    withShadow(
+      ctx,
+      { color: "rgba(0, 122, 255, 0.45)", blur: 10 },
+      () => {
+        ctx.beginPath();
+        ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+        for (let i = 1; i < pathPoints.length; i++) {
+          ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
+        }
+        ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      },
+    );
 
     // Pass 2: white outline
     ctx.beginPath();
@@ -983,11 +995,14 @@ class HeatmapChart implements HeatmapChartHandle {
     for (const pt of pathPoints) {
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
-      ctx.shadowColor = "rgba(0, 122, 255, 0.5)";
-      ctx.shadowBlur = 6;
-      ctx.fillStyle = CHART_COLORS.info;
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      withShadow(
+        ctx,
+        { color: "rgba(0, 122, 255, 0.5)", blur: 6 },
+        () => {
+          ctx.fillStyle = CHART_COLORS.info;
+          ctx.fill();
+        },
+      );
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 1.5;
       ctx.stroke();
