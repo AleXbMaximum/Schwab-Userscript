@@ -1,34 +1,23 @@
 import { ui_createElement } from "../components/core/createElement";
-import { DS_BUTTONS, DS_TYPOGRAPHY } from "../components/core/theme";
+import { DS_BUTTONS } from "../components/core/theme";
 import type { AIProviderKind, OpenAIPricingTier } from "shared/types/core";
 import { openAlexQuantDB } from "backend/core/db/core/AlexQuantDB";
 import { KVStore } from "backend/core/db/core/KVStore";
 import type {
-  AIAgentRole,
   AIAnalysisRecord,
   AIAnalysisState,
-  AIStreamEvent,
 } from "../../backend/services/ai/types";
 import { AIConfigStore } from "../../backend/services/ai/config/AIConfigStore";
 import { AIAnalysisStore } from "../../backend/core/db/ai/AIAnalysisStore";
 import { aiService } from "../../backend/services/ai/AIService";
 import { estimateCost } from "../../backend/services/ai/config/pricing";
 import { BUILTIN_MODEL_OPTIONS } from "../../backend/services/ai/config/modelCatalog";
-import {
-  renderStageCard,
-  createStreamingStageCard,
-} from "./components/StageCard";
-import type { StreamingStageCard } from "./components/StageCard";
-import { renderDecisionSummary } from "./components/DecisionSummary";
+import { createLiveResultsPanel } from "./components/LiveResultsPanel";
 import { createAISettingsPanel } from "./setting_panel/settingsPanel";
 import type { AISettingsPanelResult } from "./setting_panel/settingsPanel";
-import {
-  buildReport,
-  buildTranscript,
-} from "../../backend/services/ai/pipeline/reportBuilder";
 import { createPipelineConfigPanel } from "./pipeline/pipelineConfigPanel";
 import { createPipelineFlow, buildPipelineNodes } from "./pipeline/pipelineFlow";
-import { createReportList, makeCopyBtn } from "./components/reportList";
+import { createReportList } from "./components/reportList";
 import { logService } from "../../shared/log/core/LogService";
 import {
   consumePendingSymbol,
@@ -328,47 +317,10 @@ async function buildAIAnalysisPage(
   let currentSymbol = initialSymbol;
 
   // ── Streaming stage card management ────────────────────────────────────
-  const streamingCards = new Map<string, StreamingStageCard>();
-  let streamingStagesBox: HTMLElement | null = null;
-
-  const streamCardKey = (role: AIAgentRole, label?: string): string =>
-    label ? `${role}::${label}` : role;
-
-  const handleStreamEvent = (event: AIStreamEvent): void => {
-    const key = streamCardKey(event.role, event.label);
-    let card = streamingCards.get(key);
-
-    if (!card) {
-      // Create streaming stage card on first event
-      card = createStreamingStageCard(event.role, event.label);
-      streamingCards.set(key, card);
-      if (!streamingStagesBox) {
-        streamingStagesBox = ui_createElement("div", {
-          styleString: "display: flex; flex-direction: column; gap: 6px;",
-        });
-        resultsSection.style.display = "flex";
-        resultsSection.innerHTML = "";
-        resultsSection.appendChild(
-          ui_createElement("span", {
-            text: "Live Agent Output",
-            styleString: DS_TYPOGRAPHY.heading,
-          }),
-        );
-        resultsSection.appendChild(streamingStagesBox);
-      }
-      streamingStagesBox.appendChild(card.element);
-    }
-
-    if (event.type !== "stage_done") {
-      card.updateFromStream(event);
-    }
-  };
+  const liveResults = createLiveResultsPanel({ resultsSection });
 
   // ── Show a full report in the results section ─────────────────────────────
   function showResults(record: AIAnalysisRecord): void {
-    resultsSection.innerHTML = "";
-    resultsSection.style.display = "flex";
-
     const completedState: AIAnalysisState = {
       recordId: record.id,
       symbol: record.symbol,
@@ -381,47 +333,7 @@ async function buildAIAnalysisPage(
       startedAt: new Date(record.requestedAt).getTime(),
     };
     updatePipelineFlow(completedState);
-
-    if (record.finalDecision) {
-      resultsSection.appendChild(
-        renderDecisionSummary(record.finalDecision, record.marketData),
-      );
-    }
-
-    const stagesHeader = ui_createElement("div", {
-      styleString:
-        "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;",
-    });
-    stagesHeader.appendChild(
-      ui_createElement("span", {
-        text: "Agent Reports",
-        styleString: DS_TYPOGRAPHY.heading,
-      }),
-    );
-    stagesHeader.appendChild(
-      ui_createElement("span", {
-        text: `${record.stages.length} agents \u00b7 ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens \u00b7 ${(record.totalDurationMs / 1000).toFixed(0)}s`,
-        styleString: "font-size: 11px; color: var(--ios-text-secondary);",
-      }),
-    );
-    stagesHeader.appendChild(
-      ui_createElement("span", { styleString: "flex: 1;" }),
-    );
-    stagesHeader.appendChild(
-      makeCopyBtn("Copy Report", () => buildReport(record)),
-    );
-    stagesHeader.appendChild(
-      makeCopyBtn("Copy Transcript", () => buildTranscript(record)),
-    );
-    resultsSection.appendChild(stagesHeader);
-
-    const stagesBox = ui_createElement("div", {
-      styleString: "display: flex; flex-direction: column; gap: 6px;",
-    });
-    for (const stage of record.stages) {
-      stagesBox.appendChild(renderStageCard(stage));
-    }
-    resultsSection.appendChild(stagesBox);
+    liveResults.showRecord(record);
   }
 
   // ── Load all reports for a symbol ─────────────────────────────────────────
@@ -447,25 +359,12 @@ async function buildAIAnalysisPage(
   const renderProgress = (state: AIAnalysisState) => {
     statusLabel.textContent = state.progressLabel;
     updatePipelineFlow(state);
-
-    // Finalize streaming cards when their stage completes
-    if (streamingCards.size > 0) {
-      for (const stage of state.stages) {
-        if (stage.status !== "running") {
-          const key = streamCardKey(stage.role, stage.label);
-          const card = streamingCards.get(key);
-          if (card) {
-            card.finalize(stage);
-            streamingCards.delete(key);
-          }
-        }
-      }
-    }
+    liveResults.finalizeFromState(state);
   };
 
   // ── Subscribe to AIService (survives page navigation) ─────────────────────
   unsubscribe = aiService.subscribe(renderProgress);
-  unsubscribeStream = aiService.subscribeStream(handleStreamEvent);
+  unsubscribeStream = aiService.subscribeStream(liveResults.handleStream);
 
   if (aiService.isRunning()) {
     const runningState = aiService.getState();
@@ -537,8 +436,7 @@ async function buildAIAnalysisPage(
     statusLabel.textContent = "Starting analysis\u2026";
 
     // Clear streaming state from previous run
-    streamingCards.clear();
-    streamingStagesBox = null;
+    liveResults.reset();
 
     try {
       const result = await runAnalysis({
@@ -624,6 +522,6 @@ async function buildAIAnalysisPage(
     unsubscribe = null;
     unsubscribeStream?.();
     unsubscribeStream = null;
-    streamingCards.clear();
+    liveResults.reset();
   };
 }
