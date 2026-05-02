@@ -45,7 +45,10 @@ import {
   AX_DARK_CRITICAL_SOFT_BG,
   AX_LIGHT_CRITICAL_BORDER,
   AX_DARK_CRITICAL_BORDER,
+  AX_LIGHT_RIM,
+  AX_DARK_RIM,
   type AxGlassTier,
+  type AxRimTokens,
 } from "../axTokens/glass";
 import { AX_DURATION, AX_EASE } from "../axTokens/motion";
 import { AX_RADIUS } from "../axTokens/radius";
@@ -69,6 +72,7 @@ type ThemeData = {
   fgDisabled: string;
   scenery: string;
   titleGradient: string;
+  rim: AxRimTokens;
 };
 
 const LIGHT: ThemeData = {
@@ -88,6 +92,7 @@ const LIGHT: ThemeData = {
   fgDisabled: AX_LIGHT_FG_DISABLED,
   scenery: AX_LIGHT_SCENERY,
   titleGradient: AX_LIGHT_TITLE_GRADIENT,
+  rim: AX_LIGHT_RIM,
 };
 
 const DARK: ThemeData = {
@@ -107,6 +112,7 @@ const DARK: ThemeData = {
   fgDisabled: AX_DARK_FG_DISABLED,
   scenery: AX_DARK_SCENERY,
   titleGradient: AX_DARK_TITLE_GRADIENT,
+  rim: AX_DARK_RIM,
 };
 
 function emitGlassTier(prefix: string, tier: AxGlassTier): string {
@@ -118,6 +124,22 @@ function emitGlassTier(prefix: string, tier: AxGlassTier): string {
     `${prefix}-border: ${tier.border};`,
     `${prefix}-shadow: ${tier.shadow};`,
     `${prefix}-edge: ${tier.edge};`,
+  ].join("\n      ");
+}
+
+function emitRim(rim: AxRimTokens): string {
+  return [
+    `--ax-rim-color: ${rim.color};`,
+    `--ax-rim-alpha-near-base: ${rim.alphaNearBase};`,
+    `--ax-rim-alpha-near-mod: ${rim.alphaNearMod};`,
+    `--ax-rim-alpha-far-base: ${rim.alphaFarBase};`,
+    `--ax-rim-alpha-far-mod: ${rim.alphaFarMod};`,
+    `--ax-rim-primary-blend: ${rim.primaryBlend};`,
+    `--ax-rim-primary-opacity-base: ${rim.primaryOpacityBase};`,
+    `--ax-rim-primary-opacity-hover-boost: ${rim.primaryOpacityHoverBoost};`,
+    `--ax-rim-secondary-blend: ${rim.secondaryBlend};`,
+    `--ax-rim-secondary-opacity-base: ${rim.secondaryOpacityBase};`,
+    `--ax-rim-secondary-opacity-hover-boost: ${rim.secondaryOpacityHoverBoost};`,
   ].join("\n      ");
 }
 
@@ -213,6 +235,11 @@ function emitTheme(t: ThemeData): string {
       ${emitGlassTier("--ax-glass-3", t.glass.tier3)}
 
       --ax-glass-3-hover: ${t.glass3Hover};
+
+      /* ─── Mouse-tracked glass rim (.ax-glass-rim) ───
+             Tokens in axTokens/glass.ts; CSS algorithm in baseCss.ts
+             reads these vars so light + dark use the same rim definition. */
+      ${emitRim(t.rim)}
 
       /* ─── Tinted glass washes ─── */
       --ax-glass-tint-positive: ${t.glassTints.positive};

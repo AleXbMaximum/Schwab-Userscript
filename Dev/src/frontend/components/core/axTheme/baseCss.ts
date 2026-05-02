@@ -139,8 +139,13 @@ export const axResetCss = `
 //
 // `.ax-glass-rim` adds the mouse-tracked dual-blend gradient rim. JS in
 // liquidGlass.ts writes --ax-lg-mx / --ax-lg-my / --ax-lg-hover; CSS turns
-// those into a cubic-bezier-eased rim that follows the pointer. The rim
-// renders best on dark glass (light theme falls back to a static glow).
+// those into a cubic-bezier-eased rim that follows the pointer.
+//
+// The rim algorithm is fully parameterised via --ax-rim-* CSS vars emitted
+// by cssVars.ts (sourced from AX_DARK_RIM / AX_LIGHT_RIM in axTokens/glass.ts).
+// Both themes share this single CSS definition; per-theme intensity, blend
+// modes, and gradient color are pure data swaps. Adding a new theme = define
+// a new rim-token block; no CSS edits needed.
 // ──────────────────────────────────────────────────────────────────────────
 
 export const axGlassCss = `
@@ -169,9 +174,12 @@ export const axGlassCss = `
       backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
     }
 
-    /* ─── Mouse-tracked rim (dark theme — full cubic-bezier gradient) ───
-       Two pseudo-elements on the same border-box give us screen + overlay
-       blend modes simultaneously, ported from recorder.user.js .lg-rim--*. */
+    /* ─── Mouse-tracked rim — single parameterised algorithm ───
+       Two pseudo-elements on the same border-box give us a primary + secondary
+       blend pair, ported from recorder.user.js .lg-rim--*. Every per-theme
+       knob (gradient color, alpha curve, blend mode, base/hover opacity) is
+       exposed as a --ax-rim-* var so light + dark share this one definition.
+       Token values: AX_DARK_RIM / AX_LIGHT_RIM in axTokens/glass.ts. */
     .ax-glass-rim { position: relative; }
     .ax-glass-rim::before,
     .ax-glass-rim::after {
@@ -188,35 +196,20 @@ export const axGlassCss = `
               mask-composite: exclude;
       background: linear-gradient(
         calc((135 + var(--ax-lg-mx, 0) * 1.2) * 1deg),
-        rgba(255,255,255,0) 0%,
-        rgba(255,255,255, calc(0.04 + var(--ax-lg-mx-abs, 0) * 0.014)) calc(max(10, 33 + var(--ax-lg-my, 0) * 0.3) * 1%),
-        rgba(255,255,255, calc(0.10 + var(--ax-lg-mx-abs, 0) * 0.018)) calc(min(90, 66 + var(--ax-lg-my, 0) * 0.4) * 1%),
-        rgba(255,255,255,0) 100%
+        rgba(var(--ax-rim-color), 0) 0%,
+        rgba(var(--ax-rim-color), calc(var(--ax-rim-alpha-near-base) + var(--ax-lg-mx-abs, 0) * var(--ax-rim-alpha-near-mod))) calc(max(10, 33 + var(--ax-lg-my, 0) * 0.3) * 1%),
+        rgba(var(--ax-rim-color), calc(var(--ax-rim-alpha-far-base) + var(--ax-lg-mx-abs, 0) * var(--ax-rim-alpha-far-mod))) calc(min(90, 66 + var(--ax-lg-my, 0) * 0.4) * 1%),
+        rgba(var(--ax-rim-color), 0) 100%
       );
       transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
     }
     .ax-glass-rim::before {
-      mix-blend-mode: screen;
-      opacity: calc(0.40 + var(--ax-lg-hover, 0) * 0.30);
+      mix-blend-mode: var(--ax-rim-primary-blend);
+      opacity: calc(var(--ax-rim-primary-opacity-base) + var(--ax-lg-hover, 0) * var(--ax-rim-primary-opacity-hover-boost));
     }
     .ax-glass-rim::after {
-      mix-blend-mode: overlay;
-      opacity: calc(0.28 + var(--ax-lg-hover, 0) * 0.20);
-    }
-    /* Light theme rim is much subtler — strong overlay blend on white reads
-       as a black halo, so we drop it to a thin cool inner highlight only. */
-    body:not(.theme-dark) .ax-glass-rim::before {
-      background: linear-gradient(
-        calc((135 + var(--ax-lg-mx, 0) * 1.2) * 1deg),
-        rgba(15,30,60,0) 0%,
-        rgba(15,30,60, calc(0.02 + var(--ax-lg-mx-abs, 0) * 0.005)) 50%,
-        rgba(15,30,60,0) 100%
-      );
-      mix-blend-mode: multiply;
-      opacity: calc(0.50 + var(--ax-lg-hover, 0) * 0.30);
-    }
-    body:not(.theme-dark) .ax-glass-rim::after {
-      display: none;
+      mix-blend-mode: var(--ax-rim-secondary-blend);
+      opacity: calc(var(--ax-rim-secondary-opacity-base) + var(--ax-lg-hover, 0) * var(--ax-rim-secondary-opacity-hover-boost));
     }
 
     /* ─── Liquid-glass refraction filter handle ───
