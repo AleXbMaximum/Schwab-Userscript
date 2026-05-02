@@ -42,6 +42,8 @@ export class TableReconciler {
   reconcile(rows: RowRenderData[]): Set<string> {
     const { tbody, columnIds, columnWidthCalculator, flashAnimator } =
       this.config;
+    const symbolColumnIndex = columnIds.indexOf("symbol");
+    columnWidthCalculator.resetSymbolColumnWidth();
     const nextBadgeSignatureByRowKey = new Map<string, string>();
     const patchedKeys = new Set<string>();
 
@@ -142,8 +144,17 @@ export class TableReconciler {
         }
       }
 
-      if (rowData.isChild) {
-        columnWidthCalculator.setHasChildSymbolIndent(true);
+      // Symbol-column max resets per frame, so every row must push its
+      // contribution unconditionally — child rows use their own font/padX
+      // (via measureSymbolCellTotalPx) instead of a global indent fudge.
+      if (symbolColumnIndex >= 0) {
+        const symbolText = rowData.values.get("symbol") ?? "";
+        const symbolFullPx = columnWidthCalculator.measureSymbolCellTotalPx(
+          symbolText,
+          !!rowData.isChild,
+          0,
+        );
+        columnWidthCalculator.recordSymbolCellWidth(symbolFullPx);
       }
     }
 

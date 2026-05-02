@@ -39,7 +39,6 @@ export class SparklineManager {
   private prevSparklineChangePctMap = new Map<string, number>();
   private summaryTickerSlotWidthPx = 0;
   private summaryBadgeSlotWidthPx = 0;
-  private summarySymbolExtraWidthPx: number;
   private lastSummaryLayoutRawVersion: number | null = null;
 
   private readonly tbl: HTMLTableElement;
@@ -52,16 +51,8 @@ export class SparklineManager {
     this.tbody = config.tbody;
     this.columnWidthCalculator = config.columnWidthCalculator;
     this.symbolColumnIndex = config.symbolColumnIndex;
-    this.summarySymbolExtraWidthPx = SPARKLINE_WIDTH + SYMBOL_INLINE_GAP_PX;
 
     this.sparklineStore = new IntradaySparklineStore(config.chartDataService);
-
-    if (this.symbolColumnIndex >= 0) {
-      this.columnWidthCalculator.setColumnExtraWidth(
-        this.symbolColumnIndex,
-        this.summarySymbolExtraWidthPx,
-      );
-    }
 
     this.sparklineStore.onUpdate((symbol) => {
       const data = this.sparklineStore.get(symbol);
@@ -94,10 +85,6 @@ export class SparklineManager {
       this.computeSummaryTickerSlotWidthPx(virtualRows);
     const nextBadgeSlotWidthPx =
       this.computeSummaryBadgeSlotWidthPx(virtualRows);
-    const nextSymbolExtraWidthPx = this.computeSummarySymbolExtraWidthPx(
-      nextTickerSlotWidthPx,
-      nextBadgeSlotWidthPx,
-    );
 
     if (nextTickerSlotWidthPx !== this.summaryTickerSlotWidthPx) {
       this.applySummaryTickerSlotWidth(nextTickerSlotWidthPx);
@@ -105,19 +92,30 @@ export class SparklineManager {
     if (nextBadgeSlotWidthPx !== this.summaryBadgeSlotWidthPx) {
       this.applySummaryBadgeSlotWidth(nextBadgeSlotWidthPx);
     }
-    if (
-      this.symbolColumnIndex >= 0 &&
-      nextSymbolExtraWidthPx !== this.summarySymbolExtraWidthPx
-    ) {
-      this.summarySymbolExtraWidthPx = nextSymbolExtraWidthPx;
-      this.columnWidthCalculator.setColumnExtraWidth(
-        this.symbolColumnIndex,
-        this.summarySymbolExtraWidthPx,
-      );
-    }
     if (changeToken?.fullRebuild) {
       this.lastSummaryLayoutRawVersion = changeToken.rawVersion;
     }
+  }
+
+  /** Push the summary-row inline layout (ticker slot + sparkline + badge
+   *  slot) as a fixed offset into the symbol-column accumulator. The
+   *  reconciler resets that accumulator each frame, so this must run
+   *  every reconcile pass even when the slot widths themselves are
+   *  unchanged. */
+  applySymbolColumnContribution(): void {
+    if (this.symbolColumnIndex < 0) return;
+    if (this.summaryTickerSlotWidthPx <= 0) return;
+    let inlinePx =
+      this.summaryTickerSlotWidthPx + SPARKLINE_WIDTH + SYMBOL_INLINE_GAP_PX;
+    if (this.summaryBadgeSlotWidthPx > 0) {
+      inlinePx += SYMBOL_INLINE_GAP_PX + this.summaryBadgeSlotWidthPx;
+    }
+    const fullPx = this.columnWidthCalculator.measureSymbolCellTotalPx(
+      "",
+      false,
+      inlinePx,
+    );
+    this.columnWidthCalculator.recordSymbolCellWidth(fullPx);
   }
 
   updateSparklines(
@@ -245,25 +243,6 @@ export class SparklineManager {
     }
     if (maxWidth <= 0) return 0;
     return Math.ceil(maxWidth + SUMMARY_BADGE_SLOT_PADDING_PX);
-  }
-
-  private computeSummarySymbolExtraWidthPx(
-    tickerSlotWidthPx: number,
-    badgeSlotWidthPx: number,
-  ): number {
-    if (this.symbolColumnIndex < 0) return 0;
-
-    // ColumnWidthCalculator already tracks max raw text width across all rows.
-    // Only add the missing portion needed to fit summary inline content.
-    const maxRawTextWidthPx =
-      this.columnWidthCalculator.getMaxWidths()[this.symbolColumnIndex] ?? 0;
-    let summaryInlineWidthPx =
-      Math.max(0, tickerSlotWidthPx) + SPARKLINE_WIDTH + SYMBOL_INLINE_GAP_PX;
-    if (badgeSlotWidthPx > 0) {
-      summaryInlineWidthPx += SYMBOL_INLINE_GAP_PX + badgeSlotWidthPx;
-    }
-
-    return Math.max(0, Math.ceil(summaryInlineWidthPx - maxRawTextWidthPx));
   }
 
   private applySummaryTickerSlotWidth(nextWidthPx: number): void {
