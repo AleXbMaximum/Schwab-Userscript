@@ -1,0 +1,6 @@
+# Baseline of known components/charts -> page imports.
+# Each line: <source-file-relative-to-src/frontend>\t<import-specifier>
+# This list may SHRINK over phases. It must never grow.
+components/header/HeaderRenderer.ts	../../trade_holdings/holding_table/sparkline/IntradaySparklineStore
+components/header/headerWidgets.ts	../../trade_holdings/holding_table/sparkline/IntradaySparklineStore
+components/header/headerWidgets.ts	../../trade_holdings/holding_table/sparkline/SparklineRenderer
