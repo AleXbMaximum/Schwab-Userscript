@@ -195,6 +195,10 @@ export function createTableController(
         ct ?? undefined,
       );
     }
+    // Symbol-column max is reset per frame inside reconcile(), so the
+    // summary contribution must be re-pushed every update even when the
+    // slot widths themselves did not change.
+    sparklineManager.applySymbolColumnContribution();
 
     // Only process patched summary rows for action button creation.
     // Sticky-right and data-underlying are now handled by the reconciler's patchRow.

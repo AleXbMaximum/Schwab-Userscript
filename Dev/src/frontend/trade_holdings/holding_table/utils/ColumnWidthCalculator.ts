@@ -16,8 +16,10 @@ export class ColumnWidthCalculator {
   private cacheCurrent = new Map<string, number>();
   private cachePrevious = new Map<string, number>();
   private maxTextWidths: number[];
-  private columnExtraWidths: number[];
-  private hasChildSymbolIndent = false;
+  /** Symbol column tracks the full cell width (text + own padX + inline
+   *  extras) per frame; reset at the start of each reconcile so it can
+   *  shrink when expanded children collapse. */
+  private maxSymbolCellWidth = 0;
   private isDirty = false;
   private rafId: number | null = null;
   private measureFont = "12px Arial";
@@ -26,14 +28,24 @@ export class ColumnWidthCalculator {
   private styleCacheSample: HTMLElement | null = null;
   private styleCacheAt = 0;
 
+  /** Symbol-column-specific metrics, sampled separately for parent vs
+   *  child rows so child measurement uses its actual `font-size: 0.9em`
+   *  and `padding-left: 36px` instead of being approximated. */
+  private parentSymbolFont = "12px Arial";
+  private childSymbolFont = "12px Arial";
+  private parentSymbolPadX = 20;
+  private childSymbolPadX = 20;
+  private symbolMetricsAt = 0;
+
   private readonly config: ColumnWidthConfig;
   private readonly columnCount: number;
+  private readonly symbolColumnIndex: number;
 
   constructor(config: ColumnWidthConfig) {
     this.config = config;
     this.columnCount = config.columnIds.length;
     this.maxTextWidths = new Array(this.columnCount).fill(0);
-    this.columnExtraWidths = new Array(this.columnCount).fill(0);
+    this.symbolColumnIndex = config.columnIds.indexOf("symbol");
 
     this.canvas = document.createElement("canvas");
     this.canvasCtx = this.canvas.getContext("2d");
@@ -84,6 +96,66 @@ export class ColumnWidthCalculator {
     return this.measureFont;
   }
 
+  /** Sample real parent and (if expanded) child symbol cells to capture
+   *  their actual font and padding. Falls back to parent metrics when no
+   *  child row is present. */
+  private refreshSymbolMetrics(force = false): void {
+    if (this.symbolColumnIndex < 0) return;
+    const now = performance.now();
+    if (
+      !force &&
+      now - this.symbolMetricsAt < ColumnWidthCalculator.STYLE_CACHE_TTL_MS
+    ) {
+      return;
+    }
+
+    let parentCell: HTMLElement | null = null;
+    let childCell: HTMLElement | null = null;
+    const tbody = this.config.tbody;
+    const rowCount = tbody.rows.length;
+    for (let i = 0; i < rowCount; i++) {
+      const row = tbody.rows[i];
+      const cell = row.cells[this.symbolColumnIndex] as HTMLElement | undefined;
+      if (!cell) continue;
+      if (row.classList.contains("table-row--child")) {
+        if (!childCell) childCell = cell;
+      } else if (!parentCell) {
+        parentCell = cell;
+      }
+      if (parentCell && childCell) break;
+    }
+    if (!parentCell) {
+      const headSample = this.config.headerRow.cells[
+        this.symbolColumnIndex
+      ] as HTMLElement | undefined;
+      if (headSample) parentCell = headSample;
+    }
+
+    const fontFromStyle = (s: CSSStyleDeclaration): string =>
+      s.font || `${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+    const padFromStyle = (s: CSSStyleDeclaration): number => {
+      const v =
+        parseFloat(s.paddingLeft || "0") + parseFloat(s.paddingRight || "0");
+      return Number.isFinite(v) ? v : 0;
+    };
+
+    if (parentCell) {
+      const s = window.getComputedStyle(parentCell);
+      this.parentSymbolFont = fontFromStyle(s);
+      this.parentSymbolPadX = padFromStyle(s);
+    }
+    if (childCell) {
+      const s = window.getComputedStyle(childCell);
+      this.childSymbolFont = fontFromStyle(s);
+      this.childSymbolPadX = padFromStyle(s);
+    } else {
+      this.childSymbolFont = this.parentSymbolFont;
+      this.childSymbolPadX = this.parentSymbolPadX;
+    }
+
+    this.symbolMetricsAt = now;
+  }
+
   measureText(text: string, font?: string): number {
     const measureFont = font ?? this.getMeasureFont();
     const safeText = text ?? "";
@@ -112,7 +184,43 @@ export class ColumnWidthCalculator {
     return w;
   }
 
+  /** Compute the full symbol-cell width for a single row: text width at
+   *  the row's actual font size, plus the row's own horizontal padding,
+   *  plus any inline extras (used by summary rows to reserve room for
+   *  the sparkline and badge slots). */
+  measureSymbolCellTotalPx(
+    text: string,
+    isChild: boolean,
+    extraInlinePx = 0,
+  ): number {
+    this.refreshSymbolMetrics();
+    const font = isChild ? this.childSymbolFont : this.parentSymbolFont;
+    const padX = isChild ? this.childSymbolPadX : this.parentSymbolPadX;
+    const safeExtra = Number.isFinite(extraInlinePx)
+      ? Math.max(0, extraInlinePx)
+      : 0;
+    return this.measureText(text, font) + padX + safeExtra;
+  }
+
+  recordSymbolCellWidth(px: number): void {
+    if (!Number.isFinite(px) || px <= 0) return;
+    if (px > this.maxSymbolCellWidth) {
+      this.maxSymbolCellWidth = px;
+      this.markDirty();
+    }
+  }
+
+  /** Clear the symbol-column accumulator at the start of each reconcile
+   *  so widening from a transient expansion can be undone on collapse. */
+  resetSymbolColumnWidth(): void {
+    if (this.maxSymbolCellWidth !== 0) {
+      this.maxSymbolCellWidth = 0;
+      this.markDirty();
+    }
+  }
+
   updateColumnWidth(columnIndex: number, text: string): void {
+    if (columnIndex === this.symbolColumnIndex) return;
     const font = this.getMeasureFont();
     const width = this.measureText(text, font);
     if (width > this.maxTextWidths[columnIndex]) {
@@ -121,20 +229,11 @@ export class ColumnWidthCalculator {
     }
   }
 
-  setColumnExtraWidth(columnIndex: number, extraWidth: number): void {
-    if (columnIndex < 0 || columnIndex >= this.columnCount) return;
-    if (!Number.isFinite(extraWidth)) return;
-    const safeExtra = Math.max(0, extraWidth);
-    if (safeExtra !== this.columnExtraWidths[columnIndex]) {
-      this.columnExtraWidths[columnIndex] = safeExtra;
-      this.markDirty();
-    }
-  }
-
   updateWidthsForRow(values: string[]): void {
     const font = this.getMeasureFont();
 
     for (let i = 0; i < Math.min(values.length, this.columnCount); i++) {
+      if (i === this.symbolColumnIndex) continue;
       const width = this.measureText(values[i] ?? "", font);
       if (width > this.maxTextWidths[i]) {
         this.maxTextWidths[i] = width;
@@ -144,13 +243,6 @@ export class ColumnWidthCalculator {
 
     if (this.isDirty) {
       this.scheduleReflow();
-    }
-  }
-
-  setHasChildSymbolIndent(hasIndent: boolean): void {
-    if (hasIndent && !this.hasChildSymbolIndent) {
-      this.hasChildSymbolIndent = true;
-      this.markDirty();
     }
   }
 
@@ -176,17 +268,18 @@ export class ColumnWidthCalculator {
     const padX = this.samplePaddingX;
 
     for (let i = 0; i < this.columnCount; i++) {
-      let w = this.maxTextWidths[i];
-      w += this.columnExtraWidths[i] ?? 0;
-
-      if (this.hasChildSymbolIndent && this.config.columnIds[i] === "symbol") {
-        w += 30;
-      }
-
       const col = this.config.colElements[i];
-      if (col) {
-        col.style.width = `${Math.ceil(w + padX + 2)}px`;
+      if (!col) continue;
+      if (i === this.symbolColumnIndex) {
+        if (this.maxSymbolCellWidth > 0) {
+          col.style.width = `${Math.ceil(this.maxSymbolCellWidth + 2)}px`;
+        } else {
+          col.style.width = "";
+        }
+        continue;
       }
+      const w = this.maxTextWidths[i];
+      col.style.width = `${Math.ceil(w + padX + 2)}px`;
     }
 
     const spacerCol = this.config.colElements[this.columnCount];
@@ -208,8 +301,7 @@ export class ColumnWidthCalculator {
 
   reset(): void {
     this.maxTextWidths = new Array(this.columnCount).fill(0);
-    this.columnExtraWidths = new Array(this.columnCount).fill(0);
-    this.hasChildSymbolIndent = false;
+    this.maxSymbolCellWidth = 0;
     this.isDirty = true;
     this.cacheCurrent.clear();
     this.cachePrevious.clear();
@@ -218,6 +310,11 @@ export class ColumnWidthCalculator {
     this.samplePaddingX = 20;
     this.styleCacheSample = null;
     this.styleCacheAt = 0;
+    this.parentSymbolFont = "12px Arial";
+    this.childSymbolFont = "12px Arial";
+    this.parentSymbolPadX = 20;
+    this.childSymbolPadX = 20;
+    this.symbolMetricsAt = 0;
   }
 
   destroy(): void {
