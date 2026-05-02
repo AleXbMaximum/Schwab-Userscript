@@ -3,6 +3,7 @@ import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
 import { createTooltipHost } from "shared/utils/tooltipHost";
 import { traceRoundRect, setupCanvas } from "frontend/charts/ChartUtils";
 import { CHART_FONTS } from "frontend/charts/ChartTheme";
+import { withShadow } from "frontend/components/core/axTheme/renderMode/canvasShadow";
 import { marchingSquares, pickContourLevels } from "shared/utils/math/marchingSquares";
 import type { VolSurfaceData } from "backend/computation/options/types";
 import { createRenderFrame } from "../renderFrameController";
@@ -322,11 +323,14 @@ export function renderVolatilitySurface(
         const cy = colHeaderH + lowestRow * cellH + cellH / 2;
         ctx.beginPath();
         ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
-        ctx.shadowColor = "rgba(26, 26, 46, 0.5)";
-        ctx.shadowBlur = 5;
-        ctx.fillStyle = "#1a1a2e";
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        withShadow(
+          ctx,
+          { color: "rgba(26, 26, 46, 0.5)", blur: 5 },
+          () => {
+            ctx.fillStyle = "#1a1a2e";
+            ctx.fill();
+          },
+        );
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 1.2;
         ctx.stroke();

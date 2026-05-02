@@ -24,7 +24,7 @@ This document defines the IndexedDB schema, store responsibilities, record shape
 - [`../../pipeline/holdings-pipeline.md`](../../pipeline/holdings-pipeline.md)
 - [`../../services/ai/ai-workflow.md`](../../services/ai/ai-workflow.md)
 
-All persistent data is stored in a single IndexedDB database. No localStorage is used.
+All persistent data is stored in a single IndexedDB database. **Exception:** boot-critical UI preferences (theme mode, render mode) are mirrored to `localStorage` as a synchronous fast-path cache so they apply before the host page paints — IndexedDB opens asynchronously and would produce a visible FOUC on the host-page dark-mode hijack. IndexedDB remains the canonical source: writes go to both, and a Phase 2 hydrate reconciles localStorage from KV.
 
 ## Database
 
@@ -86,6 +86,8 @@ Generic KV store for small config and settings data.
 | `ui.movingBetaIndicators`       | `MovingBetaChart.ts`           | Moving Beta chart indicator ticker list                                                |
 | `ui.crossAssetMatrixRowTickers` | `CorrelationBetaHeatmap.ts`    | Cross-Asset Matrix row ticker list                                                     |
 | `ui.crossAssetMatrixColTickers` | `CorrelationBetaHeatmap.ts`    | Cross-Asset Matrix column ticker list                                                  |
+| `ui.themeMode`                  | `axTheme/controller.ts`        | Light/dark mode (canonical; mirrored to `localStorage:alexquant.themeMode` for boot)    |
+| `ui.renderMode`                 | `axTheme/renderMode/controller.ts` | Full/Eco render mode (canonical; mirrored to `localStorage:alexquant.renderMode` for boot) |
 
 ---
 

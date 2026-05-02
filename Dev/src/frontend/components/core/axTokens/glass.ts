@@ -166,3 +166,68 @@ export const AX_DARK_CRITICAL_BORDER = axColorWithAlpha(
   AX_DARK_RAW.critical,
   0.35,
 );
+
+// ──────────────────────────────────────────────────────────────────────────
+// Mouse-tracked glass rim (.ax-glass-rim) — fully parameterised so the same
+// CSS algorithm renders for every theme. baseCss.ts emits ONE rim definition
+// that reads `--ax-rim-*` vars; cssVars.ts swaps the values per theme.
+//
+// `color`        — RGB triplet (no alpha) the gradient interpolates through.
+//                  Dark uses near-white; light uses cool dark navy so the
+//                  multiply blend reads as a soft cool edge on white scenery.
+// `alpha*Base`   — gradient stop alpha at rest (mouse centred).
+// `alpha*Mod`    — extra alpha per 1% of mouse-x offset; the rim brightens
+//                  toward the cursor side. Multiplied by abs(mx)∈[0..50].
+// `*Blend`       — mix-blend-mode on the corresponding pseudo-element.
+//                  Dark pairs `screen + overlay` for a luminous halo over
+//                  saturated dark scenery; light pairs `multiply + multiply`
+//                  for a subtractive cool shadow rim on white scenery.
+// `*OpacityBase` / `*OpacityHoverBoost` — pseudo-element opacity at rest
+//                  and its hover-driven boost (CSS reads --ax-lg-hover∈[0,1]).
+//
+// Light tier intensity is dialled to ~40% of dark — same two-layer structure,
+// same mouse-tracked highlight, just softer so it doesn't read as a heavy
+// black rim against light backgrounds.
+// ──────────────────────────────────────────────────────────────────────────
+
+export type AxRimTokens = {
+  color: string;
+  alphaNearBase: number;
+  alphaNearMod: number;
+  alphaFarBase: number;
+  alphaFarMod: number;
+  primaryBlend: string;
+  primaryOpacityBase: number;
+  primaryOpacityHoverBoost: number;
+  secondaryBlend: string;
+  secondaryOpacityBase: number;
+  secondaryOpacityHoverBoost: number;
+};
+
+export const AX_DARK_RIM: AxRimTokens = {
+  color: "255,255,255",
+  alphaNearBase: 0.04,
+  alphaNearMod: 0.014,
+  alphaFarBase: 0.10,
+  alphaFarMod: 0.018,
+  primaryBlend: "screen",
+  primaryOpacityBase: 0.40,
+  primaryOpacityHoverBoost: 0.30,
+  secondaryBlend: "overlay",
+  secondaryOpacityBase: 0.28,
+  secondaryOpacityHoverBoost: 0.20,
+};
+
+export const AX_LIGHT_RIM: AxRimTokens = {
+  color: "15,30,60",
+  alphaNearBase: 0.012,
+  alphaNearMod: 0.004,
+  alphaFarBase: 0.028,
+  alphaFarMod: 0.005,
+  primaryBlend: "multiply",
+  primaryOpacityBase: 0.50,
+  primaryOpacityHoverBoost: 0.30,
+  secondaryBlend: "multiply",
+  secondaryOpacityBase: 0.18,
+  secondaryOpacityHoverBoost: 0.14,
+};

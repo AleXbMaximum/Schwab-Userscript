@@ -29,23 +29,75 @@ const AX_LG_FILTER_SVG_ID = "alexquant-lg-filter-host";
 const AX_LG_DISPLACEMENT_MAP =
   "data:image/jpeg;base64,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WrVq1ammmmmmmmmmmmmt1Vpppc5znVq1atWrVqaaaaaaaaaaaaaeqtNLnOc51atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a9TbbbbTTTTTSq000qtLnOc5zq1atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmmmlVppp6tKuc5znOrVq1a9TbbbbbbbbTTTTSqqqqqq5VWmmmmm222222mmmlVVVVVdWc5znOrVq1a9TbbbbbbbbbbaaaVVVVVVznOc6tWrVq1ammmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmllVVVVXVnOc5znVq1atWvU222220000qqqqqrnOc51atWrVqaaaaaaaaaaaaaeqtNLnOc5zq1atWrVr1Ntttttttpppppp6q0000qqqqrnOc5azq1atWrVq1a9TbbbbbbbTTTTSqqqqqqrnOc5zq1atWrVq1NNNNNNNNNNKq0000qqqqqq51atWrVq1a9TbbbbbbbTTTTSqqqqrnOc5znVq1atWrVr1Ntttttttppppp6q00000qqqqqq51atWrVq1a1atWrU00000qqqqqq51atWrVq1aterVq1atTTTTStNNNNK00000qqrTTTStNNNNNNNK0000000001NNNNNNK0000000rTTTStK0000001NNNNNNNK1NNNNNNNK01NNNNNNNK1NNNNNNNNNK00000qtNNNNNK//EABQRAQAAAAAAAAAAAAAAAAAAAKD/2gAIAQMBAz8AAB//2Q==";
 
-const attached = new WeakSet<HTMLElement>();
+// Per-element cleanup registry. Replaces the previous WeakSet so we can
+// fully detach a rim (remove listeners + clear inline CSS vars + cancel
+// pending rAF) when the render mode flips to Eco. Map keys hold strong
+// refs while attached; Eco wipes the registry, Full re-attaches via the
+// global observer's initial scan.
+const cleanupRegistry = new Map<HTMLElement, () => void>();
 let svgFilterInjected = false;
 let observer: MutationObserver | null = null;
 let observerRoot: Node | null = null;
+
+// Render-mode gate. Defaults to enabled (Full) so the runtime works
+// standalone; the renderMode controller flips this via
+// setLiquidGlassEnabled() during initRenderMode() and on every mode
+// change. Kept as a module-local flag rather than an import so this
+// runtime stays unaware of the renderMode module — single direction of
+// dependency.
+let liquidGlassEnabled = true;
 
 function isHtml(node: unknown): node is HTMLElement {
   return typeof HTMLElement !== "undefined" && node instanceof HTMLElement;
 }
 
 /**
- * Bind mouse tracking to a single liquid-glass element. Idempotent — calling
- * twice on the same element is a no-op. Listeners are passive and never
- * call preventDefault, so they don't interfere with scroll or click.
+ * Toggle the entire liquid-glass runtime. Called by the renderMode
+ * controller; not meant for component-level use.
+ *
+ * On disable: detaches every currently-attached rim (removes listeners,
+ * cancels pending rAF, clears inline CSS vars). The SVG filter <defs>
+ * stays in the DOM but the .ax-glass-refract { filter: none } override
+ * makes it inert — re-injecting it later would just churn DOM nodes.
+ *
+ * On enable: re-injects the SVG filter if it wasn't done at boot
+ * (Eco-from-cold path) and re-scans the body for .ax-glass-rim nodes
+ * to re-attach mouse tracking.
+ */
+export function setLiquidGlassEnabled(enabled: boolean): void {
+  if (liquidGlassEnabled === enabled) return;
+  liquidGlassEnabled = enabled;
+
+  if (!enabled) {
+    for (const cleanup of cleanupRegistry.values()) {
+      try {
+        cleanup();
+      } catch {
+        /* observer-style fan-out: one element's failure must not block the rest */
+      }
+    }
+    cleanupRegistry.clear();
+    return;
+  }
+
+  // Re-enable path. ensureLiquidGlassFilter is idempotent; calling it
+  // here covers the "boot into Eco then user toggles to Full" flow
+  // where the runtime bootstrap saw enabled=false and skipped injection.
+  ensureLiquidGlassFilter();
+  if (typeof document !== "undefined" && document.body) {
+    attachAllInside(document.body);
+  }
+}
+
+/**
+ * Bind mouse tracking to a single liquid-glass element. Idempotent —
+ * calling twice on the same element is a no-op. Listeners are passive
+ * and never call preventDefault, so they don't interfere with scroll
+ * or click. No-op when liquid glass is disabled (Eco mode).
  */
 export function attachLiquidGlassRim(el: HTMLElement): void {
-  if (!isHtml(el) || attached.has(el)) return;
-  attached.add(el);
+  if (!isHtml(el) || !liquidGlassEnabled) return;
+  if (cleanupRegistry.has(el)) return;
 
   let raf = 0;
   let lastClientX = 0;
@@ -95,6 +147,20 @@ export function attachLiquidGlassRim(el: HTMLElement): void {
   el.addEventListener("mousemove", onMove, { passive: true });
   el.addEventListener("mouseenter", onEnter, { passive: true });
   el.addEventListener("mouseleave", onLeave, { passive: true });
+
+  cleanupRegistry.set(el, () => {
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    el.removeEventListener("mousemove", onMove);
+    el.removeEventListener("mouseenter", onEnter);
+    el.removeEventListener("mouseleave", onLeave);
+    el.style.removeProperty("--ax-lg-mx");
+    el.style.removeProperty("--ax-lg-mx-abs");
+    el.style.removeProperty("--ax-lg-my");
+    el.style.removeProperty("--ax-lg-hover");
+  });
 }
 
 /**
@@ -110,6 +176,7 @@ export function attachLiquidGlassRim(el: HTMLElement): void {
  */
 export function ensureLiquidGlassFilter(): void {
   if (svgFilterInjected) return;
+  if (!liquidGlassEnabled) return;
   if (typeof document === "undefined") return;
   const host = document.body || document.documentElement;
   if (!host) return;

@@ -14,6 +14,8 @@ import {
   ensureLiquidGlassFilter,
   startGlobalRimObserver,
 } from "./liquidGlass";
+import { initRenderMode } from "./renderMode/controller";
+import { axEcoOverrideCss } from "./renderMode/overrideCss";
 
 const STYLE_ID = "ax-ui-runtime";
 
@@ -39,6 +41,13 @@ function bootstrapLiquidGlassRuntime(): void {
 }
 
 export function ensureAxUICss(): void {
+  // Render mode must be resolved before bootstrapLiquidGlassRuntime() so
+  // the liquidGlassEnabled flag is set when ensureLiquidGlassFilter() and
+  // attachLiquidGlassRim() run on DOMContentLoaded. initRenderMode() is
+  // idempotent — calling it from every entry point of the runtime is
+  // cheap and means consumers cannot accidentally bootstrap before the
+  // renderMode controller has read its persisted preference.
+  initRenderMode();
   if (injected) {
     bootstrapLiquidGlassRuntime();
     return;
@@ -51,6 +60,10 @@ export function ensureAxUICss(): void {
   }
   const style = document.createElement("style");
   style.id = STYLE_ID;
+  // axEcoOverrideCss goes last: even though !important wins regardless
+  // of source order, putting the eco overrides at the tail keeps the
+  // stylesheet self-documenting (Full-mode rules first, Eco hot-fix
+  // overrides at the bottom).
   style.textContent = [
     axCssVars(),
     axResetCss,
@@ -59,6 +72,7 @@ export function ensureAxUICss(): void {
     axPresetsCss,
     axAnimationsCss,
     axShellCss,
+    axEcoOverrideCss,
   ].join("\n");
   // <head> may not exist yet at document_start; fall back to documentElement
   // so the stylesheet still lands above any later content.

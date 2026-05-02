@@ -17,6 +17,12 @@ import {
   onThemeChanged,
   type AxThemeMode,
 } from "../core/axTheme/controller";
+import {
+  getRenderMode,
+  setRenderMode,
+  onRenderModeChanged,
+  type AxRenderMode,
+} from "../core/axTheme/renderMode";
 
 type NavGroup = { label: string; items: { text: string; view: string }[] };
 type ChangeViewFn = (view: string) => void;
@@ -597,7 +603,6 @@ function buildShareModeButton(): HTMLElement {
   const THEME_MODES: { mode: AxThemeMode; label: string }[] = [
     { mode: "light", label: "Light" },
     { mode: "dark", label: "Dark" },
-    { mode: "auto", label: "Auto" },
   ];
   const themeOptionEls: { mode: AxThemeMode; el: HTMLElement }[] = [];
   for (const { mode, label } of THEME_MODES) {
@@ -624,6 +629,52 @@ function buildShareModeButton(): HTMLElement {
   }
   syncThemeOptions(getCurrentMode());
   onThemeChanged(() => syncThemeOptions(getCurrentMode()));
+
+  // ── Render Mode row ─────────────────────────────────────────────────────
+  // Mirrors the Theme row above. Full keeps every glass effect, blur,
+  // glow, and motion; Eco strips the expensive composites for low-power
+  // devices or busy chart-heavy sessions.
+  const renderRow = ui_createElement("div", {
+    className: "dock-settings-row",
+  });
+  const renderLabel = ui_createElement("span", {
+    text: "Render",
+    className: "dock-settings-label",
+  });
+  renderRow.appendChild(renderLabel);
+
+  const renderOptionsContainer = ui_createElement("div", {
+    className: "dock-settings-options",
+  });
+  const RENDER_MODES: { mode: AxRenderMode; label: string }[] = [
+    { mode: "full", label: "Full" },
+    { mode: "eco", label: "Eco" },
+  ];
+  const renderOptionEls: { mode: AxRenderMode; el: HTMLElement }[] = [];
+  for (const { mode, label } of RENDER_MODES) {
+    const optBtn = ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: label,
+      events: {
+        click: (e) => {
+          (e as Event).stopPropagation();
+          setRenderMode(mode);
+        },
+      },
+    });
+    renderOptionEls.push({ mode, el: optBtn });
+    renderOptionsContainer.appendChild(optBtn);
+  }
+  renderRow.appendChild(renderOptionsContainer);
+  panel.appendChild(renderRow);
+
+  function syncRenderOptions(activeMode: AxRenderMode) {
+    for (const { mode, el } of renderOptionEls) {
+      el.classList.toggle("active", mode === activeMode);
+    }
+  }
+  syncRenderOptions(getRenderMode());
+  onRenderModeChanged(() => syncRenderOptions(getRenderMode()));
 
   wrapper.appendChild(panel);
 
