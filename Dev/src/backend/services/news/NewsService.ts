@@ -24,12 +24,24 @@ import { logService } from "shared/log/core/LogService";
 
 export type NewsListener = (items: UnifiedNewsItem[]) => void;
 
-type NewsFetchSource =
+export type NewsFetchSource =
   | "yahooMacro"
   | "yahooSymbol"
   | "barrons"
   | "financialJuice"
   | "schwab";
+
+type NewsSourceHealthEntry = {
+  lastSuccessAtUtcMs: number;
+  lastError: string | null;
+};
+
+export type NewsSourceStateRow = {
+  sourceType: NewsFetchSource;
+  label: string;
+  lastSuccessAtUtcMs: number;
+  lastError: string | null;
+};
 
 export type NewsRefreshIntervals = {
   yahooMacroMs: number;
@@ -84,6 +96,13 @@ class NewsService {
     barrons: [],
     financialJuice: [],
     schwab: [],
+  };
+  private sourceHealth: Record<NewsFetchSource, NewsSourceHealthEntry> = {
+    yahooMacro: { lastSuccessAtUtcMs: 0, lastError: null },
+    yahooSymbol: { lastSuccessAtUtcMs: 0, lastError: null },
+    barrons: { lastSuccessAtUtcMs: 0, lastError: null },
+    financialJuice: { lastSuccessAtUtcMs: 0, lastError: null },
+    schwab: { lastSuccessAtUtcMs: 0, lastError: null },
   };
   private sourceTimers: Partial<
     Record<NewsFetchSource, ReturnType<typeof setInterval>>
@@ -405,18 +424,43 @@ class NewsService {
         symbolSample: isSymbolScoped ? this.getSymbolSample() : undefined,
         durationMs: Date.now() - startedAt,
       });
+      this.sourceHealth[source] = {
+        lastSuccessAtUtcMs: Date.now(),
+        lastError: null,
+      };
       return items;
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.warn("News source refresh failed", {
         source: sourceLabel,
         sourceKey: source,
         symbolCount: isSymbolScoped ? this.symbols.length : undefined,
         symbolSample: isSymbolScoped ? this.getSymbolSample() : undefined,
         durationMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error),
+        error: errMsg,
       });
+      this.sourceHealth[source] = {
+        ...this.sourceHealth[source],
+        lastError: errMsg,
+      };
       throw error;
     }
+  }
+
+  /**
+   * Per-source health snapshot for the SourceStatusIndicator UI.
+   * Returns one row per known fetch source. Sources that have not yet
+   * succeeded report `lastSuccessAtUtcMs: 0`; transient errors retain a
+   * non-null `lastError` even after a successful retry — but the UI
+   * dot mapping treats "recent success" as authoritative.
+   */
+  getSourceHealth(): NewsSourceStateRow[] {
+    return NEWS_FETCH_SOURCES.map((source) => ({
+      sourceType: source,
+      label: NEWS_SOURCE_LABELS[source],
+      lastSuccessAtUtcMs: this.sourceHealth[source].lastSuccessAtUtcMs,
+      lastError: this.sourceHealth[source].lastError,
+    }));
   }
 
   private async fetchPerSymbol(
