@@ -442,7 +442,34 @@ class LogFormatter {
     }
   }
 }
+;// ./src/shared/log/core/resolveNamespaceLevel.ts
+/**
+ * Hierarchical namespace level resolution.
+ *
+ * Given namespace "ui.trade.chart.stream", walks up the hierarchy:
+ *   1. "ui.trade.chart.stream" (exact)
+ *   2. "ui.trade.chart"        (parent)
+ *   3. "ui.trade"              (grandparent)
+ *   4. "ui"                    (root)
+ *   5. defaultLevel            (fallback)
+ *
+ * First match wins. Allows enabling all `ui.trade.*` children without
+ * enumerating each one. Falls back transparently for legacy flat names
+ * (e.g., "main", "network") that contain no dots.
+ */
+function resolveNamespaceLevel(namespace, levels, defaultLevel) {
+  if (namespace in levels) return levels[namespace];
+  let prefix = namespace;
+  while (true) {
+    const dot = prefix.lastIndexOf(".");
+    if (dot === -1) break;
+    prefix = prefix.substring(0, dot);
+    if (prefix in levels) return levels[prefix];
+  }
+  return defaultLevel;
+}
 ;// ./src/shared/log/core/ConsoleOutput.ts
+
 
 
 class ConsoleOutput {
@@ -463,7 +490,7 @@ class ConsoleOutput {
     if (options.console === false) return false;
     if (options.console === true) return true;
     if (!this.config.enabled) return false;
-    const nsLevel = this.namespaceLevels[namespace] ?? this.config.defaultLevel;
+    const nsLevel = resolveNamespaceLevel(namespace, this.namespaceLevels, this.config.defaultLevel);
     if (!isLevelEnabled(nsLevel, normalizedLevel)) return false;
     return true;
   }
@@ -507,6 +534,7 @@ class ConsoleOutput {
 
 ;// ./src/shared/log/core/NotificationOutput.ts
 
+
 class NotificationOutput {
   constructor(config, notificationManager) {
     this.config = {
@@ -524,7 +552,7 @@ class NotificationOutput {
     if (notifyFlag === false) return false;
     if (notifyFlag === true) return true;
     if (!this.config.enabled) return false;
-    const nsLevel = this.namespaceLevels[namespace] ?? this.config.defaultLevel;
+    const nsLevel = resolveNamespaceLevel(namespace, this.namespaceLevels, this.config.defaultLevel);
     if (!isLevelEnabled(nsLevel, normalizedLevel)) return false;
     return true;
   }
@@ -7471,22 +7499,558 @@ function shareScaleValue(v) {
   const mul = getMultiplierForMode(_mode);
   return mul !== 1 ? v * mul : v;
 }
+;// ./src/frontend/components/core/axTheme/liquidGlass.ts
+// Liquid-glass runtime — mouse tracking + SVG chromatic-aberration filter.
+//
+// The CSS in baseCss.ts wires four custom properties on `.ax-glass-rim`:
+//   --ax-lg-mx      mouse offset from element center, x axis, in % (-50..50)
+//   --ax-lg-mx-abs  abs(--ax-lg-mx)
+//   --ax-lg-my      mouse offset from element center, y axis, in %
+//   --ax-lg-hover   0 when not hovered, 1 when hovered (drives rim opacity)
+//
+// `attachLiquidGlassRim(el)` writes those vars on `el.style` in response to
+// mousemove/enter/leave so the ::before/::after gradient rim follows the
+// pointer. WeakSet dedup means safe to call repeatedly.
+//
+// `ensureLiquidGlassFilter()` injects the SVG chromatic-aberration filter
+// (ported from recorder.user.js's AQ_LG_DISPLACEMENT_MAP). Reference it via
+// `filter: url(#ax-lg-filter)` on glass surfaces that want refraction.
+//
+// `startGlobalRimObserver()` watches the body subtree for new
+// `.ax-glass-rim` nodes and auto-attaches them. Idempotent; one observer
+// per page.
+
+const AX_LG_FILTER_ID = "ax-lg-filter";
+// Prefix the host node id with "alexquant-" so the dark-mode page-hijack
+// selector in axShellCss (which inverts every body child that *isn't*
+// id-prefixed `alexquant-*` etc.) skips our offscreen SVG defs container.
+// The SVG is 0×0 so visual impact would be nil regardless, but a
+// double-inverted filter pipeline produces the wrong colour-mix for
+// .ax-glass-refract consumers — easier to just stay outside the hijack.
+const AX_LG_FILTER_SVG_ID = "alexquant-lg-filter-host";
+const AX_LG_DISPLACEMENT_MAP = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAZABkAAD/2wCEAAQDAwMDAwQDAwQGBAMEBgcFBAQFBwgHBwcHBwgLCAkJCQkICwsMDAwMDAsNDQ4ODQ0SEhISEhQUFBQUFBQUFBQBBQUFCAgIEAsLEBQODg4UFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFP/CABEIAQABAAMBEQACEQEDEQH/xAAxAAEBAQEBAQAAAAAAAAAAAAADAgQIAQYBAQEBAQEBAQAAAAAAAAAAAAMCBAEACAf/2gAMAwEAAhADEAAAAPjPor6kOgOiKhKgKhKgOhKhOhKxKgKhOgKhKhKgKxOhKhOgKhKhKgKwKhKgKgKwG841nns9J/nn2KVCdCdCVAVCVCVAdCVCdiVAVidCVAVCVAdiVCVCdAVCVCVAVCVAVAViVZxsBrPPY6R/NvsY6E6ErEqAqE6ErAqE6E7E7ErA0ErArAqAqEuiVAXRLol0S6J0JUBWBUI0BXnG88djpH81+xjoToSoSoCoTsSoYQTsTsTQSsCsCsCsCsCoC6A0JeAuiXSLwn0SoioCoCoBsBrPFH0j+a/Yx0J0JUJUJ2BUMIR2MIRoBoJIBXnJAK840BUA0BdAegXhLpF4S8R+IuiVgVANAV546fSH5r9jHRHQFQlYxYnZQgnYwhQokgEgEmckzjecazlYD3OPQHoD0S8JcI/EXiPxF0SoSvONBFF0j+a/YxdI7EqA6KLGEKEKEGFI0AlA0AUzimYbzjecazlWce5w6BdEeCXhPhFwz8R+MuiVgVAdF0j+a/Yp0RUJ0MWUIUWUIUKUIJqBoArnJM4pmBMopmC84XlCswdzj3OPQHwlwS8R8M+HHDPxl0ioDoukfzT7GOhOyiimzmzhDlShBNBNBJc4rmFMwJlBMwXlC82esoVmHucOgXgHxH4j4Zyccg/GfiOiKh6R/NPsY6GLOKObOUObOUI0KEAlEkzimYFygmUEyZ0y57yZ0yZ7yheUKzh3OPc5dEvEfij0RyI9E+iPGfT6T/NPsQ6OKiKmajy4ijmyOyKwNAFM4JlBMudMmdMue8mdMme8me8wVmGsw0A9A+kfjjxx6J9EememfT6W/MvsMqOamKiamKmKOKM7ErErAUzAmYLyZ0y50yZ0yZ7yBeULzBeYazl0T6R9KPRPYj0T2J9B9Ppj8x+wjo4qY7M9iKmKg6MrIrErALzBeYEyZ0y50yZkyZ7x50yheXPeUbzjWcqA6I+lHYnsT6J7E9iOx0z+YfYBUc1MdmexHZjsHRlRBRDYBecEzZ7yAmXNeTOmTOmPOmXOmULyjeYbzlYnQxRx057E9mexPYij6a/L/r86OOzPpjsR6Y7B9MqIaILDPYZ7zZ0y57y50yZ0x5kyAmXPeUEyjeYUznQnYnRTUTUT2JqJ7EUfTn5d9fFRx2Z9EdmPTHjLsF0h6I2OegzXmzJmzplz3lzJjzpkBMudMoplBM5JnOwOyiimzmomomonsHRdO/l318VFHYj0x6I9McgumXiHpDQ56DPebMmbNebMmXMmQEy50yguQEzCmYkA7GLGEKaObibiaOKOKPp38s+vCsj7EeiPTHIP0Hwx6ReMKDP0M95895syZ815cy5c6ZQTKCZRXMKZiQDQYQYsps5uJs5qIsjounvyz68KyLpx4z9Mcg+GXoLxl4g6IUGes+a8+e82ZM2dMuZMoJmBcwrlJM5IBoMKMoUWc2c3E0cWRUXT/wCV/XQ2R0RdiPQfDPkFwy9BeIOiHQz0Ges+a8+e82ZM2dMwLmBcwpmJc5qBoMIUIUoU2c2cWZ0R0PT/AOV/XQ2RUJdM+wfDL0Hwy5A+EfEHQz0AUGe8+dM2e82dcwJnFcwrnJc5IEKUIMIUoUWc2cWRUJ0PT/5V9dFYjZFRF0z8ZeM+QPDLxD4Q6OfoBQhefPeYEz50ziucUzCoEuclCEKFGUKEKLOLI7E6EqHqD8o+uhsRsisSoi6ZeM+QPiHhj0R8IUIdALALzgmcEzimcVAlzioGomgyhQgwhRZHZFQHQlQ9Qfk/10NiVkNiNiVENiNiViNEViNkVCVgKCViViViSCViSCVgdCViVCViVCdgVCVCdD1D+U/XBWQ2I0I2Q2JUQ2I0JWQ0I2JUQ2JUI2JUI2J0JWJWJWA2R0BWJ0I2JUJ2BUJUJ0P//EABkQAQEBAQEBAAAAAAAAAAAAAAECABEDEP/aAAgBAQABAgB1atWrVq1atWrVq1atWrVq1atWrVq1atWrVq+OrVq1atWrVq1atWrVq1atWrVq1atWrVq1atXxVppppppdWrVq1atWrVq1NNNNNNNNNNNPVWmmmmms6tWrVq1atWpppppppppppppppp6q0000uc51atWrVq1ammmmmmmmmmmmmt1Vpppc5znVq1atWrVqaaaaaaaaaaaaaeqtNLnOc51atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a9TbbbbTTTTTSq000qtLnOc5zq1atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmmmlVppp6tKuc5znOrVq1a9TbbbbbbbbTTTTSqqqqqq5VWmmmmm222222mmmlVVVVVdWc5znOrVq1a9TbbbbbbbbbbaaaVVVVVVznOc6tWrVq1ammmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmllVVVVXVnOc5znVq1atWvU222220000qqqqqrnOc51atWrVqaaaaaaaaaaaaaeqtNLnOc5zq1atWrVr1Ntttttttpppppp6q0000qqqqrnOc5azq1atWrVq1a9TbbbbbbbTTTTSqqqqqqrnOc5zq1atWrVq1NNNNNNNNNNKq0000qqqqqq51atWrVq1a9TbbbbbbbTTTTSqqqqrnOc5znVq1atWrVr1Ntttttttppppp6q00000qqqqqq51atWrVq1a1atWrU00000qqqqqq51atWrVq1aterVq1atTTTTStNNNNK00000qqrTTTStNNNNNNNK0000000001NNNNNNK0000000rTTTStK0000001NNNNNNNK1NNNNNNNK01NNNNNNNK1NNNNNNNNNK00000qtNNNNNK//EABQRAQAAAAAAAAAAAAAAAAAAAKD/2gAIAQMBAz8AAB//2Q==";
+
+// Per-element cleanup registry. Replaces the previous WeakSet so we can
+// fully detach a rim (remove listeners + clear inline CSS vars + cancel
+// pending rAF) when the render mode flips to Eco. Map keys hold strong
+// refs while attached; Eco wipes the registry, Full re-attaches via the
+// global observer's initial scan.
+const cleanupRegistry = new Map();
+let svgFilterInjected = false;
+let observer = null;
+let observerRoot = null;
+
+// Render-mode gate. Defaults to enabled (Full) so the runtime works
+// standalone; the renderMode controller flips this via
+// setLiquidGlassEnabled() during initRenderMode() and on every mode
+// change. Kept as a module-local flag rather than an import so this
+// runtime stays unaware of the renderMode module — single direction of
+// dependency.
+let liquidGlassEnabled = true;
+function isHtml(node) {
+  return typeof HTMLElement !== "undefined" && node instanceof HTMLElement;
+}
+
+/**
+ * Toggle the entire liquid-glass runtime. Called by the renderMode
+ * controller; not meant for component-level use.
+ *
+ * On disable: detaches every currently-attached rim (removes listeners,
+ * cancels pending rAF, clears inline CSS vars). The SVG filter <defs>
+ * stays in the DOM but the .ax-glass-refract { filter: none } override
+ * makes it inert — re-injecting it later would just churn DOM nodes.
+ *
+ * On enable: re-injects the SVG filter if it wasn't done at boot
+ * (Eco-from-cold path) and re-scans the body for .ax-glass-rim nodes
+ * to re-attach mouse tracking.
+ */
+function setLiquidGlassEnabled(enabled) {
+  if (liquidGlassEnabled === enabled) return;
+  liquidGlassEnabled = enabled;
+  if (!enabled) {
+    for (const cleanup of cleanupRegistry.values()) {
+      try {
+        cleanup();
+      } catch {
+        /* observer-style fan-out: one element's failure must not block the rest */
+      }
+    }
+    cleanupRegistry.clear();
+    return;
+  }
+
+  // Re-enable path. ensureLiquidGlassFilter is idempotent; calling it
+  // here covers the "boot into Eco then user toggles to Full" flow
+  // where the runtime bootstrap saw enabled=false and skipped injection.
+  ensureLiquidGlassFilter();
+  if (typeof document !== "undefined" && document.body) {
+    attachAllInside(document.body);
+  }
+}
+
+/**
+ * Bind mouse tracking to a single liquid-glass element. Idempotent —
+ * calling twice on the same element is a no-op. Listeners are passive
+ * and never call preventDefault, so they don't interfere with scroll
+ * or click. No-op when liquid glass is disabled (Eco mode).
+ */
+function attachLiquidGlassRim(el) {
+  if (!isHtml(el) || !liquidGlassEnabled) return;
+  if (cleanupRegistry.has(el)) return;
+  let raf = 0;
+  let lastClientX = 0;
+  let lastClientY = 0;
+
+  // Defer both getBoundingClientRect() and setProperty() to the RAF flush.
+  // getBoundingClientRect() forces a synchronous layout, so calling it on
+  // every mousemove (~60+/s on a fast pointer) produces measurable thrash
+  // even though the rect rarely changes between frames. Reading it inside
+  // the RAF batches with the property write, so we hit layout once per
+  // animation frame regardless of mouse event rate.
+  const flush = () => {
+    raf = 0;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const mx = (lastClientX - cx) / rect.width * 100;
+    const my = (lastClientY - cy) / rect.height * 100;
+    el.style.setProperty("--ax-lg-mx", String(mx));
+    el.style.setProperty("--ax-lg-mx-abs", String(Math.abs(mx)));
+    el.style.setProperty("--ax-lg-my", String(my));
+  };
+  const onMove = e => {
+    lastClientX = e.clientX;
+    lastClientY = e.clientY;
+    if (raf) return;
+    raf = requestAnimationFrame(flush);
+  };
+  const onEnter = () => {
+    el.style.setProperty("--ax-lg-hover", "1");
+  };
+  const onLeave = () => {
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    el.style.setProperty("--ax-lg-mx", "0");
+    el.style.setProperty("--ax-lg-mx-abs", "0");
+    el.style.setProperty("--ax-lg-my", "0");
+    el.style.setProperty("--ax-lg-hover", "0");
+  };
+  el.addEventListener("mousemove", onMove, {
+    passive: true
+  });
+  el.addEventListener("mouseenter", onEnter, {
+    passive: true
+  });
+  el.addEventListener("mouseleave", onLeave, {
+    passive: true
+  });
+  cleanupRegistry.set(el, () => {
+    if (raf) {
+      cancelAnimationFrame(raf);
+      raf = 0;
+    }
+    el.removeEventListener("mousemove", onMove);
+    el.removeEventListener("mouseenter", onEnter);
+    el.removeEventListener("mouseleave", onLeave);
+    el.style.removeProperty("--ax-lg-mx");
+    el.style.removeProperty("--ax-lg-mx-abs");
+    el.style.removeProperty("--ax-lg-my");
+    el.style.removeProperty("--ax-lg-hover");
+  });
+}
+
+/**
+ * Inject the SVG chromatic-aberration / displacement filter into the document.
+ * Idempotent. Reference via `filter: url(#ax-lg-filter)` on a glass surface
+ * to give its frosted backdrop a slight RGB-channel split at the edges.
+ *
+ * The displacement map is a 256×256 base64 JPEG ported verbatim from the
+ * recorder userscript. Three channel-specific feDisplacementMap passes
+ * (R/G/B with scales -70/-77/-84) produce the chromatic split; the result
+ * is composited back over a clean center via an edge mask so only the
+ * outer ~24% of the surface gets the aberration.
+ */
+function ensureLiquidGlassFilter() {
+  if (svgFilterInjected) return;
+  if (!liquidGlassEnabled) return;
+  if (typeof document === "undefined") return;
+  const host = document.body || document.documentElement;
+  if (!host) return;
+  const wrap = document.createElement("div");
+  wrap.id = AX_LG_FILTER_SVG_ID;
+  wrap.setAttribute("aria-hidden", "true");
+  wrap.style.cssText = "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;";
+
+  // Build the SVG via DOM rather than innerHTML to keep CSP-friendly and
+  // avoid any namespace quirks in the userscript injection environment.
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("style", "position:absolute;width:0;height:0;");
+  const defs = document.createElementNS(SVG_NS, "defs");
+
+  // Edge-mask radial gradient — used to fade aberration to clean center.
+  const grad = document.createElementNS(SVG_NS, "radialGradient");
+  grad.setAttribute("id", "ax-lg-edge");
+  grad.setAttribute("cx", "50%");
+  grad.setAttribute("cy", "50%");
+  grad.setAttribute("r", "50%");
+  for (const [offset, alpha] of [["0%", "0"], ["76%", "0"], ["100%", "1"]]) {
+    const stop = document.createElementNS(SVG_NS, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", alpha === "0" ? "black" : "white");
+    stop.setAttribute("stop-opacity", alpha);
+    grad.appendChild(stop);
+  }
+  defs.appendChild(grad);
+
+  // Displacement filter pipeline.
+  const filter = document.createElementNS(SVG_NS, "filter");
+  filter.setAttribute("id", AX_LG_FILTER_ID);
+  filter.setAttribute("x", "-35%");
+  filter.setAttribute("y", "-35%");
+  filter.setAttribute("width", "170%");
+  filter.setAttribute("height", "170%");
+  filter.setAttribute("color-interpolation-filters", "sRGB");
+  const append = (tag, attrs, children = []) => {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "href") node.setAttributeNS("http://www.w3.org/1999/xlink", "href", v);else node.setAttribute(k, v);
+    }
+    for (const c of children) node.appendChild(c);
+    return node;
+  };
+  filter.appendChild(append("feImage", {
+    x: "0",
+    y: "0",
+    width: "100%",
+    height: "100%",
+    result: "DM",
+    href: AX_LG_DISPLACEMENT_MAP,
+    preserveAspectRatio: "xMidYMid slice"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "DM",
+    type: "matrix",
+    values: "0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0 0 0 1 0",
+    result: "EI"
+  }));
+  filter.appendChild(append("feComponentTransfer", {
+    in: "EI",
+    result: "EM"
+  }, [append("feFuncA", {
+    type: "discrete",
+    tableValues: "0 0.1 1"
+  })]));
+  filter.appendChild(append("feOffset", {
+    in: "SourceGraphic",
+    dx: "0",
+    dy: "0",
+    result: "CO"
+  }));
+  // R channel
+  filter.appendChild(append("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "DM",
+    scale: "-70",
+    xChannelSelector: "R",
+    yChannelSelector: "B",
+    result: "RD"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "RD",
+    type: "matrix",
+    values: "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0",
+    result: "RC"
+  }));
+  // G channel
+  filter.appendChild(append("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "DM",
+    scale: "-77",
+    xChannelSelector: "R",
+    yChannelSelector: "B",
+    result: "GD"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "GD",
+    type: "matrix",
+    values: "0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0",
+    result: "GC"
+  }));
+  // B channel
+  filter.appendChild(append("feDisplacementMap", {
+    in: "SourceGraphic",
+    in2: "DM",
+    scale: "-84",
+    xChannelSelector: "R",
+    yChannelSelector: "B",
+    result: "BD"
+  }));
+  filter.appendChild(append("feColorMatrix", {
+    in: "BD",
+    type: "matrix",
+    values: "0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0",
+    result: "BC"
+  }));
+  filter.appendChild(append("feBlend", {
+    in: "GC",
+    in2: "BC",
+    mode: "screen",
+    result: "GB"
+  }));
+  filter.appendChild(append("feBlend", {
+    in: "RC",
+    in2: "GB",
+    mode: "screen",
+    result: "RGB"
+  }));
+  filter.appendChild(append("feGaussianBlur", {
+    in: "RGB",
+    stdDeviation: "0.3",
+    result: "AB"
+  }));
+  filter.appendChild(append("feComposite", {
+    in: "AB",
+    in2: "EM",
+    operator: "in",
+    result: "EA"
+  }));
+  filter.appendChild(append("feComponentTransfer", {
+    in: "EM",
+    result: "IM"
+  }, [append("feFuncA", {
+    type: "table",
+    tableValues: "1 0"
+  })]));
+  filter.appendChild(append("feComposite", {
+    in: "CO",
+    in2: "IM",
+    operator: "in",
+    result: "CC"
+  }));
+  filter.appendChild(append("feComposite", {
+    in: "EA",
+    in2: "CC",
+    operator: "over"
+  }));
+  defs.appendChild(filter);
+  svg.appendChild(defs);
+  wrap.appendChild(svg);
+  host.appendChild(wrap);
+  svgFilterInjected = true;
+}
+function attachAllInside(root) {
+  const els = root.querySelectorAll(".ax-glass-rim");
+  for (let i = 0; i < els.length; i++) attachLiquidGlassRim(els[i]);
+}
+
+/**
+ * Watch the document for any element with `.ax-glass-rim` and auto-attach
+ * mouse tracking. Idempotent — second call is a no-op. Cheap: a single
+ * MutationObserver on the body subtree filters by class and skips
+ * already-attached nodes via a WeakSet.
+ *
+ * Components can still call attachLiquidGlassRim() directly when they
+ * mount panels — the observer is a safety net for view rebuilds and
+ * dynamically-injected children.
+ */
+function startGlobalRimObserver() {
+  if (typeof document === "undefined") return;
+  const root = document.body || document.documentElement;
+  if (!root) return;
+  if (observer && observerRoot === root) return;
+
+  // Initial scan covers anything already in the DOM.
+  attachAllInside(root);
+  observer = new MutationObserver(muts => {
+    for (let i = 0; i < muts.length; i++) {
+      const m = muts[i];
+      if (m.type !== "childList") continue;
+      const added = m.addedNodes;
+      for (let j = 0; j < added.length; j++) {
+        const node = added[j];
+        if (!isHtml(node)) continue;
+        if (node.classList.contains("ax-glass-rim")) {
+          attachLiquidGlassRim(node);
+        }
+        attachAllInside(node);
+      }
+    }
+  });
+  observer.observe(root, {
+    childList: true,
+    subtree: true
+  });
+  observerRoot = root;
+}
+;// ./src/frontend/components/core/axTheme/renderMode/controller.ts
+// Render-mode state — Full vs Eco.
+//
+// Mirrors the light/dark theme controller pattern: a single source of
+// truth, dual-write persistence (IndexedDB canonical, localStorage as
+// boot fast-path cache — see STORAGE.md), observer subscriptions, and
+// a body class hook that CSS can target. Adding a future mode
+// (PowerSaver, Battery, ...) is a one-file change here plus a
+// corresponding rule block in overrideCss.ts.
+//
+// "full" is the rich default with all glass effects, blur, glow, and
+// motion. "eco" disables expensive composites (backdrop-filter, the
+// SVG refraction filter, glass-rim mouse tracking, canvas shadowBlur),
+// kills infinite pulse animations, and zeroes out transition /
+// animation durations using the W3C reduced-motion idiom — preserving
+// each transition's property + easing definition so toggling back to
+// Full immediately restores the original feel without rebuilding any
+// stylesheet.
+//
+// Decoupling: this module talks to liquidGlass via a single
+// setLiquidGlassEnabled() switch. liquidGlass.ts has zero awareness of
+// render modes, so future modes can be added here without touching
+// the liquid-glass runtime.
+
+
+const STORAGE_KEY = "alexquant.renderMode";
+const RENDER_MODE_KV_KEY = "ui.renderMode";
+const ECO_BODY_CLASS = "ax-eco";
+let controller_mode = "full";
+let _initialized = false;
+let _kv = null;
+const _observers = new Set();
+function getRenderMode() {
+  return controller_mode;
+}
+function isEco() {
+  return controller_mode === "eco";
+}
+
+/** Subscribe to render-mode changes. Returns unsubscribe function. */
+function onRenderModeChanged(cb) {
+  _observers.add(cb);
+  return () => {
+    _observers.delete(cb);
+  };
+}
+
+/** Set render mode and persist (dual-write: localStorage + KV when attached). Idempotent: same-mode calls are a no-op. */
+function setRenderMode(mode) {
+  if (controller_mode === mode) return;
+  controller_mode = mode;
+  applyMode(mode);
+  try {
+    localStorage.setItem(STORAGE_KEY, mode);
+  } catch {
+    /* non-critical */
+  }
+  if (_kv) {
+    void _kv.set(RENDER_MODE_KV_KEY, mode).catch(() => {
+      /* non-critical: localStorage already has the value */
+    });
+  }
+}
+
+/**
+ * Reconcile against the canonical KV value once the IndexedDB-backed
+ * KVStore is ready. Call before any UI is rendered. If KV is empty,
+ * backfill it from the localStorage-derived boot value.
+ */
+async function hydrateRenderModeFromKV(kv) {
+  _kv = kv;
+  let stored;
+  try {
+    stored = await kv.get(RENDER_MODE_KV_KEY);
+  } catch {
+    return;
+  }
+  if (stored === "full" || stored === "eco") {
+    if (stored !== controller_mode) setRenderMode(stored);
+  } else {
+    void kv.set(RENDER_MODE_KV_KEY, controller_mode).catch(() => {
+      /* non-critical */
+    });
+  }
+}
+
+/**
+ * Initialise render mode from persisted preference. Idempotent. Should
+ * run before the liquid-glass runtime bootstraps so the SVG filter and
+ * rim observer pick up the correct enabled flag.
+ */
+function initRenderMode() {
+  if (_initialized) return;
+  _initialized = true;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored === "full" || stored === "eco") {
+      controller_mode = stored;
+    }
+  } catch {
+    /* fallback to default */
+  }
+  applyMode(controller_mode);
+}
+function applyMode(mode) {
+  // Body class — CSS overrides in overrideCss.ts target body.ax-eco.
+  // Body may not exist yet at document_start; defer the toggle.
+  if (typeof document !== "undefined") {
+    const body = document.body;
+    if (body) {
+      body.classList.toggle(ECO_BODY_CLASS, mode === "eco");
+    } else {
+      const apply = () => {
+        document.body?.classList.toggle(ECO_BODY_CLASS, mode === "eco");
+      };
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", apply, {
+          once: true
+        });
+      } else {
+        queueMicrotask(apply);
+      }
+    }
+  }
+
+  // Drive the liquid-glass runtime synchronously regardless of body
+  // readiness — the flag gates every later attach call, so toggling it
+  // before the rim observer fires is what makes "boot into eco" silent.
+  setLiquidGlassEnabled(mode === "full");
+  for (const cb of _observers) {
+    try {
+      cb(mode);
+    } catch {
+      /* observer errors are non-critical */
+    }
+  }
+}
 ;// ./src/frontend/components/core/axTheme/controller.ts
 // Central theme state management.
 // Single source of truth for the current theme mode.
-// Persists to localStorage so the chosen theme survives reloads.
+//
+// Persistence is dual-write: IndexedDB (`kv:ui.themeMode`) is canonical;
+// `localStorage:alexquant.themeMode` is a synchronous boot fast-path cache
+// because IndexedDB opens asynchronously and the body class drives a host-page
+// filter hijack that must be live before Schwab paints. See STORAGE.md.
+//
+// Mode is now a pure light/dark toggle — Auto / system-preference
+// tracking has been removed. Old persisted "auto" values are migrated
+// once on first read (resolved against the current OS preference and
+// rewritten as a concrete light/dark value).
+
 
 const THEME_STORAGE_KEY = "alexquant.themeMode";
-let controller_mode = "auto";
-let _effective = "light";
-let _initialized = false;
-const _observers = new Set();
-let _mediaQuery = null;
+const THEME_KV_KEY = "ui.themeMode";
+let axTheme_controller_mode = "dark";
+let _effective = "dark";
+let controller_initialized = false;
+let controller_kv = null;
+const controller_observers = new Set();
 function isDarkTheme() {
   return _effective === "dark";
 }
 function getCurrentMode() {
-  return controller_mode;
+  return axTheme_controller_mode;
 }
 function getEffectiveTheme() {
   return _effective;
@@ -7494,53 +8058,79 @@ function getEffectiveTheme() {
 
 /** Subscribe to theme changes. Returns unsubscribe function. */
 function onThemeChanged(cb) {
-  _observers.add(cb);
+  controller_observers.add(cb);
   return () => {
-    _observers.delete(cb);
+    controller_observers.delete(cb);
   };
 }
 
-/** Set theme mode and persist. */
+/** Set theme mode and persist (dual-write: localStorage + KV when attached). */
 function setTheme(mode) {
-  controller_mode = mode;
-  const next = resolveEffective(mode);
-  applyEffective(next);
+  axTheme_controller_mode = mode;
+  applyEffective(mode);
   try {
     localStorage.setItem(THEME_STORAGE_KEY, mode);
   } catch {
     /* non-critical */
   }
-}
-
-/** Initialize theme from persisted preference + system detection. Call once at boot. */
-function initTheme() {
-  if (_initialized) return;
-  _initialized = true;
-  try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark" || stored === "auto") {
-      controller_mode = stored;
-    }
-  } catch {
-    /* fallback to auto */
-  }
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    _mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    _mediaQuery.addEventListener("change", () => {
-      if (controller_mode === "auto") applyEffective(resolveEffective("auto"));
+  if (controller_kv) {
+    void controller_kv.set(THEME_KV_KEY, mode).catch(() => {
+      /* non-critical: localStorage already has the value */
     });
   }
-  applyEffective(resolveEffective(controller_mode), false);
 }
-function resolveEffective(mode) {
-  if (mode === "auto") {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return "light";
-    }
-    const mq = _mediaQuery ?? window.matchMedia("(prefers-color-scheme: dark)");
-    return mq.matches ? "dark" : "light";
+
+/**
+ * Reconcile the in-memory mode against the canonical KV value once the
+ * IndexedDB-backed KVStore is ready. Call before any UI is rendered so a
+ * cross-device divergence (KV says light, localStorage says dark) cannot
+ * produce a visible flip. If KV is empty, backfill it from the value
+ * already loaded from localStorage at boot.
+ */
+async function hydrateThemeFromKV(kv) {
+  controller_kv = kv;
+  let stored;
+  try {
+    stored = await kv.get(THEME_KV_KEY);
+  } catch {
+    return;
   }
-  return mode;
+  if (stored === "light" || stored === "dark") {
+    if (stored !== axTheme_controller_mode) setTheme(stored);
+  } else {
+    void kv.set(THEME_KV_KEY, axTheme_controller_mode).catch(() => {
+      /* non-critical */
+    });
+  }
+}
+
+/** Initialize theme from persisted preference. Call once at boot. */
+function initTheme() {
+  if (controller_initialized) return;
+  controller_initialized = true;
+  let stored = null;
+  try {
+    stored = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    /* fallback to default */
+  }
+  if (stored === "light" || stored === "dark") {
+    axTheme_controller_mode = stored;
+  } else if (stored === "auto") {
+    // Migration: a user previously chose Auto. Resolve once to a concrete
+    // mode based on current OS preference and persist that, so future
+    // reads land in the light/dark branch above.
+    const prefersDark = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    axTheme_controller_mode = prefersDark ? "dark" : "light";
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, axTheme_controller_mode);
+    } catch {
+      /* non-critical */
+    }
+  }
+  // else: keep default "dark"
+
+  applyEffective(axTheme_controller_mode, false);
 }
 
 /**
@@ -7593,7 +8183,10 @@ function applyEffective(theme, animate = true) {
   }
   _effective = theme;
   const root = document.documentElement;
-  if (animate) {
+
+  // Skip the cross-fade transition in Eco mode — its 350ms full-tree
+  // transition is exactly the kind of motion Eco strips out elsewhere.
+  if (animate && !isEco()) {
     root.classList.add("theme-transitioning");
     setTimeout(() => root.classList.remove("theme-transitioning"), 350);
   }
@@ -7610,7 +8203,7 @@ function applyEffective(theme, animate = true) {
   } catch {
     /* no-op */
   }
-  for (const cb of _observers) {
+  for (const cb of controller_observers) {
     try {
       cb(theme);
     } catch {
@@ -7619,6 +8212,7 @@ function applyEffective(theme, animate = true) {
   }
 }
 ;// ./src/frontend/components/mainContainer/MainContainer.ts
+
 
 
 
@@ -8180,9 +8774,6 @@ function buildShareModeButton() {
   }, {
     mode: "dark",
     label: "Dark"
-  }, {
-    mode: "auto",
-    label: "Auto"
   }];
   const themeOptionEls = [];
   for (const {
@@ -8217,6 +8808,62 @@ function buildShareModeButton() {
   }
   syncThemeOptions(getCurrentMode());
   onThemeChanged(() => syncThemeOptions(getCurrentMode()));
+
+  // ── Render Mode row ─────────────────────────────────────────────────────
+  // Mirrors the Theme row above. Full keeps every glass effect, blur,
+  // glow, and motion; Eco strips the expensive composites for low-power
+  // devices or busy chart-heavy sessions.
+  const renderRow = createElement_ui_createElement("div", {
+    className: "dock-settings-row"
+  });
+  const renderLabel = createElement_ui_createElement("span", {
+    text: "Render",
+    className: "dock-settings-label"
+  });
+  renderRow.appendChild(renderLabel);
+  const renderOptionsContainer = createElement_ui_createElement("div", {
+    className: "dock-settings-options"
+  });
+  const RENDER_MODES = [{
+    mode: "full",
+    label: "Full"
+  }, {
+    mode: "eco",
+    label: "Eco"
+  }];
+  const renderOptionEls = [];
+  for (const {
+    mode,
+    label
+  } of RENDER_MODES) {
+    const optBtn = createElement_ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: label,
+      events: {
+        click: e => {
+          e.stopPropagation();
+          setRenderMode(mode);
+        }
+      }
+    });
+    renderOptionEls.push({
+      mode,
+      el: optBtn
+    });
+    renderOptionsContainer.appendChild(optBtn);
+  }
+  renderRow.appendChild(renderOptionsContainer);
+  panel.appendChild(renderRow);
+  function syncRenderOptions(activeMode) {
+    for (const {
+      mode,
+      el
+    } of renderOptionEls) {
+      el.classList.toggle("active", mode === activeMode);
+    }
+  }
+  syncRenderOptions(getRenderMode());
+  onRenderModeChanged(() => syncRenderOptions(getRenderMode()));
   wrapper.appendChild(panel);
 
   // ── Sync dropdown option highlight ──────────────────────────────────────
@@ -15575,6 +16222,28 @@ class NewsService {
     financialJuice: [],
     schwab: []
   };
+  sourceHealth = {
+    yahooMacro: {
+      lastSuccessAtUtcMs: 0,
+      lastError: null
+    },
+    yahooSymbol: {
+      lastSuccessAtUtcMs: 0,
+      lastError: null
+    },
+    barrons: {
+      lastSuccessAtUtcMs: 0,
+      lastError: null
+    },
+    financialJuice: {
+      lastSuccessAtUtcMs: 0,
+      lastError: null
+    },
+    schwab: {
+      lastSuccessAtUtcMs: 0,
+      lastError: null
+    }
+  };
   sourceTimers = {};
   pendingSources = new Set();
   inFlightFetch = null;
@@ -15840,18 +16509,43 @@ class NewsService {
         symbolSample: isSymbolScoped ? this.getSymbolSample() : undefined,
         durationMs: Date.now() - startedAt
       });
+      this.sourceHealth[source] = {
+        lastSuccessAtUtcMs: Date.now(),
+        lastError: null
+      };
       return items;
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.warn("News source refresh failed", {
         source: sourceLabel,
         sourceKey: source,
         symbolCount: isSymbolScoped ? this.symbols.length : undefined,
         symbolSample: isSymbolScoped ? this.getSymbolSample() : undefined,
         durationMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error)
+        error: errMsg
       });
+      this.sourceHealth[source] = {
+        ...this.sourceHealth[source],
+        lastError: errMsg
+      };
       throw error;
     }
+  }
+
+  /**
+   * Per-source health snapshot for the SourceStatusIndicator UI.
+   * Returns one row per known fetch source. Sources that have not yet
+   * succeeded report `lastSuccessAtUtcMs: 0`; transient errors retain a
+   * non-null `lastError` even after a successful retry — but the UI
+   * dot mapping treats "recent success" as authoritative.
+   */
+  getSourceHealth() {
+    return NEWS_FETCH_SOURCES.map(source => ({
+      sourceType: source,
+      label: NewsService_NEWS_SOURCE_LABELS[source],
+      lastSuccessAtUtcMs: this.sourceHealth[source].lastSuccessAtUtcMs,
+      lastError: this.sourceHealth[source].lastError
+    }));
   }
   async fetchPerSymbol(fetcher) {
     const targetSymbols = this.symbols;
@@ -20440,328 +21134,6 @@ function patchSnapshotMetricsDOM(overview, balances, primarySpans, detailSpans) 
       if (span.style.color !== newColor) span.style.color = newColor;
     }
   }
-}
-;// ./src/frontend/components/core/axTheme/liquidGlass.ts
-// Liquid-glass runtime — mouse tracking + SVG chromatic-aberration filter.
-//
-// The CSS in baseCss.ts wires four custom properties on `.ax-glass-rim`:
-//   --ax-lg-mx      mouse offset from element center, x axis, in % (-50..50)
-//   --ax-lg-mx-abs  abs(--ax-lg-mx)
-//   --ax-lg-my      mouse offset from element center, y axis, in %
-//   --ax-lg-hover   0 when not hovered, 1 when hovered (drives rim opacity)
-//
-// `attachLiquidGlassRim(el)` writes those vars on `el.style` in response to
-// mousemove/enter/leave so the ::before/::after gradient rim follows the
-// pointer. WeakSet dedup means safe to call repeatedly.
-//
-// `ensureLiquidGlassFilter()` injects the SVG chromatic-aberration filter
-// (ported from recorder.user.js's AQ_LG_DISPLACEMENT_MAP). Reference it via
-// `filter: url(#ax-lg-filter)` on glass surfaces that want refraction.
-//
-// `startGlobalRimObserver()` watches the body subtree for new
-// `.ax-glass-rim` nodes and auto-attaches them. Idempotent; one observer
-// per page.
-
-const AX_LG_FILTER_ID = "ax-lg-filter";
-// Prefix the host node id with "alexquant-" so the dark-mode page-hijack
-// selector in axShellCss (which inverts every body child that *isn't*
-// id-prefixed `alexquant-*` etc.) skips our offscreen SVG defs container.
-// The SVG is 0×0 so visual impact would be nil regardless, but a
-// double-inverted filter pipeline produces the wrong colour-mix for
-// .ax-glass-refract consumers — easier to just stay outside the hijack.
-const AX_LG_FILTER_SVG_ID = "alexquant-lg-filter-host";
-const AX_LG_DISPLACEMENT_MAP = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAgAAZABkAAD/2wCEAAQDAwMDAwQDAwQGBAMEBgcFBAQFBwgHBwcHBwgLCAkJCQkICwsMDAwMDAsNDQ4ODQ0SEhISEhQUFBQUFBQUFBQBBQUFCAgIEAsLEBQODg4UFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFP/CABEIAQABAAMBEQACEQEDEQH/xAAxAAEBAQEBAQAAAAAAAAAAAAADAgQIAQYBAQEBAQEBAQAAAAAAAAAAAAMCBAEACAf/2gAMAwEAAhADEAAAAPjPor6kOgOiKhKgKhKgOhKhOhKxKgKhOgKhKhKgKxOhKhOgKhKhKgKwKhKgKgKwG841nns9J/nn2KVCdCdCVAVCVCVAdCVCdiVAVidCVAVCVAdiVCVCdAVCVCVAVCVAVAViVZxsBrPPY6R/NvsY6E6ErEqAqE6ErAqE6E7E7ErA0ErArAqAqEuiVAXRLol0S6J0JUBWBUI0BXnG88djpH81+xjoToSoSoCoTsSoYQTsTsTQSsCsCsCsCsCoC6A0JeAuiXSLwn0SoioCoCoBsBrPFH0j+a/Yx0J0JUJUJ2BUMIR2MIRoBoJIBXnJAK840BUA0BdAegXhLpF4S8R+IuiVgVANAV546fSH5r9jHRHQFQlYxYnZQgnYwhQokgEgEmckzjecazlYD3OPQHoD0S8JcI/EXiPxF0SoSvONBFF0j+a/YxdI7EqA6KLGEKEKEGFI0AlA0AUzimYbzjecazlWce5w6BdEeCXhPhFwz8R+MuiVgVAdF0j+a/Yp0RUJ0MWUIUWUIUKUIJqBoArnJM4pmBMopmC84XlCswdzj3OPQHwlwS8R8M+HHDPxl0ioDoukfzT7GOhOyiimzmzhDlShBNBNBJc4rmFMwJlBMwXlC82esoVmHucOgXgHxH4j4Zyccg/GfiOiKh6R/NPsY6GLOKObOUObOUI0KEAlEkzimYFygmUEyZ0y57yZ0yZ7yheUKzh3OPc5dEvEfij0RyI9E+iPGfT6T/NPsQ6OKiKmajy4ijmyOyKwNAFM4JlBMudMmdMue8mdMme8me8wVmGsw0A9A+kfjjxx6J9EememfT6W/MvsMqOamKiamKmKOKM7ErErAUzAmYLyZ0y50yZ0yZ7yBeULzBeYazl0T6R9KPRPYj0T2J9B9Ppj8x+wjo4qY7M9iKmKg6MrIrErALzBeYEyZ0y50yZkyZ7x50yheXPeUbzjWcqA6I+lHYnsT6J7E9iOx0z+YfYBUc1MdmexHZjsHRlRBRDYBecEzZ7yAmXNeTOmTOmPOmXOmULyjeYbzlYnQxRx057E9mexPYij6a/L/r86OOzPpjsR6Y7B9MqIaILDPYZ7zZ0y57y50yZ0x5kyAmXPeUEyjeYUznQnYnRTUTUT2JqJ7EUfTn5d9fFRx2Z9EdmPTHjLsF0h6I2OegzXmzJmzplz3lzJjzpkBMudMoplBM5JnOwOyiimzmomomonsHRdO/l318VFHYj0x6I9McgumXiHpDQ56DPebMmbNebMmXMmQEy50yguQEzCmYkA7GLGEKaObibiaOKOKPp38s+vCsj7EeiPTHIP0Hwx6ReMKDP0M95895syZ815cy5c6ZQTKCZRXMKZiQDQYQYsps5uJs5qIsjounvyz68KyLpx4z9Mcg+GXoLxl4g6IUGes+a8+e82ZM2dMuZMoJmBcwrlJM5IBoMKMoUWc2c3E0cWRUXT/wCV/XQ2R0RdiPQfDPkFwy9BeIOiHQz0Ges+a8+e82ZM2dMwLmBcwpmJc5qBoMIUIUoU2c2cWZ0R0PT/AOV/XQ2RUJdM+wfDL0Hwy5A+EfEHQz0AUGe8+dM2e82dcwJnFcwrnJc5IEKUIMIUoUWc2cWRUJ0PT/5V9dFYjZFRF0z8ZeM+QPDLxD4Q6OfoBQhefPeYEz50ziucUzCoEuclCEKFGUKEKLOLI7E6EqHqD8o+uhsRsisSoi6ZeM+QPiHhj0R8IUIdALALzgmcEzimcVAlzioGomgyhQgwhRZHZFQHQlQ9Qfk/10NiVkNiNiVENiNiViNEViNkVCVgKCViViViSCViSCVgdCViVCViVCdgVCVCdD1D+U/XBWQ2I0I2Q2JUQ2I0JWQ0I2JUQ2JUI2JUI2J0JWJWJWA2R0BWJ0I2JUJ2BUJUJ0P//EABkQAQEBAQEBAAAAAAAAAAAAAAECABEDEP/aAAgBAQABAgB1atWrVq1atWrVq1atWrVq1atWrVq1atWrVq+OrVq1atWrVq1atWrVq1atWrVq1atWrVq1atXxVppppppdWrVq1atWrVq1NNNNNNNNNNNPVWmmmmms6tWrVq1atWpppppppppppppppp6q0000uc51atWrVq1ammmmmmmmmmmmmt1Vpppc5znVq1atWrVqaaaaaaaaaaaaaeqtNLnOc51atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a9TbbbbTTTTTSq000qtLnOc5zq1atWrVq1ammmmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmmmlVppp6tKuc5znOrVq1a9TbbbbbbbbTTTTSqqqqqq5VWmmmmm222222mmmlVVVVVdWc5znOrVq1a9TbbbbbbbbbbaaaVVVVVVznOc6tWrVq1ammmmmmmmmmmmnqrS5znOc6tWrVq1a22222mmmmmllVVVVXVnOc5znVq1atWvU222220000qqqqqrnOc51atWrVqaaaaaaaaaaaaaeqtNLnOc5zq1atWrVr1Ntttttttpppppp6q0000qqqqrnOc5azq1atWrVq1a9TbbbbbbbTTTTSqqqqqqrnOc5zq1atWrVq1NNNNNNNNNNKq0000qqqqqq51atWrVq1a9TbbbbbbbTTTTSqqqqrnOc5znVq1atWrVr1Ntttttttppppp6q00000qqqqqq51atWrVq1a1atWrU00000qqqqqq51atWrVq1aterVq1atTTTTStNNNNK00000qqrTTTStNNNNNNNK0000000001NNNNNNK0000000rTTTStK0000001NNNNNNNK1NNNNNNNK01NNNNNNNK1NNNNNNNNNK00000qtNNNNNK//EABQRAQAAAAAAAAAAAAAAAAAAAKD/2gAIAQMBAz8AAB//2Q==";
-const attached = new WeakSet();
-let svgFilterInjected = false;
-let observer = null;
-let observerRoot = null;
-function isHtml(node) {
-  return typeof HTMLElement !== "undefined" && node instanceof HTMLElement;
-}
-
-/**
- * Bind mouse tracking to a single liquid-glass element. Idempotent — calling
- * twice on the same element is a no-op. Listeners are passive and never
- * call preventDefault, so they don't interfere with scroll or click.
- */
-function attachLiquidGlassRim(el) {
-  if (!isHtml(el) || attached.has(el)) return;
-  attached.add(el);
-  let raf = 0;
-  let lastClientX = 0;
-  let lastClientY = 0;
-
-  // Defer both getBoundingClientRect() and setProperty() to the RAF flush.
-  // getBoundingClientRect() forces a synchronous layout, so calling it on
-  // every mousemove (~60+/s on a fast pointer) produces measurable thrash
-  // even though the rect rarely changes between frames. Reading it inside
-  // the RAF batches with the property write, so we hit layout once per
-  // animation frame regardless of mouse event rate.
-  const flush = () => {
-    raf = 0;
-    const rect = el.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const mx = (lastClientX - cx) / rect.width * 100;
-    const my = (lastClientY - cy) / rect.height * 100;
-    el.style.setProperty("--ax-lg-mx", String(mx));
-    el.style.setProperty("--ax-lg-mx-abs", String(Math.abs(mx)));
-    el.style.setProperty("--ax-lg-my", String(my));
-  };
-  const onMove = e => {
-    lastClientX = e.clientX;
-    lastClientY = e.clientY;
-    if (raf) return;
-    raf = requestAnimationFrame(flush);
-  };
-  const onEnter = () => {
-    el.style.setProperty("--ax-lg-hover", "1");
-  };
-  const onLeave = () => {
-    if (raf) {
-      cancelAnimationFrame(raf);
-      raf = 0;
-    }
-    el.style.setProperty("--ax-lg-mx", "0");
-    el.style.setProperty("--ax-lg-mx-abs", "0");
-    el.style.setProperty("--ax-lg-my", "0");
-    el.style.setProperty("--ax-lg-hover", "0");
-  };
-  el.addEventListener("mousemove", onMove, {
-    passive: true
-  });
-  el.addEventListener("mouseenter", onEnter, {
-    passive: true
-  });
-  el.addEventListener("mouseleave", onLeave, {
-    passive: true
-  });
-}
-
-/**
- * Inject the SVG chromatic-aberration / displacement filter into the document.
- * Idempotent. Reference via `filter: url(#ax-lg-filter)` on a glass surface
- * to give its frosted backdrop a slight RGB-channel split at the edges.
- *
- * The displacement map is a 256×256 base64 JPEG ported verbatim from the
- * recorder userscript. Three channel-specific feDisplacementMap passes
- * (R/G/B with scales -70/-77/-84) produce the chromatic split; the result
- * is composited back over a clean center via an edge mask so only the
- * outer ~24% of the surface gets the aberration.
- */
-function ensureLiquidGlassFilter() {
-  if (svgFilterInjected) return;
-  if (typeof document === "undefined") return;
-  const host = document.body || document.documentElement;
-  if (!host) return;
-  const wrap = document.createElement("div");
-  wrap.id = AX_LG_FILTER_SVG_ID;
-  wrap.setAttribute("aria-hidden", "true");
-  wrap.style.cssText = "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;";
-
-  // Build the SVG via DOM rather than innerHTML to keep CSP-friendly and
-  // avoid any namespace quirks in the userscript injection environment.
-  const SVG_NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("style", "position:absolute;width:0;height:0;");
-  const defs = document.createElementNS(SVG_NS, "defs");
-
-  // Edge-mask radial gradient — used to fade aberration to clean center.
-  const grad = document.createElementNS(SVG_NS, "radialGradient");
-  grad.setAttribute("id", "ax-lg-edge");
-  grad.setAttribute("cx", "50%");
-  grad.setAttribute("cy", "50%");
-  grad.setAttribute("r", "50%");
-  for (const [offset, alpha] of [["0%", "0"], ["76%", "0"], ["100%", "1"]]) {
-    const stop = document.createElementNS(SVG_NS, "stop");
-    stop.setAttribute("offset", offset);
-    stop.setAttribute("stop-color", alpha === "0" ? "black" : "white");
-    stop.setAttribute("stop-opacity", alpha);
-    grad.appendChild(stop);
-  }
-  defs.appendChild(grad);
-
-  // Displacement filter pipeline.
-  const filter = document.createElementNS(SVG_NS, "filter");
-  filter.setAttribute("id", AX_LG_FILTER_ID);
-  filter.setAttribute("x", "-35%");
-  filter.setAttribute("y", "-35%");
-  filter.setAttribute("width", "170%");
-  filter.setAttribute("height", "170%");
-  filter.setAttribute("color-interpolation-filters", "sRGB");
-  const append = (tag, attrs, children = []) => {
-    const node = document.createElementNS(SVG_NS, tag);
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k === "href") node.setAttributeNS("http://www.w3.org/1999/xlink", "href", v);else node.setAttribute(k, v);
-    }
-    for (const c of children) node.appendChild(c);
-    return node;
-  };
-  filter.appendChild(append("feImage", {
-    x: "0",
-    y: "0",
-    width: "100%",
-    height: "100%",
-    result: "DM",
-    href: AX_LG_DISPLACEMENT_MAP,
-    preserveAspectRatio: "xMidYMid slice"
-  }));
-  filter.appendChild(append("feColorMatrix", {
-    in: "DM",
-    type: "matrix",
-    values: "0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0.3 0.3 0.3 0 0 0 0 0 1 0",
-    result: "EI"
-  }));
-  filter.appendChild(append("feComponentTransfer", {
-    in: "EI",
-    result: "EM"
-  }, [append("feFuncA", {
-    type: "discrete",
-    tableValues: "0 0.1 1"
-  })]));
-  filter.appendChild(append("feOffset", {
-    in: "SourceGraphic",
-    dx: "0",
-    dy: "0",
-    result: "CO"
-  }));
-  // R channel
-  filter.appendChild(append("feDisplacementMap", {
-    in: "SourceGraphic",
-    in2: "DM",
-    scale: "-70",
-    xChannelSelector: "R",
-    yChannelSelector: "B",
-    result: "RD"
-  }));
-  filter.appendChild(append("feColorMatrix", {
-    in: "RD",
-    type: "matrix",
-    values: "1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0",
-    result: "RC"
-  }));
-  // G channel
-  filter.appendChild(append("feDisplacementMap", {
-    in: "SourceGraphic",
-    in2: "DM",
-    scale: "-77",
-    xChannelSelector: "R",
-    yChannelSelector: "B",
-    result: "GD"
-  }));
-  filter.appendChild(append("feColorMatrix", {
-    in: "GD",
-    type: "matrix",
-    values: "0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 1 0",
-    result: "GC"
-  }));
-  // B channel
-  filter.appendChild(append("feDisplacementMap", {
-    in: "SourceGraphic",
-    in2: "DM",
-    scale: "-84",
-    xChannelSelector: "R",
-    yChannelSelector: "B",
-    result: "BD"
-  }));
-  filter.appendChild(append("feColorMatrix", {
-    in: "BD",
-    type: "matrix",
-    values: "0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 1 0",
-    result: "BC"
-  }));
-  filter.appendChild(append("feBlend", {
-    in: "GC",
-    in2: "BC",
-    mode: "screen",
-    result: "GB"
-  }));
-  filter.appendChild(append("feBlend", {
-    in: "RC",
-    in2: "GB",
-    mode: "screen",
-    result: "RGB"
-  }));
-  filter.appendChild(append("feGaussianBlur", {
-    in: "RGB",
-    stdDeviation: "0.3",
-    result: "AB"
-  }));
-  filter.appendChild(append("feComposite", {
-    in: "AB",
-    in2: "EM",
-    operator: "in",
-    result: "EA"
-  }));
-  filter.appendChild(append("feComponentTransfer", {
-    in: "EM",
-    result: "IM"
-  }, [append("feFuncA", {
-    type: "table",
-    tableValues: "1 0"
-  })]));
-  filter.appendChild(append("feComposite", {
-    in: "CO",
-    in2: "IM",
-    operator: "in",
-    result: "CC"
-  }));
-  filter.appendChild(append("feComposite", {
-    in: "EA",
-    in2: "CC",
-    operator: "over"
-  }));
-  defs.appendChild(filter);
-  svg.appendChild(defs);
-  wrap.appendChild(svg);
-  host.appendChild(wrap);
-  svgFilterInjected = true;
-}
-function attachAllInside(root) {
-  const els = root.querySelectorAll(".ax-glass-rim");
-  for (let i = 0; i < els.length; i++) attachLiquidGlassRim(els[i]);
-}
-
-/**
- * Watch the document for any element with `.ax-glass-rim` and auto-attach
- * mouse tracking. Idempotent — second call is a no-op. Cheap: a single
- * MutationObserver on the body subtree filters by class and skips
- * already-attached nodes via a WeakSet.
- *
- * Components can still call attachLiquidGlassRim() directly when they
- * mount panels — the observer is a safety net for view rebuilds and
- * dynamically-injected children.
- */
-function startGlobalRimObserver() {
-  if (typeof document === "undefined") return;
-  const root = document.body || document.documentElement;
-  if (!root) return;
-  if (observer && observerRoot === root) return;
-
-  // Initial scan covers anything already in the DOM.
-  attachAllInside(root);
-  observer = new MutationObserver(muts => {
-    for (let i = 0; i < muts.length; i++) {
-      const m = muts[i];
-      if (m.type !== "childList") continue;
-      const added = m.addedNodes;
-      for (let j = 0; j < added.length; j++) {
-        const node = added[j];
-        if (!isHtml(node)) continue;
-        if (node.classList.contains("ax-glass-rim")) {
-          attachLiquidGlassRim(node);
-        }
-        attachAllInside(node);
-      }
-    }
-  });
-  observer.observe(root, {
-    childList: true,
-    subtree: true
-  });
-  observerRoot = root;
 }
 ;// ./src/frontend/snapshot/panel/slidePanel.ts
 
@@ -25585,6 +25957,8 @@ class TableReconciler {
       columnWidthCalculator,
       flashAnimator
     } = this.config;
+    const symbolColumnIndex = columnIds.indexOf("symbol");
+    columnWidthCalculator.resetSymbolColumnWidth();
     const nextBadgeSignatureByRowKey = new Map();
     const patchedKeys = new Set();
     const currentRowKeys = [];
@@ -25644,8 +26018,14 @@ class TableReconciler {
           columnWidthCalculator.updateColumnWidth(colIdx, value);
         }
       }
-      if (rowData.isChild) {
-        columnWidthCalculator.setHasChildSymbolIndent(true);
+
+      // Symbol-column max resets per frame, so every row must push its
+      // contribution unconditionally — child rows use their own font/padX
+      // (via measureSymbolCellTotalPx) instead of a global indent fudge.
+      if (symbolColumnIndex >= 0) {
+        const symbolText = rowData.values.get("symbol") ?? "";
+        const symbolFullPx = columnWidthCalculator.measureSymbolCellTotalPx(symbolText, !!rowData.isChild, 0);
+        columnWidthCalculator.recordSymbolCellWidth(symbolFullPx);
       }
     }
     for (const row of spareRows) {
@@ -25783,7 +26163,10 @@ class ColumnWidthCalculator {
   static STYLE_CACHE_TTL_MS = 1_000;
   cacheCurrent = new Map();
   cachePrevious = new Map();
-  hasChildSymbolIndent = false;
+  /** Symbol column tracks the full cell width (text + own padX + inline
+   *  extras) per frame; reset at the start of each reconcile so it can
+   *  shrink when expanded children collapse. */
+  maxSymbolCellWidth = 0;
   isDirty = false;
   rafId = null;
   measureFont = "12px Arial";
@@ -25791,11 +26174,20 @@ class ColumnWidthCalculator {
   samplePaddingX = 20;
   styleCacheSample = null;
   styleCacheAt = 0;
+
+  /** Symbol-column-specific metrics, sampled separately for parent vs
+   *  child rows so child measurement uses its actual `font-size: 0.9em`
+   *  and `padding-left: 36px` instead of being approximated. */
+  parentSymbolFont = "12px Arial";
+  childSymbolFont = "12px Arial";
+  parentSymbolPadX = 20;
+  childSymbolPadX = 20;
+  symbolMetricsAt = 0;
   constructor(config) {
     this.config = config;
     this.columnCount = config.columnIds.length;
     this.maxTextWidths = new Array(this.columnCount).fill(0);
-    this.columnExtraWidths = new Array(this.columnCount).fill(0);
+    this.symbolColumnIndex = config.columnIds.indexOf("symbol");
     this.canvas = document.createElement("canvas");
     this.canvasCtx = this.canvas.getContext("2d");
   }
@@ -25827,6 +26219,55 @@ class ColumnWidthCalculator {
     this.refreshStyleMetrics();
     return this.measureFont;
   }
+
+  /** Sample real parent and (if expanded) child symbol cells to capture
+   *  their actual font and padding. Falls back to parent metrics when no
+   *  child row is present. */
+  refreshSymbolMetrics(force = false) {
+    if (this.symbolColumnIndex < 0) return;
+    const now = performance.now();
+    if (!force && now - this.symbolMetricsAt < ColumnWidthCalculator.STYLE_CACHE_TTL_MS) {
+      return;
+    }
+    let parentCell = null;
+    let childCell = null;
+    const tbody = this.config.tbody;
+    const rowCount = tbody.rows.length;
+    for (let i = 0; i < rowCount; i++) {
+      const row = tbody.rows[i];
+      const cell = row.cells[this.symbolColumnIndex];
+      if (!cell) continue;
+      if (row.classList.contains("table-row--child")) {
+        if (!childCell) childCell = cell;
+      } else if (!parentCell) {
+        parentCell = cell;
+      }
+      if (parentCell && childCell) break;
+    }
+    if (!parentCell) {
+      const headSample = this.config.headerRow.cells[this.symbolColumnIndex];
+      if (headSample) parentCell = headSample;
+    }
+    const fontFromStyle = s => s.font || `${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+    const padFromStyle = s => {
+      const v = parseFloat(s.paddingLeft || "0") + parseFloat(s.paddingRight || "0");
+      return Number.isFinite(v) ? v : 0;
+    };
+    if (parentCell) {
+      const s = window.getComputedStyle(parentCell);
+      this.parentSymbolFont = fontFromStyle(s);
+      this.parentSymbolPadX = padFromStyle(s);
+    }
+    if (childCell) {
+      const s = window.getComputedStyle(childCell);
+      this.childSymbolFont = fontFromStyle(s);
+      this.childSymbolPadX = padFromStyle(s);
+    } else {
+      this.childSymbolFont = this.parentSymbolFont;
+      this.childSymbolPadX = this.parentSymbolPadX;
+    }
+    this.symbolMetricsAt = now;
+  }
   measureText(text, font) {
     const measureFont = font ?? this.getMeasureFont();
     const safeText = text ?? "";
@@ -25848,7 +26289,36 @@ class ColumnWidthCalculator {
     }
     return w;
   }
+
+  /** Compute the full symbol-cell width for a single row: text width at
+   *  the row's actual font size, plus the row's own horizontal padding,
+   *  plus any inline extras (used by summary rows to reserve room for
+   *  the sparkline and badge slots). */
+  measureSymbolCellTotalPx(text, isChild, extraInlinePx = 0) {
+    this.refreshSymbolMetrics();
+    const font = isChild ? this.childSymbolFont : this.parentSymbolFont;
+    const padX = isChild ? this.childSymbolPadX : this.parentSymbolPadX;
+    const safeExtra = Number.isFinite(extraInlinePx) ? Math.max(0, extraInlinePx) : 0;
+    return this.measureText(text, font) + padX + safeExtra;
+  }
+  recordSymbolCellWidth(px) {
+    if (!Number.isFinite(px) || px <= 0) return;
+    if (px > this.maxSymbolCellWidth) {
+      this.maxSymbolCellWidth = px;
+      this.markDirty();
+    }
+  }
+
+  /** Clear the symbol-column accumulator at the start of each reconcile
+   *  so widening from a transient expansion can be undone on collapse. */
+  resetSymbolColumnWidth() {
+    if (this.maxSymbolCellWidth !== 0) {
+      this.maxSymbolCellWidth = 0;
+      this.markDirty();
+    }
+  }
   updateColumnWidth(columnIndex, text) {
+    if (columnIndex === this.symbolColumnIndex) return;
     const font = this.getMeasureFont();
     const width = this.measureText(text, font);
     if (width > this.maxTextWidths[columnIndex]) {
@@ -25856,18 +26326,10 @@ class ColumnWidthCalculator {
       this.markDirty();
     }
   }
-  setColumnExtraWidth(columnIndex, extraWidth) {
-    if (columnIndex < 0 || columnIndex >= this.columnCount) return;
-    if (!Number.isFinite(extraWidth)) return;
-    const safeExtra = Math.max(0, extraWidth);
-    if (safeExtra !== this.columnExtraWidths[columnIndex]) {
-      this.columnExtraWidths[columnIndex] = safeExtra;
-      this.markDirty();
-    }
-  }
   updateWidthsForRow(values) {
     const font = this.getMeasureFont();
     for (let i = 0; i < Math.min(values.length, this.columnCount); i++) {
+      if (i === this.symbolColumnIndex) continue;
       const width = this.measureText(values[i] ?? "", font);
       if (width > this.maxTextWidths[i]) {
         this.maxTextWidths[i] = width;
@@ -25876,12 +26338,6 @@ class ColumnWidthCalculator {
     }
     if (this.isDirty) {
       this.scheduleReflow();
-    }
-  }
-  setHasChildSymbolIndent(hasIndent) {
-    if (hasIndent && !this.hasChildSymbolIndent) {
-      this.hasChildSymbolIndent = true;
-      this.markDirty();
     }
   }
   markDirty() {
@@ -25902,15 +26358,18 @@ class ColumnWidthCalculator {
     this.refreshStyleMetrics(true);
     const padX = this.samplePaddingX;
     for (let i = 0; i < this.columnCount; i++) {
-      let w = this.maxTextWidths[i];
-      w += this.columnExtraWidths[i] ?? 0;
-      if (this.hasChildSymbolIndent && this.config.columnIds[i] === "symbol") {
-        w += 30;
-      }
       const col = this.config.colElements[i];
-      if (col) {
-        col.style.width = `${Math.ceil(w + padX + 2)}px`;
+      if (!col) continue;
+      if (i === this.symbolColumnIndex) {
+        if (this.maxSymbolCellWidth > 0) {
+          col.style.width = `${Math.ceil(this.maxSymbolCellWidth + 2)}px`;
+        } else {
+          col.style.width = "";
+        }
+        continue;
       }
+      const w = this.maxTextWidths[i];
+      col.style.width = `${Math.ceil(w + padX + 2)}px`;
     }
     const spacerCol = this.config.colElements[this.columnCount];
     if (spacerCol) {
@@ -25928,8 +26387,7 @@ class ColumnWidthCalculator {
   }
   reset() {
     this.maxTextWidths = new Array(this.columnCount).fill(0);
-    this.columnExtraWidths = new Array(this.columnCount).fill(0);
-    this.hasChildSymbolIndent = false;
+    this.maxSymbolCellWidth = 0;
     this.isDirty = true;
     this.cacheCurrent.clear();
     this.cachePrevious.clear();
@@ -25938,6 +26396,11 @@ class ColumnWidthCalculator {
     this.samplePaddingX = 20;
     this.styleCacheSample = null;
     this.styleCacheAt = 0;
+    this.parentSymbolFont = "12px Arial";
+    this.childSymbolFont = "12px Arial";
+    this.parentSymbolPadX = 20;
+    this.childSymbolPadX = 20;
+    this.symbolMetricsAt = 0;
   }
   destroy() {
     if (this.rafId !== null) {
@@ -26882,11 +27345,7 @@ class SparklineManager {
     this.tbody = config.tbody;
     this.columnWidthCalculator = config.columnWidthCalculator;
     this.symbolColumnIndex = config.symbolColumnIndex;
-    this.summarySymbolExtraWidthPx = SPARKLINE_WIDTH + SYMBOL_INLINE_GAP_PX;
     this.sparklineStore = new IntradaySparklineStore(config.chartDataService);
-    if (this.symbolColumnIndex >= 0) {
-      this.columnWidthCalculator.setColumnExtraWidth(this.symbolColumnIndex, this.summarySymbolExtraWidthPx);
-    }
     this.sparklineStore.onUpdate(symbol => {
       const data = this.sparklineStore.get(symbol);
       if (!data || data.prices.length < 2) return;
@@ -26906,20 +27365,31 @@ class SparklineManager {
   computeAndApplySummaryLayout(virtualRows, changeToken) {
     const nextTickerSlotWidthPx = this.computeSummaryTickerSlotWidthPx(virtualRows);
     const nextBadgeSlotWidthPx = this.computeSummaryBadgeSlotWidthPx(virtualRows);
-    const nextSymbolExtraWidthPx = this.computeSummarySymbolExtraWidthPx(nextTickerSlotWidthPx, nextBadgeSlotWidthPx);
     if (nextTickerSlotWidthPx !== this.summaryTickerSlotWidthPx) {
       this.applySummaryTickerSlotWidth(nextTickerSlotWidthPx);
     }
     if (nextBadgeSlotWidthPx !== this.summaryBadgeSlotWidthPx) {
       this.applySummaryBadgeSlotWidth(nextBadgeSlotWidthPx);
     }
-    if (this.symbolColumnIndex >= 0 && nextSymbolExtraWidthPx !== this.summarySymbolExtraWidthPx) {
-      this.summarySymbolExtraWidthPx = nextSymbolExtraWidthPx;
-      this.columnWidthCalculator.setColumnExtraWidth(this.symbolColumnIndex, this.summarySymbolExtraWidthPx);
-    }
     if (changeToken?.fullRebuild) {
       this.lastSummaryLayoutRawVersion = changeToken.rawVersion;
     }
+  }
+
+  /** Push the summary-row inline layout (ticker slot + sparkline + badge
+   *  slot) as a fixed offset into the symbol-column accumulator. The
+   *  reconciler resets that accumulator each frame, so this must run
+   *  every reconcile pass even when the slot widths themselves are
+   *  unchanged. */
+  applySymbolColumnContribution() {
+    if (this.symbolColumnIndex < 0) return;
+    if (this.summaryTickerSlotWidthPx <= 0) return;
+    let inlinePx = this.summaryTickerSlotWidthPx + SPARKLINE_WIDTH + SYMBOL_INLINE_GAP_PX;
+    if (this.summaryBadgeSlotWidthPx > 0) {
+      inlinePx += SYMBOL_INLINE_GAP_PX + this.summaryBadgeSlotWidthPx;
+    }
+    const fullPx = this.columnWidthCalculator.measureSymbolCellTotalPx("", false, inlinePx);
+    this.columnWidthCalculator.recordSymbolCellWidth(fullPx);
   }
   updateSparklines(virtualRows, changeToken) {
     const isFullRebuild = !!(changeToken && changeToken.fullRebuild);
@@ -27019,18 +27489,6 @@ class SparklineManager {
     }
     if (maxWidth <= 0) return 0;
     return Math.ceil(maxWidth + SUMMARY_BADGE_SLOT_PADDING_PX);
-  }
-  computeSummarySymbolExtraWidthPx(tickerSlotWidthPx, badgeSlotWidthPx) {
-    if (this.symbolColumnIndex < 0) return 0;
-
-    // ColumnWidthCalculator already tracks max raw text width across all rows.
-    // Only add the missing portion needed to fit summary inline content.
-    const maxRawTextWidthPx = this.columnWidthCalculator.getMaxWidths()[this.symbolColumnIndex] ?? 0;
-    let summaryInlineWidthPx = Math.max(0, tickerSlotWidthPx) + SPARKLINE_WIDTH + SYMBOL_INLINE_GAP_PX;
-    if (badgeSlotWidthPx > 0) {
-      summaryInlineWidthPx += SYMBOL_INLINE_GAP_PX + badgeSlotWidthPx;
-    }
-    return Math.max(0, Math.ceil(summaryInlineWidthPx - maxRawTextWidthPx));
   }
   applySummaryTickerSlotWidth(nextWidthPx) {
     if (nextWidthPx <= 0) {
@@ -27180,6 +27638,10 @@ function createTableController(options) {
     if (needsSummarySymbolLayoutRecompute) {
       sparklineManager.computeAndApplySummaryLayout(virtualRows, ct ?? undefined);
     }
+    // Symbol-column max is reset per frame inside reconcile(), so the
+    // summary contribution must be re-pushed every update even when the
+    // slot widths themselves did not change.
+    sparklineManager.applySymbolColumnContribution();
 
     // Only process patched summary rows for action button creation.
     // Sticky-right and data-underlying are now handled by the reconciler's patchRow.
@@ -34103,387 +34565,6 @@ class RiskMetricsCalculator {
     return computeSingleBetaFactorScenario(input, byUnderlying, marketValue, modelType, horizon, threeFactorData, allBenchmarkBetas);
   }
 }
-;// ./src/frontend/components/core/sectionLayout.ts
-/**
- * Generic Section Layout
- *
- * Shared implementation for collapsible section grids with sticky nav tabs,
- * intersection-based active tab, and unit-based responsive grid.
- *
- * Used by both the analysis-options and portfolio pages via thin wrappers.
- */
-
-
-
-// ── Public types ─────────────────────────────────────────────────────────────
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function parsePx(value) {
-  return parseFloat(value) || 0;
-}
-
-// ── Implementation ───────────────────────────────────────────────────────────
-
-function createSectionLayout(options) {
-  const {
-    sections,
-    onToggle,
-    navBarStickyTop = "0",
-    gridGap = "10px",
-    gridPadding = "10px",
-    rootGap = "12px",
-    navGap = "8px",
-    navPadding = "5px 10px",
-    pillPadding = "3px 10px",
-    headerPadding = "7px 12px",
-    headerTitleUppercase = false,
-    showNavInfo = false,
-    minUnitWidth = 340,
-    unitAspectRatio = 0.65,
-    unitHeight: fixedUnitHeight,
-    maxCols = 3
-  } = options;
-  const gapPx = parsePx(gridGap);
-  const padPx = parsePx(gridPadding);
-
-  // ── Style builders ───────────────────────────────────────────────────────
-
-  const rootStyle = `display: flex; flex-direction: column; gap: ${rootGap}; width: 100%;`;
-  const navBarStyle = `display: flex; align-items: center; gap: ${navGap}; padding: ${navPadding};` + " min-width: 0;" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border-bottom: 1px solid var(--ax-border-subtle);" + ` position: sticky; top: ${navBarStickyTop}; z-index: var(--z-sticky-nav, 100); border-radius: var(--ax-radius-md);`;
-  const navTabsStyle = "display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0;";
-  const navInfoStyle = "display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;" + " margin-left: auto; min-width: 0;";
-  const navPillBase = `padding: ${pillPadding}; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-lg);` + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); transition: all 0.15s;" + " white-space: nowrap; background: var(--ax-bg-input);" + " color: var(--ax-fg);";
-  const sectionWrapperStyle = "border-radius: var(--ax-radius-xl); border: 1px solid var(--ax-border-subtle);" + " background: var(--ax-glass-2-bg); overflow: visible;";
-  const buildHeaderStyle = cfg => "display: flex; align-items: center; justify-content: space-between;" + ` padding: ${headerPadding}; cursor: pointer; user-select: none;` + ` background: ${cfg.accentBg};` + " border-radius: 12px 12px 0 0;" + " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" + " transition: background 0.15s ease;";
-  const headerLeftStyle = "display: flex; align-items: center; gap: 10px; min-width: 0;";
-  const headerTitleStyle = cfg => {
-    const base = "font-weight: 700; white-space: nowrap;";
-    const sizing = headerTitleUppercase ? "font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;" : "font-size: 11px; letter-spacing: 0.2px;";
-    return `${base} ${sizing} color: ${cfg.accentColor};`;
-  };
-  const chipsContainerStyle = "display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0;";
-  const chevronStyle = cfg => `font-size: 10px; transition: transform 0.2s ease; line-height: 1; color: ${cfg.accentColor};`;
-
-  // Grid style: columns and row height set dynamically by ResizeObserver
-  const gridBaseStyle = `gap: ${gridGap}; padding: ${gridPadding}; grid-auto-flow: dense;`;
-
-  // ── State ──────────────────────────────────────────────────────────────────
-
-  let currentCols = maxCols;
-  const allSlots = [];
-
-  // ── DOM construction ─────────────────────────────────────────────────────
-
-  const root = createElement_ui_createElement("div", {
-    styleString: rootStyle
-  });
-  const expandedState = new Map();
-  const gridEls = new Map();
-  const chevronEls = new Map();
-  const chipsEls = new Map();
-  const sectionEls = new Map();
-  const cleanupFns = [];
-
-  // ── Nav bar ──────────────────────────────────────────────────────────────
-
-  const navBar = createElement_ui_createElement("div", {
-    styleString: navBarStyle
-  });
-  const navPills = new Map();
-  let navTabs;
-  let navInfo;
-  if (showNavInfo) {
-    navTabs = createElement_ui_createElement("div", {
-      styleString: navTabsStyle
-    });
-    navInfo = createElement_ui_createElement("div", {
-      styleString: navInfoStyle
-    });
-  } else {
-    navTabs = navBar;
-    navInfo = createElement_ui_createElement("div", {
-      styleString: "display: none;"
-    });
-  }
-  for (const cfg of sections) {
-    const pill = createElement_ui_createElement("button", {
-      text: cfg.tabLabel,
-      styleString: navPillBase
-    });
-    const onClick = () => {
-      const sectionEl = sectionEls.get(cfg.id);
-      if (sectionEl) sectionEl.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-      });
-    };
-    pill.addEventListener("click", onClick);
-    cleanupFns.push(() => pill.removeEventListener("click", onClick));
-    navTabs.appendChild(pill);
-    navPills.set(cfg.id, pill);
-  }
-  if (showNavInfo) {
-    navBar.appendChild(navTabs);
-    navBar.appendChild(navInfo);
-  }
-  root.appendChild(navBar);
-
-  // ── Active tab highlight ─────────────────────────────────────────────────
-
-  const updateActiveTab = activeId => {
-    for (const cfg of sections) {
-      const pill = navPills.get(cfg.id);
-      if (!pill) continue;
-      if (cfg.id === activeId) {
-        pill.style.background = cfg.accentColor;
-        pill.style.color = "#fff";
-        pill.style.borderColor = cfg.accentColor;
-      } else {
-        pill.style.background = "var(--ax-bg-input)";
-        pill.style.color = "var(--ax-fg)";
-        pill.style.borderColor = "var(--ax-border)";
-      }
-    }
-  };
-  const observer = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const id = entry.target.dataset.sectionId;
-      if (id) updateActiveTab(id);
-    }
-  }, {
-    threshold: 0.3
-  });
-  cleanupFns.push(() => observer.disconnect());
-
-  // ── Sections ─────────────────────────────────────────────────────────────
-
-  for (const cfg of sections) {
-    const isExpanded = cfg.defaultExpanded;
-    expandedState.set(cfg.id, isExpanded);
-    const wrapper = createElement_ui_createElement("div", {
-      styleString: sectionWrapperStyle
-    });
-    wrapper.dataset.sectionId = cfg.id;
-    const header = createElement_ui_createElement("div", {
-      styleString: buildHeaderStyle(cfg)
-    });
-    const headerLeft = createElement_ui_createElement("div", {
-      styleString: headerLeftStyle
-    });
-    headerLeft.appendChild(createElement_ui_createElement("span", {
-      text: cfg.title,
-      styleString: headerTitleStyle(cfg)
-    }));
-    const chipsEl = createElement_ui_createElement("div", {
-      styleString: chipsContainerStyle
-    });
-    chipsEls.set(cfg.id, chipsEl);
-    headerLeft.appendChild(chipsEl);
-    const chevron = createElement_ui_createElement("span", {
-      text: isExpanded ? "\u25BC" : "\u25B6",
-      styleString: chevronStyle(cfg)
-    });
-    chevronEls.set(cfg.id, chevron);
-    header.appendChild(headerLeft);
-    header.appendChild(chevron);
-    const handleClick = () => {
-      const current = expandedState.get(cfg.id) ?? false;
-      setExpanded(cfg.id, !current);
-    };
-    header.addEventListener("click", handleClick);
-    cleanupFns.push(() => header.removeEventListener("click", handleClick));
-    const grid = createElement_ui_createElement("div", {
-      className: "section-grid",
-      styleString: `display: grid; ${gridBaseStyle}`
-    });
-    grid.style.display = isExpanded ? "grid" : "none";
-    gridEls.set(cfg.id, grid);
-    wrapper.appendChild(header);
-    wrapper.appendChild(grid);
-    root.appendChild(wrapper);
-    sectionEls.set(cfg.id, wrapper);
-    observer.observe(wrapper);
-  }
-  updateActiveTab(sections[0].id);
-
-  // ── Unit-based responsive grid ──────────────────────────────────────────
-
-  function computeCols(containerWidth) {
-    const available = containerWidth - padPx * 2;
-    if (available <= 0) return 1;
-    const cols = Math.floor((available + gapPx) / (minUnitWidth + gapPx));
-    return Math.max(1, Math.min(cols, maxCols));
-  }
-  function applyGridLayout(cols, containerWidth) {
-    const available = containerWidth - padPx * 2;
-    const unitW = (available - gapPx * (cols - 1)) / cols;
-    const unitH = fixedUnitHeight ?? Math.round(unitW * unitAspectRatio);
-    for (const grid of gridEls.values()) {
-      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-      grid.style.gridAutoRows = `minmax(${unitH}px, auto)`;
-    }
-    for (const slot of allSlots) {
-      const effCol = Math.min(slot.declaredCol, cols);
-      slot.el.style.gridColumn = `span ${effCol}`;
-      if (slot.autoHeight) {
-        slot.el.style.gridRow = "auto";
-      } else {
-        const effRow = cols <= 1 ? 1 : slot.declaredRow;
-        slot.el.style.gridRow = `span ${effRow}`;
-      }
-    }
-    currentCols = cols;
-  }
-  const resizeObs = new ResizeObserver(entries => {
-    for (const entry of entries) {
-      const w = entry.contentRect.width;
-      const newCols = computeCols(w);
-      if (newCols !== currentCols) {
-        applyGridLayout(newCols, w);
-      }
-    }
-  });
-  resizeObs.observe(root);
-  cleanupFns.push(() => resizeObs.disconnect());
-
-  // Apply initial layout synchronously
-  const initWidth = root.clientWidth || 960;
-  const initCols = computeCols(initWidth);
-  applyGridLayout(initCols, initWidth);
-
-  // ── setExpanded ──────────────────────────────────────────────────────────
-
-  function setExpanded(id, expanded) {
-    expandedState.set(id, expanded);
-    const grid = gridEls.get(id);
-    const chevron = chevronEls.get(id);
-    if (grid) grid.style.display = expanded ? "grid" : "none";
-    if (chevron) chevron.textContent = expanded ? "\u25BC" : "\u25B6";
-    onToggle(id, expanded);
-  }
-
-  // ── Public API ───────────────────────────────────────────────────────────
-
-  root.getCardSlot = (sectionId, cardId, span, nature, rowSpan = 1, autoHeight = false) => {
-    const grid = gridEls.get(sectionId);
-    if (!grid) throw new Error(`Unknown section: ${sectionId}`);
-    const effCol = Math.min(span, currentCols);
-    let gridRowStyle;
-    let overflowStyle;
-    if (autoHeight) {
-      gridRowStyle = "grid-row: auto;";
-      overflowStyle = " overflow: visible;";
-    } else {
-      const effRow = currentCols <= 1 ? 1 : rowSpan;
-      gridRowStyle = `grid-row: span ${effRow};`;
-      overflowStyle = " overflow: hidden;";
-    }
-    const slot = createElement_ui_createElement("div", {
-      styleString: `grid-column: span ${effCol}; ${gridRowStyle}` + ` min-width: 0; display: grid;${overflowStyle}`
-    });
-    slot.dataset.cardId = cardId;
-    slot.dataset.nature = nature;
-    allSlots.push({
-      el: slot,
-      declaredCol: span,
-      declaredRow: rowSpan,
-      autoHeight
-    });
-    grid.appendChild(slot);
-    return slot;
-  };
-  root.getSectionInfoChips = sectionId => {
-    const el = chipsEls.get(sectionId);
-    if (!el) throw new Error(`Unknown section: ${sectionId}`);
-    return el;
-  };
-  root.getNavInfoChips = () => navInfo;
-  root.getNavBar = () => navBar;
-  root.setExpanded = setExpanded;
-  root.setAllExpanded = expanded => {
-    for (const cfg of sections) {
-      setExpanded(cfg.id, expanded);
-    }
-  };
-  root.scrollToSection = id => {
-    const el = sectionEls.get(id);
-    if (el) el.scrollIntoView({
-      behavior: "smooth",
-      block: "start"
-    });
-  };
-  root.scrollToCard = cardId => {
-    const slot = root.querySelector(`[data-card-id="${cardId}"]`);
-    if (slot) slot.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  };
-  root.highlightCard = cardId => {
-    const slot = root.querySelector(`[data-card-id="${cardId}"]`);
-    if (!slot) return;
-    slot.style.boxShadow = "0 0 0 3px rgba(255, 204, 0, 0.8), 0 0 12px rgba(255, 204, 0, 0.3)";
-    slot.style.transition = "box-shadow 0.3s ease";
-    const timer = window.setTimeout(() => {
-      slot.style.boxShadow = "";
-    }, 2000);
-    cleanupFns.push(() => clearTimeout(timer));
-  };
-  root.cleanup = () => {
-    for (const fn of cleanupFns) fn();
-    cleanupFns.length = 0;
-  };
-  return root;
-}
-;// ./src/frontend/trade_portfolio/components/layout/PortfolioSectionLayout.ts
-
-
-const SECTIONS = [{
-  id: "overview",
-  title: "OVERVIEW",
-  tabLabel: "Overview",
-  defaultExpanded: true,
-  accentColor: DS_COLORS.raw.info,
-  accentBg: "rgba(0, 122, 255, 0.08)"
-}, {
-  id: "exposure",
-  title: "EXPOSURE",
-  tabLabel: "Exposure",
-  defaultExpanded: true,
-  accentColor: DS_COLORS.raw.neutral,
-  accentBg: "rgba(215, 129, 0, 0.08)"
-}, {
-  id: "scenarios",
-  title: "SCENARIOS",
-  tabLabel: "Scenarios",
-  defaultExpanded: true,
-  accentColor: DS_COLORS.raw.purple,
-  accentBg: "rgba(88, 86, 214, 0.08)"
-}, {
-  id: "governance",
-  title: "GOVERNANCE",
-  tabLabel: "Govern",
-  defaultExpanded: true,
-  accentColor: DS_COLORS.raw.muted,
-  accentBg: "var(--ax-tone-muted-soft-bg)"
-}];
-function renderPortfolioSectionLayout(onToggle) {
-  return createSectionLayout({
-    sections: SECTIONS,
-    onToggle,
-    navBarStickyTop: "var(--section-nav-sticky-top, 0px)",
-    gridGap: "12px",
-    gridPadding: "12px",
-    rootGap: "16px",
-    navGap: "6px",
-    navPadding: "6px 12px",
-    pillPadding: "4px 12px",
-    headerPadding: "8px 14px",
-    headerTitleUppercase: true
-  });
-}
 ;// ./src/frontend/trade_portfolio/components/overview/PortfolioHealthScore.ts
 
 
@@ -37028,6 +37109,659 @@ function createPortfolioSettingsPanel(opts) {
     }
   };
 }
+;// ./src/frontend/components/core/sectionLayout.ts
+/**
+ * Generic Section Layout
+ *
+ * Shared implementation for collapsible section grids with sticky nav tabs,
+ * intersection-based active tab, and unit-based responsive grid.
+ *
+ * Used by both the analysis-options and portfolio pages via thin wrappers.
+ */
+
+
+
+// ── Public types ─────────────────────────────────────────────────────────────
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function parsePx(value) {
+  return parseFloat(value) || 0;
+}
+
+// ── Implementation ───────────────────────────────────────────────────────────
+
+function createSectionLayout(options) {
+  const {
+    sections,
+    onToggle,
+    navBarStickyTop = "0",
+    gridGap = "10px",
+    gridPadding = "10px",
+    rootGap = "12px",
+    navGap = "8px",
+    navPadding = "5px 10px",
+    pillPadding = "3px 10px",
+    headerPadding = "7px 12px",
+    headerTitleUppercase = false,
+    showNavInfo = false,
+    minUnitWidth = 340,
+    unitAspectRatio = 0.65,
+    unitHeight: fixedUnitHeight,
+    maxCols = 3
+  } = options;
+  const gapPx = parsePx(gridGap);
+  const padPx = parsePx(gridPadding);
+
+  // ── Style builders ───────────────────────────────────────────────────────
+
+  const rootStyle = `display: flex; flex-direction: column; gap: ${rootGap}; width: 100%;`;
+  const navBarStyle = `display: flex; align-items: center; gap: ${navGap}; padding: ${navPadding};` + " min-width: 0;" + " background: var(--ax-glass-2-bg);" + " -webkit-backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " backdrop-filter: blur(var(--ax-glass-2-blur)) saturate(var(--ax-glass-2-saturate));" + " border-bottom: 1px solid var(--ax-border-subtle);" + ` position: sticky; top: ${navBarStickyTop}; z-index: var(--z-sticky-nav, 100); border-radius: var(--ax-radius-md);`;
+  const navTabsStyle = "display: flex; align-items: center; gap: 6px; flex: 0 0 auto; min-width: 0;";
+  const navInfoStyle = "display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;" + " margin-left: auto; min-width: 0;";
+  const navPillBase = `padding: ${pillPadding}; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-lg);` + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); transition: all 0.15s;" + " white-space: nowrap; background: var(--ax-bg-input);" + " color: var(--ax-fg);";
+  const sectionWrapperStyle = "border-radius: var(--ax-radius-xl); border: 1px solid var(--ax-border-subtle);" + " background: var(--ax-glass-2-bg); overflow: visible;";
+  const buildHeaderStyle = cfg => "display: flex; align-items: center; justify-content: space-between;" + ` padding: ${headerPadding}; cursor: pointer; user-select: none;` + ` background: ${cfg.accentBg};` + " border-radius: 12px 12px 0 0;" + " -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);" + " transition: background 0.15s ease;";
+  const headerLeftStyle = "display: flex; align-items: center; gap: 10px; min-width: 0;";
+  const headerTitleStyle = cfg => {
+    const base = "font-weight: 700; white-space: nowrap;";
+    const sizing = headerTitleUppercase ? "font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;" : "font-size: 11px; letter-spacing: 0.2px;";
+    return `${base} ${sizing} color: ${cfg.accentColor};`;
+  };
+  const chipsContainerStyle = "display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0;";
+  const chevronStyle = cfg => `font-size: 10px; transition: transform 0.2s ease; line-height: 1; color: ${cfg.accentColor};`;
+
+  // Grid style: columns and row height set dynamically by ResizeObserver
+  const gridBaseStyle = `gap: ${gridGap}; padding: ${gridPadding}; grid-auto-flow: dense;`;
+
+  // ── State ──────────────────────────────────────────────────────────────────
+
+  let currentCols = maxCols;
+  const allSlots = [];
+
+  // ── DOM construction ─────────────────────────────────────────────────────
+
+  const root = createElement_ui_createElement("div", {
+    styleString: rootStyle
+  });
+  const expandedState = new Map();
+  const gridEls = new Map();
+  const chevronEls = new Map();
+  const chipsEls = new Map();
+  const sectionEls = new Map();
+  const cleanupFns = [];
+
+  // ── Nav bar ──────────────────────────────────────────────────────────────
+
+  const navBar = createElement_ui_createElement("div", {
+    styleString: navBarStyle
+  });
+  const navPills = new Map();
+  let navTabs;
+  let navInfo;
+  if (showNavInfo) {
+    navTabs = createElement_ui_createElement("div", {
+      styleString: navTabsStyle
+    });
+    navInfo = createElement_ui_createElement("div", {
+      styleString: navInfoStyle
+    });
+  } else {
+    navTabs = navBar;
+    navInfo = createElement_ui_createElement("div", {
+      styleString: "display: none;"
+    });
+  }
+  for (const cfg of sections) {
+    const pill = createElement_ui_createElement("button", {
+      text: cfg.tabLabel,
+      styleString: navPillBase
+    });
+    const onClick = () => {
+      const sectionEl = sectionEls.get(cfg.id);
+      if (sectionEl) sectionEl.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    };
+    pill.addEventListener("click", onClick);
+    cleanupFns.push(() => pill.removeEventListener("click", onClick));
+    navTabs.appendChild(pill);
+    navPills.set(cfg.id, pill);
+  }
+  if (showNavInfo) {
+    navBar.appendChild(navTabs);
+    navBar.appendChild(navInfo);
+  }
+  root.appendChild(navBar);
+
+  // ── Active tab highlight ─────────────────────────────────────────────────
+
+  const updateActiveTab = activeId => {
+    for (const cfg of sections) {
+      const pill = navPills.get(cfg.id);
+      if (!pill) continue;
+      if (cfg.id === activeId) {
+        pill.style.background = cfg.accentColor;
+        pill.style.color = "#fff";
+        pill.style.borderColor = cfg.accentColor;
+      } else {
+        pill.style.background = "var(--ax-bg-input)";
+        pill.style.color = "var(--ax-fg)";
+        pill.style.borderColor = "var(--ax-border)";
+      }
+    }
+  };
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const id = entry.target.dataset.sectionId;
+      if (id) updateActiveTab(id);
+    }
+  }, {
+    threshold: 0.3
+  });
+  cleanupFns.push(() => observer.disconnect());
+
+  // ── Sections ─────────────────────────────────────────────────────────────
+
+  for (const cfg of sections) {
+    const isExpanded = cfg.defaultExpanded;
+    expandedState.set(cfg.id, isExpanded);
+    const wrapper = createElement_ui_createElement("div", {
+      styleString: sectionWrapperStyle
+    });
+    wrapper.dataset.sectionId = cfg.id;
+    const header = createElement_ui_createElement("div", {
+      styleString: buildHeaderStyle(cfg)
+    });
+    const headerLeft = createElement_ui_createElement("div", {
+      styleString: headerLeftStyle
+    });
+    headerLeft.appendChild(createElement_ui_createElement("span", {
+      text: cfg.title,
+      styleString: headerTitleStyle(cfg)
+    }));
+    const chipsEl = createElement_ui_createElement("div", {
+      styleString: chipsContainerStyle
+    });
+    chipsEls.set(cfg.id, chipsEl);
+    headerLeft.appendChild(chipsEl);
+    const chevron = createElement_ui_createElement("span", {
+      text: isExpanded ? "\u25BC" : "\u25B6",
+      styleString: chevronStyle(cfg)
+    });
+    chevronEls.set(cfg.id, chevron);
+    header.appendChild(headerLeft);
+    header.appendChild(chevron);
+    const handleClick = () => {
+      const current = expandedState.get(cfg.id) ?? false;
+      setExpanded(cfg.id, !current);
+    };
+    header.addEventListener("click", handleClick);
+    cleanupFns.push(() => header.removeEventListener("click", handleClick));
+    const grid = createElement_ui_createElement("div", {
+      className: "section-grid",
+      styleString: `display: grid; ${gridBaseStyle}`
+    });
+    grid.style.display = isExpanded ? "grid" : "none";
+    gridEls.set(cfg.id, grid);
+    wrapper.appendChild(header);
+    wrapper.appendChild(grid);
+    root.appendChild(wrapper);
+    sectionEls.set(cfg.id, wrapper);
+    observer.observe(wrapper);
+  }
+  updateActiveTab(sections[0].id);
+
+  // ── Unit-based responsive grid ──────────────────────────────────────────
+
+  function computeCols(containerWidth) {
+    const available = containerWidth - padPx * 2;
+    if (available <= 0) return 1;
+    const cols = Math.floor((available + gapPx) / (minUnitWidth + gapPx));
+    return Math.max(1, Math.min(cols, maxCols));
+  }
+  function applyGridLayout(cols, containerWidth) {
+    const available = containerWidth - padPx * 2;
+    const unitW = (available - gapPx * (cols - 1)) / cols;
+    const unitH = fixedUnitHeight ?? Math.round(unitW * unitAspectRatio);
+    for (const grid of gridEls.values()) {
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.style.gridAutoRows = `minmax(${unitH}px, auto)`;
+    }
+    for (const slot of allSlots) {
+      const effCol = Math.min(slot.declaredCol, cols);
+      slot.el.style.gridColumn = `span ${effCol}`;
+      if (slot.autoHeight) {
+        slot.el.style.gridRow = "auto";
+      } else {
+        const effRow = cols <= 1 ? 1 : slot.declaredRow;
+        slot.el.style.gridRow = `span ${effRow}`;
+      }
+    }
+    currentCols = cols;
+  }
+  const resizeObs = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const w = entry.contentRect.width;
+      const newCols = computeCols(w);
+      if (newCols !== currentCols) {
+        applyGridLayout(newCols, w);
+      }
+    }
+  });
+  resizeObs.observe(root);
+  cleanupFns.push(() => resizeObs.disconnect());
+
+  // Apply initial layout synchronously
+  const initWidth = root.clientWidth || 960;
+  const initCols = computeCols(initWidth);
+  applyGridLayout(initCols, initWidth);
+
+  // ── setExpanded ──────────────────────────────────────────────────────────
+
+  function setExpanded(id, expanded) {
+    expandedState.set(id, expanded);
+    const grid = gridEls.get(id);
+    const chevron = chevronEls.get(id);
+    if (grid) grid.style.display = expanded ? "grid" : "none";
+    if (chevron) chevron.textContent = expanded ? "\u25BC" : "\u25B6";
+    onToggle(id, expanded);
+  }
+
+  // ── Public API ───────────────────────────────────────────────────────────
+
+  root.getCardSlot = (sectionId, cardId, span, nature, rowSpan = 1, autoHeight = false) => {
+    const grid = gridEls.get(sectionId);
+    if (!grid) throw new Error(`Unknown section: ${sectionId}`);
+    const effCol = Math.min(span, currentCols);
+    let gridRowStyle;
+    let overflowStyle;
+    if (autoHeight) {
+      gridRowStyle = "grid-row: auto;";
+      overflowStyle = " overflow: visible;";
+    } else {
+      const effRow = currentCols <= 1 ? 1 : rowSpan;
+      gridRowStyle = `grid-row: span ${effRow};`;
+      overflowStyle = " overflow: hidden;";
+    }
+    const slot = createElement_ui_createElement("div", {
+      styleString: `grid-column: span ${effCol}; ${gridRowStyle}` + ` min-width: 0; display: grid;${overflowStyle}`
+    });
+    slot.dataset.cardId = cardId;
+    slot.dataset.nature = nature;
+    allSlots.push({
+      el: slot,
+      declaredCol: span,
+      declaredRow: rowSpan,
+      autoHeight
+    });
+    grid.appendChild(slot);
+    return slot;
+  };
+  root.getSectionInfoChips = sectionId => {
+    const el = chipsEls.get(sectionId);
+    if (!el) throw new Error(`Unknown section: ${sectionId}`);
+    return el;
+  };
+  root.getNavInfoChips = () => navInfo;
+  root.getNavBar = () => navBar;
+  root.setExpanded = setExpanded;
+  root.setAllExpanded = expanded => {
+    for (const cfg of sections) {
+      setExpanded(cfg.id, expanded);
+    }
+  };
+  root.scrollToSection = id => {
+    const el = sectionEls.get(id);
+    if (el) el.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  };
+  root.scrollToCard = cardId => {
+    const slot = root.querySelector(`[data-card-id="${cardId}"]`);
+    if (slot) slot.scrollIntoView({
+      behavior: "smooth",
+      block: "center"
+    });
+  };
+  root.highlightCard = cardId => {
+    const slot = root.querySelector(`[data-card-id="${cardId}"]`);
+    if (!slot) return;
+    slot.style.boxShadow = "0 0 0 3px rgba(255, 204, 0, 0.8), 0 0 12px rgba(255, 204, 0, 0.3)";
+    slot.style.transition = "box-shadow 0.3s ease";
+    const timer = window.setTimeout(() => {
+      slot.style.boxShadow = "";
+    }, 2000);
+    cleanupFns.push(() => clearTimeout(timer));
+  };
+  root.cleanup = () => {
+    for (const fn of cleanupFns) fn();
+    cleanupFns.length = 0;
+  };
+  return root;
+}
+;// ./src/frontend/trade_portfolio/components/layout/PortfolioSectionLayout.ts
+
+
+const SECTIONS = [{
+  id: "overview",
+  title: "OVERVIEW",
+  tabLabel: "Overview",
+  defaultExpanded: true,
+  accentColor: DS_COLORS.raw.info,
+  accentBg: "rgba(0, 122, 255, 0.08)"
+}, {
+  id: "exposure",
+  title: "EXPOSURE",
+  tabLabel: "Exposure",
+  defaultExpanded: true,
+  accentColor: DS_COLORS.raw.neutral,
+  accentBg: "rgba(215, 129, 0, 0.08)"
+}, {
+  id: "scenarios",
+  title: "SCENARIOS",
+  tabLabel: "Scenarios",
+  defaultExpanded: true,
+  accentColor: DS_COLORS.raw.purple,
+  accentBg: "rgba(88, 86, 214, 0.08)"
+}, {
+  id: "governance",
+  title: "GOVERNANCE",
+  tabLabel: "Govern",
+  defaultExpanded: true,
+  accentColor: DS_COLORS.raw.muted,
+  accentBg: "var(--ax-tone-muted-soft-bg)"
+}];
+function renderPortfolioSectionLayout(onToggle) {
+  return createSectionLayout({
+    sections: SECTIONS,
+    onToggle,
+    navBarStickyTop: "var(--section-nav-sticky-top, 0px)",
+    gridGap: "12px",
+    gridPadding: "12px",
+    rootGap: "16px",
+    navGap: "6px",
+    navPadding: "6px 12px",
+    pillPadding: "4px 12px",
+    headerPadding: "8px 14px",
+    headerTitleUppercase: true
+  });
+}
+;// ./src/frontend/trade_portfolio/data/portfolioLifecycle.ts
+/**
+ * Portfolio page lifecycle helpers.
+ *
+ * Encapsulates the component-ref bookkeeping, section-layout bootstrap,
+ * and update-vs-recreate decision that previously lived inline in page.ts.
+ *
+ * `createPortfolioLifecycle()` captures the shared mutable refs (components
+ * map, sectionLayout/slots holders, the placeholder DOM nodes) and returns
+ * the helper closures the page render path calls.
+ */
+
+
+
+const portfolioLifecycle_log = logService.namespace("render");
+const ALL_PORTFOLIO_SECTIONS = ["overview", "exposure", "scenarios", "governance"];
+function createPortfolioLifecycle(refs, hooks) {
+  const {
+    components
+  } = refs;
+  const cleanupComponent = key => {
+    const comp = components[key];
+    if (!comp) return;
+    if (comp.cleanup) {
+      try {
+        comp.cleanup();
+      } catch (err) {
+        portfolioLifecycle_log.warn("component.cleanup.fail", {
+          key,
+          error: err?.message
+        });
+      }
+    }
+    delete components[key];
+  };
+  const cleanupAllComponents = () => {
+    Object.keys(components).forEach(key => cleanupComponent(key));
+    refs.sectionLayout.value = null;
+    refs.slots.value = null;
+    refs.navBarPlaceholder.innerHTML = "";
+    refs.stateVectorPlaceholder.innerHTML = "";
+    refs.controlBarPlaceholder.innerHTML = "";
+    refs.contentArea.innerHTML = "";
+  };
+  const updateOrCreate = (host, componentKey, createFn, updateArgs) => {
+    const existing = components[componentKey];
+    if (existing && existing.update && updateArgs) {
+      try {
+        existing.update(...updateArgs);
+        return;
+      } catch (err) {
+        portfolioLifecycle_log.warn("component.update.fail", {
+          key: componentKey,
+          error: err?.message
+        });
+        cleanupComponent(componentKey);
+      }
+    }
+    if (components[componentKey]) {
+      cleanupComponent(componentKey);
+    }
+    const next = createFn();
+    host.innerHTML = "";
+    host.appendChild(next);
+    components[componentKey] = next;
+  };
+  const ensureSectionLayout = () => {
+    if (refs.sectionLayout.value && refs.slots.value) {
+      hooks.syncAllStickyTops();
+      return;
+    }
+    if (refs.sectionLayout.value) {
+      cleanupComponent("sectionLayout");
+      refs.sectionLayout.value = null;
+      refs.slots.value = null;
+    }
+    const layout = renderPortfolioSectionLayout((id, expanded) => {
+      if (hooks.getControlState().focusMode !== "all") return;
+      if (expanded) hooks.manualExpandedSections.add(id);else hooks.manualExpandedSections.delete(id);
+    });
+    refs.contentArea.innerHTML = "";
+    refs.contentArea.appendChild(layout);
+    const navBarEl = layout.getNavBar();
+    refs.navBarPlaceholder.innerHTML = "";
+    refs.navBarPlaceholder.appendChild(navBarEl);
+    refs.navBarPlaceholder.style.display = "block";
+    navBarEl.style.zIndex = "var(--z-sticky-nav, 100)";
+    hooks.syncAllStickyTops();
+    refs.sectionLayout.value = layout;
+    components.sectionLayout = layout;
+    refs.slots.value = {
+      health: layout.getCardSlot("overview", "healthScore", 1, "text"),
+      greeks: layout.getCardSlot("overview", "greeks", 1, "chart"),
+      betaExposure: layout.getCardSlot("exposure", "betaExposure", 3, "text", 1, true),
+      heatmap: layout.getCardSlot("scenarios", "heatmap", 3, "interactive"),
+      rebalance: layout.getCardSlot("governance", "rebalanceIdeas", 3, "text", 1, true)
+    };
+  };
+  return {
+    cleanupComponent,
+    cleanupAllComponents,
+    updateOrCreate,
+    ensureSectionLayout
+  };
+}
+;// ./src/frontend/trade_portfolio/data/portfolioPayloads.ts
+/**
+ * Portfolio page payload builders.
+ *
+ * Pure / deterministic helpers that assemble the prop bundles for each
+ * panel from the orchestrator-provided derived state, headerController,
+ * and live settings. Lifted out of page.ts so the render path becomes
+ * a sequence of `updateOrCreate(slot, key, () => panel(builder(input)))`
+ * calls rather than 100+ lines of inline payload wiring.
+ */
+
+
+
+
+
+// ── Quote price resolution ──────────────────────────────────────────────────
+
+function portfolioPayloads_resolveQuoteLastPrice(symbol, quoteBySymbol, byUnderlying) {
+  const normalized = typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
+  // 1) Try live quote data
+  const quoteItem = quoteBySymbol[symbol] ?? (normalized ? quoteBySymbol[normalized] : undefined);
+  const raw = quoteItem?.quote?.lastPrice ?? quoteItem?.regularQuote?.lastPrice;
+  const price = Number(raw);
+  if (Number.isFinite(price) && price > 0) return price;
+  // 2) Fallback to derived holdings underlying price
+  if (byUnderlying) {
+    const agg = byUnderlying[symbol] ?? (normalized ? byUnderlying[normalized] : undefined);
+    const up = agg?.underlyingPrice;
+    if (typeof up === "number" && Number.isFinite(up) && up > 0) return up;
+  }
+  return null;
+}
+
+// ── Beta exposure payload ───────────────────────────────────────────────────
+
+function buildBetaPayload(input) {
+  const {
+    derived,
+    data,
+    liveSettings,
+    headerController
+  } = input;
+  const allBenchmarkBetas = headerController?.getAllBenchmarkBetaData?.() ?? new Map();
+  const byU = derived.byUnderlying || {};
+  const quoteBySymbol = data.quotesBySymbol ?? {};
+  const netMV = Math.abs(derived.portfolioAgg?.netMarketValue ?? 0);
+  const totalAbsDelta = derived.portfolioAgg?.totalAbsDeltaNotionalDol ?? 0;
+  const portfolioWeightedBeta = computeWeightedBetaForBenchmarks(byU, allBenchmarkBetas, netMV, totalAbsDelta);
+  const targetByUnderlying = {};
+  const rebTargets = liveSettings.rebalanceTargets ?? {};
+  const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
+  const currentBm = headerController?.getCurrentBenchmark?.() || "$SPX";
+  const currentBmData = allBenchmarkBetas.get(currentBm);
+  for (const [key, entry] of Object.entries(rebTargets)) {
+    if (!entry?.anchor || entry?.value == null) continue;
+    const price = portfolioPayloads_resolveQuoteLastPrice(key, quoteBySymbol, byU) ?? 0;
+    const beta = currentBmData?.get(key)?.short?.beta ?? 1;
+    const linked = computeLinkedTargets(entry, price, beta, acctVal);
+    targetByUnderlying[key] = {
+      deltaNotionalDol: linked.deltaDollar
+    };
+  }
+  for (const key in byU) {
+    if (!targetByUnderlying[key]) {
+      targetByUnderlying[key] = {
+        deltaNotionalDol: byU[key]?.deltaNotionalDol ?? null
+      };
+    }
+  }
+  let tgtTotalAbsDelta = 0;
+  for (const uk in targetByUnderlying) {
+    tgtTotalAbsDelta += Math.abs(targetByUnderlying[uk]?.deltaNotionalDol ?? 0);
+  }
+  const targetPortfolioWeightedBeta = computeWeightedBetaForBenchmarks(targetByUnderlying, allBenchmarkBetas, netMV, tgtTotalAbsDelta);
+  return {
+    allBenchmarkBetas,
+    portfolioWeightedBeta,
+    targetPortfolioWeightedBeta,
+    byUnderlying: derived.byUnderlying || {},
+    targetByUnderlying,
+    accountValue: acctVal,
+    rebalanceTargets: liveSettings.rebalanceTargets,
+    currentBenchmark: currentBm,
+    extraTickers: headerController?.getExtraBetaTickers?.() ?? [],
+    betaCalcStatus: headerController?.getBetaCalcStatus?.() ?? {
+      isFetching: false,
+      error: null
+    },
+    onRecalculate: () => {
+      input.triggerPortfolioRecalculate();
+    },
+    onAddTicker: symbol => {
+      headerController?.addExtraBetaTicker?.(symbol);
+    },
+    onRemoveTicker: symbol => {
+      headerController?.removeExtraBetaTicker?.(symbol);
+    }
+  };
+}
+
+// ── Scenario card payload ───────────────────────────────────────────────────
+
+function buildScenarioPayload(input) {
+  return {
+    riskMetrics: input.riskMetrics,
+    modelType: input.controlState.scenarioModelType,
+    horizon: input.controlState.scenarioHorizon,
+    byUnderlying: input.derived.byUnderlying || {},
+    threeFactorData: input.latestThreeFactorData ?? input.headerController?.getThreeFactorData?.() ?? null,
+    allBenchmarkBetas: input.allBenchmarkBetas.size > 0 ? input.allBenchmarkBetas : null,
+    onModelTypeChange: input.onModelTypeChange,
+    onHorizonChange: input.onHorizonChange,
+    onCustomScenarioChange: input.onCustomScenarioChange
+  };
+}
+
+// ── Rebalance payload ───────────────────────────────────────────────────────
+
+function buildRebalancePayload(input) {
+  const etfUnderlyingKeys = extractEtfUnderlyingKeysFromGroups(input.holdings?.accounts?.[0]?.groupedPositions);
+  return {
+    riskMetrics: input.riskMetrics,
+    derived: input.derived,
+    limits: input.liveSettings.riskLimits,
+    riskAppetite: input.controlState.riskAppetite,
+    severityFilter: input.controlState.severityFilter,
+    targetAllocations: input.liveSettings.targetAllocations,
+    rebalanceTargets: input.liveSettings.rebalanceTargets,
+    rebalanceProfiles: input.liveSettings.rebalanceProfiles,
+    betaData: input.latestBetaData ?? undefined,
+    quoteBySymbol: input.quoteBySymbol,
+    etfUnderlyingKeys,
+    extraBetaTickers: input.headerController?.getExtraBetaTickers?.() ?? [],
+    showRiskIdeas: true,
+    showTradeSuggestions: true,
+    onRecalculate: () => {
+      input.triggerPortfolioRecalculate();
+    },
+    onUpdateTargetAllocations: next => {
+      input.ctx.onUpdateSettings({
+        targetAllocations: next
+      }, {
+        rerender: false
+      });
+    },
+    onUpdateRebalanceTargets: next => {
+      input.ctx.onUpdateSettings({
+        rebalanceTargets: next
+      }, {
+        rerender: false
+      });
+    },
+    onUpdateRebalanceProfiles: next => {
+      input.ctx.onUpdateSettings({
+        rebalanceProfiles: next
+      }, {
+        rerender: false
+      });
+    },
+    onAddTicker: symbol => {
+      input.headerController?.addExtraBetaTicker?.(symbol);
+    },
+    onRemoveTicker: symbol => {
+      input.headerController?.removeExtraBetaTicker?.(symbol);
+    }
+  };
+}
 ;// ./src/frontend/trade_portfolio/page.ts
 
 
@@ -37043,30 +37777,12 @@ function createPortfolioSettingsPanel(opts) {
 
 
 
-
-
-const ALL_SECTIONS = ["overview", "exposure", "scenarios", "governance"];
 function riskManagement_renderPage(ctx) {
   const log = logService.namespace("render");
   const {
     settings
   } = ctx;
   const headerController = ctx.headerController;
-  const resolveQuoteLastPrice = (symbol, quoteBySymbol, byUnderlying) => {
-    const normalized = typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
-    // 1) Try live quote data
-    const quoteItem = quoteBySymbol[symbol] ?? (normalized ? quoteBySymbol[normalized] : undefined);
-    const raw = quoteItem?.quote?.lastPrice ?? quoteItem?.regularQuote?.lastPrice;
-    const price = Number(raw);
-    if (Number.isFinite(price) && price > 0) return price;
-    // 2) Fallback to derived holdings underlying price
-    if (byUnderlying) {
-      const agg = byUnderlying[symbol] ?? (normalized ? byUnderlying[normalized] : undefined);
-      const up = agg?.underlyingPrice;
-      if (typeof up === "number" && Number.isFinite(up) && up > 0) return up;
-    }
-    return null;
-  };
   const triggerPortfolioRecalculate = () => {
     const hc = headerController;
     if (hc?.triggerRebalanceRecalc) {
@@ -37086,7 +37802,7 @@ function riskManagement_renderPage(ctx) {
     scenarioModelType: "anchor",
     scenarioHorizon: "short"
   };
-  let manualExpandedSections = new Set(["overview", "exposure", "scenarios", "governance"]);
+  const manualExpandedSections = new Set(["overview", "exposure", "scenarios", "governance"]);
   let latestBetaData = null;
   let latestThreeFactorData = null;
   let customScenarioInput = null;
@@ -37108,8 +37824,6 @@ function riskManagement_renderPage(ctx) {
   portfolioSettingsPanel.root.style.marginLeft = "auto";
   pageHeader.appendChild(portfolioSettingsPanel.root);
   wrapper.appendChild(pageHeader);
-
-  // Placeholder for the section nav bar (extracted from sectionLayout, pinned at top)
   const navBarPlaceholder = createElement_ui_createElement("div", {
     styleString: "display: none;"
   });
@@ -37126,109 +37840,45 @@ function riskManagement_renderPage(ctx) {
   wrapper.appendChild(controlBarPlaceholder);
   wrapper.appendChild(navBarPlaceholder);
   wrapper.appendChild(contentArea);
+  const components = {};
+  const sectionLayoutRef = {
+    value: null
+  };
+  const slotsRef = {
+    value: null
+  };
   const getStateVectorStickyHeight = () => Math.max(0, Math.round(stateVectorPlaceholder.getBoundingClientRect().height || stateVectorPlaceholder.offsetHeight || 0));
   const getControlBarStickyHeight = () => Math.max(0, Math.round(controlBarPlaceholder.getBoundingClientRect().height || controlBarPlaceholder.offsetHeight || 0));
-
-  /** Sync all sticky top offsets: stateVector → controlBar → navBar (top-down stacking). */
   const syncAllStickyTops = () => {
-    // State vector sticks at the very top
     const svEl = stateVectorPlaceholder.firstElementChild;
     if (svEl) svEl.style.top = "0px";
     const svH = getStateVectorStickyHeight();
-
-    // Control bar sticks below the state vector
     const controlBar = components["controlBar"] ?? controlBarPlaceholder.firstElementChild;
     if (controlBar) controlBar.style.top = `${svH}px`;
-
-    // Nav bar sticks below the state vector + control bar
     const cbH = getControlBarStickyHeight();
     const navBarEl = navBarPlaceholder.firstElementChild;
     if (navBarEl) navBarEl.style.top = `${svH + cbH}px`;
   };
+  const lifecycle = createPortfolioLifecycle({
+    components,
+    sectionLayout: sectionLayoutRef,
+    slots: slotsRef,
+    navBarPlaceholder,
+    stateVectorPlaceholder,
+    controlBarPlaceholder,
+    contentArea
+  }, {
+    syncAllStickyTops,
+    getControlState: () => controlState,
+    manualExpandedSections
+  });
+  const {
+    cleanupComponent,
+    cleanupAllComponents,
+    updateOrCreate,
+    ensureSectionLayout
+  } = lifecycle;
   const riskCalculator = new RiskMetricsCalculator();
-  let components = {};
-  let sectionLayout = null;
-  let slots = null;
-  const cleanupComponent = key => {
-    const comp = components[key];
-    if (!comp) return;
-    if (comp.cleanup) {
-      try {
-        comp.cleanup();
-      } catch (err) {
-        log.warn("component.cleanup.fail", {
-          key,
-          error: err?.message
-        });
-      }
-    }
-    delete components[key];
-  };
-  const cleanupAllComponents = () => {
-    Object.keys(components).forEach(key => cleanupComponent(key));
-    sectionLayout = null;
-    slots = null;
-    navBarPlaceholder.innerHTML = "";
-    stateVectorPlaceholder.innerHTML = "";
-    controlBarPlaceholder.innerHTML = "";
-    contentArea.innerHTML = "";
-  };
-  const updateOrCreate = (host, componentKey, createFn, updateArgs) => {
-    const existing = components[componentKey];
-    if (existing && existing.update && updateArgs) {
-      try {
-        existing.update(...updateArgs);
-        return;
-      } catch (err) {
-        log.warn("component.update.fail", {
-          key: componentKey,
-          error: err?.message
-        });
-        cleanupComponent(componentKey);
-      }
-    }
-    if (components[componentKey]) {
-      cleanupComponent(componentKey);
-    }
-    const next = createFn();
-    host.innerHTML = "";
-    host.appendChild(next);
-    components[componentKey] = next;
-  };
-  const ensureSectionLayout = () => {
-    if (sectionLayout && slots) {
-      syncAllStickyTops();
-      return;
-    }
-    if (sectionLayout) {
-      cleanupComponent("sectionLayout");
-      sectionLayout = null;
-      slots = null;
-    }
-    const layout = renderPortfolioSectionLayout((id, expanded) => {
-      if (controlState.focusMode !== "all") return;
-      if (expanded) manualExpandedSections.add(id);else manualExpandedSections.delete(id);
-    });
-    contentArea.innerHTML = "";
-    contentArea.appendChild(layout);
-
-    // Extract the nav bar from the section layout and pin it at the top of the page
-    const navBarEl = layout.getNavBar();
-    navBarPlaceholder.innerHTML = "";
-    navBarPlaceholder.appendChild(navBarEl);
-    navBarPlaceholder.style.display = "block";
-    navBarEl.style.zIndex = "var(--z-sticky-nav, 100)";
-    syncAllStickyTops();
-    sectionLayout = layout;
-    components.sectionLayout = layout;
-    slots = {
-      health: layout.getCardSlot("overview", "healthScore", 1, "text"),
-      greeks: layout.getCardSlot("overview", "greeks", 1, "chart"),
-      betaExposure: layout.getCardSlot("exposure", "betaExposure", 3, "text", 1, true),
-      heatmap: layout.getCardSlot("scenarios", "heatmap", 3, "interactive"),
-      rebalance: layout.getCardSlot("governance", "rebalanceIdeas", 3, "text", 1, true)
-    };
-  };
   const makeChip = text => {
     return createElement_ui_createElement("span", {
       text,
@@ -37236,7 +37886,8 @@ function riskManagement_renderPage(ctx) {
     });
   };
   const updateSectionChips = riskMetrics => {
-    if (!sectionLayout) return;
+    const layout = sectionLayoutRef.value;
+    if (!layout) return;
     const top1 = riskMetrics.topUnderlyingConcentrations[0]?.deltaPct ?? 0;
     const worst = Math.min(0, ...riskMetrics.scenarios.map(s => s.pnlPct));
     const breaches = riskMetrics.limitBreaches.length;
@@ -37246,38 +37897,39 @@ function riskManagement_renderPage(ctx) {
       scenarios: [`Worst ${(worst * 100).toFixed(2)}%`, `Appetite ${controlState.riskAppetite}`],
       governance: [`Severity ${controlState.severityFilter}`, `Beta ${riskMetrics.currentBeta.toFixed(2)}`]
     };
-    ALL_SECTIONS.forEach(sectionId => {
-      const chips = sectionLayout.getSectionInfoChips(sectionId);
+    ALL_PORTFOLIO_SECTIONS.forEach(sectionId => {
+      const chips = layout.getSectionInfoChips(sectionId);
       chips.innerHTML = "";
       bySection[sectionId].forEach(text => chips.appendChild(makeChip(text)));
     });
   };
   const applyFocusMode = scroll => {
-    if (!sectionLayout) return;
+    const layout = sectionLayoutRef.value;
+    if (!layout) return;
     if (controlState.focusMode === "all") {
-      ALL_SECTIONS.forEach(sectionId => {
-        sectionLayout.setExpanded(sectionId, manualExpandedSections.has(sectionId));
+      ALL_PORTFOLIO_SECTIONS.forEach(sectionId => {
+        layout.setExpanded(sectionId, manualExpandedSections.has(sectionId));
       });
       return;
     }
     if (controlState.focusMode === "breaches") {
-      sectionLayout.setExpanded("overview", true);
-      sectionLayout.setExpanded("exposure", false);
-      sectionLayout.setExpanded("scenarios", false);
-      sectionLayout.setExpanded("governance", true);
+      layout.setExpanded("overview", true);
+      layout.setExpanded("exposure", false);
+      layout.setExpanded("scenarios", false);
+      layout.setExpanded("governance", true);
       if (scroll) {
-        sectionLayout.scrollToSection("governance");
-        sectionLayout.highlightCard("rebalanceIdeas");
+        layout.scrollToSection("governance");
+        layout.highlightCard("rebalanceIdeas");
       }
       return;
     }
-    sectionLayout.setExpanded("overview", true);
-    sectionLayout.setExpanded("exposure", false);
-    sectionLayout.setExpanded("scenarios", true);
-    sectionLayout.setExpanded("governance", false);
+    layout.setExpanded("overview", true);
+    layout.setExpanded("exposure", false);
+    layout.setExpanded("scenarios", true);
+    layout.setExpanded("governance", false);
     if (scroll) {
-      sectionLayout.scrollToSection("scenarios");
-      sectionLayout.highlightCard("stressPlaybook");
+      layout.scrollToSection("scenarios");
+      layout.highlightCard("stressPlaybook");
     }
   };
   const queueRender = (force = false) => {
@@ -37378,7 +38030,7 @@ function riskManagement_renderPage(ctx) {
             ...controlState,
             focusMode: "all"
           };
-          manualExpandedSections = new Set(ALL_SECTIONS);
+          ALL_PORTFOLIO_SECTIONS.forEach(s => manualExpandedSections.add(s));
           syncControlBarState();
           applyFocusMode(false);
           queueRender(true);
@@ -37388,7 +38040,7 @@ function riskManagement_renderPage(ctx) {
             ...controlState,
             focusMode: "all"
           };
-          manualExpandedSections = new Set();
+          manualExpandedSections.clear();
           syncControlBarState();
           applyFocusMode(false);
           queueRender(true);
@@ -37397,7 +38049,9 @@ function riskManagement_renderPage(ctx) {
       syncAllStickyTops();
       contentArea.style.display = "block";
       ensureSectionLayout();
-      if (!slots || !sectionLayout) return;
+      const slots = slotsRef.value;
+      const layout = sectionLayoutRef.value;
+      if (!slots || !layout) return;
       updateSectionChips(riskMetrics);
       updateOrCreate(slots.health, "healthScore", () => renderPortfolioHealthScore({
         riskMetrics,
@@ -37407,80 +38061,21 @@ function riskManagement_renderPage(ctx) {
         portfolioAgg: derived.portfolioAgg
       }]);
       updateOrCreate(slots.greeks, "greeks", () => renderGreeksRiskPanel(riskMetrics, derived), [riskMetrics, derived]);
-
-      // Build multi-benchmark beta payload
-      const allBenchmarkBetas = headerController?.getAllBenchmarkBetaData?.() ?? new Map();
-      const byU = derived.byUnderlying || {};
-      const quoteBySymbol = data.quotesBySymbol ?? {};
-      const netMV = Math.abs(derived.portfolioAgg?.netMarketValue ?? 0);
-      const totalAbsDelta = derived.portfolioAgg?.totalAbsDeltaNotionalDol ?? 0;
-      const portfolioWeightedBeta = computeWeightedBetaForBenchmarks(byU, allBenchmarkBetas, netMV, totalAbsDelta);
-      const hc = headerController;
-
-      // Compute target-mode delta notional from rebalance targets
-      const targetByUnderlying = {};
-      const rebTargets = liveSettings.rebalanceTargets ?? {};
-      const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
-      const currentBm = headerController?.getCurrentBenchmark?.() || "$SPX";
-      const currentBmData = allBenchmarkBetas.get(currentBm);
-      for (const [key, entry] of Object.entries(rebTargets)) {
-        if (!entry?.anchor || entry?.value == null) continue;
-        const price = resolveQuoteLastPrice(key, quoteBySymbol, byU) ?? 0;
-        const beta = currentBmData?.get(key)?.short?.beta ?? 1;
-        const linked = computeLinkedTargets(entry, price, beta, acctVal);
-        targetByUnderlying[key] = {
-          deltaNotionalDol: linked.deltaDollar
-        };
-      }
-      // Holdings tickers with no target keep current exposure
-      for (const key in byU) {
-        if (!targetByUnderlying[key]) {
-          targetByUnderlying[key] = {
-            deltaNotionalDol: byU[key]?.deltaNotionalDol ?? null
-          };
-        }
-      }
-
-      // Target-mode portfolio weighted beta
-      let tgtTotalAbsDelta = 0;
-      for (const uk in targetByUnderlying) {
-        tgtTotalAbsDelta += Math.abs(targetByUnderlying[uk]?.deltaNotionalDol ?? 0);
-      }
-      const targetPortfolioWeightedBeta = computeWeightedBetaForBenchmarks(targetByUnderlying, allBenchmarkBetas, netMV, tgtTotalAbsDelta);
-      const betaPayload = {
-        allBenchmarkBetas,
-        portfolioWeightedBeta,
-        targetPortfolioWeightedBeta,
-        byUnderlying: derived.byUnderlying || {},
-        targetByUnderlying,
-        accountValue: acctVal,
-        rebalanceTargets: liveSettings.rebalanceTargets,
-        currentBenchmark: currentBm,
-        extraTickers: hc?.getExtraBetaTickers?.() ?? [],
-        betaCalcStatus: hc?.getBetaCalcStatus?.() ?? {
-          isFetching: false,
-          error: null
-        },
-        onRecalculate: () => {
-          triggerPortfolioRecalculate();
-        },
-        onAddTicker: symbol => {
-          if (hc?.addExtraBetaTicker) hc.addExtraBetaTicker(symbol);
-        },
-        onRemoveTicker: symbol => {
-          if (hc?.removeExtraBetaTicker) hc.removeExtraBetaTicker(symbol);
-        }
-      };
+      const betaPayload = buildBetaPayload({
+        derived,
+        data,
+        liveSettings,
+        headerController,
+        triggerPortfolioRecalculate
+      });
       updateOrCreate(slots.betaExposure, "betaExposure", () => renderBetaExposurePanel(betaPayload), [betaPayload]);
-
-      // Beta factor scenario cards
-      const scenarioCardPayload = {
+      const scenarioCardPayload = buildScenarioPayload({
         riskMetrics,
-        modelType: controlState.scenarioModelType,
-        horizon: controlState.scenarioHorizon,
-        byUnderlying: derived.byUnderlying || {},
-        threeFactorData: latestThreeFactorData ?? headerController?.getThreeFactorData?.() ?? null,
-        allBenchmarkBetas: allBenchmarkBetas.size > 0 ? allBenchmarkBetas : null,
+        controlState,
+        derived,
+        latestThreeFactorData,
+        headerController,
+        allBenchmarkBetas: betaPayload.allBenchmarkBetas,
         onModelTypeChange: type => {
           controlState = {
             ...controlState,
@@ -37502,55 +38097,20 @@ function riskManagement_renderPage(ctx) {
           cleanupComponent("heatmap");
           queueRender(true);
         }
-      };
+      });
       updateOrCreate(slots.heatmap, "heatmap", () => renderScenarioCardPanel(scenarioCardPayload), [scenarioCardPayload]);
-      const etfUnderlyingKeys = extractEtfUnderlyingKeysFromGroups(holdings?.accounts?.[0]?.groupedPositions);
-      const rebalancePayload = {
+      const rebalancePayload = buildRebalancePayload({
         riskMetrics,
         derived,
-        limits: liveSettings.riskLimits,
-        riskAppetite: controlState.riskAppetite,
-        severityFilter: controlState.severityFilter,
-        targetAllocations: liveSettings.targetAllocations,
-        rebalanceTargets: liveSettings.rebalanceTargets,
-        rebalanceProfiles: liveSettings.rebalanceProfiles,
-        betaData: latestBetaData ?? undefined,
-        quoteBySymbol,
-        etfUnderlyingKeys,
-        extraBetaTickers: hc?.getExtraBetaTickers?.() ?? [],
-        showRiskIdeas: true,
-        showTradeSuggestions: true,
-        onRecalculate: () => {
-          triggerPortfolioRecalculate();
-        },
-        onUpdateTargetAllocations: next => {
-          ctx.onUpdateSettings({
-            targetAllocations: next
-          }, {
-            rerender: false
-          });
-        },
-        onUpdateRebalanceTargets: next => {
-          ctx.onUpdateSettings({
-            rebalanceTargets: next
-          }, {
-            rerender: false
-          });
-        },
-        onUpdateRebalanceProfiles: next => {
-          ctx.onUpdateSettings({
-            rebalanceProfiles: next
-          }, {
-            rerender: false
-          });
-        },
-        onAddTicker: symbol => {
-          if (hc?.addExtraBetaTicker) hc.addExtraBetaTicker(symbol);
-        },
-        onRemoveTicker: symbol => {
-          if (hc?.removeExtraBetaTicker) hc.removeExtraBetaTicker(symbol);
-        }
-      };
+        liveSettings,
+        controlState,
+        latestBetaData,
+        quoteBySymbol: data.quotesBySymbol ?? {},
+        holdings,
+        headerController,
+        ctx: ctx,
+        triggerPortfolioRecalculate
+      });
       updateOrCreate(slots.rebalance, "rebalance", () => renderRebalanceIdeasPanel(rebalancePayload), [rebalancePayload]);
       applyFocusMode(false);
     } catch (err) {
@@ -56009,6 +56569,41 @@ function createTooltipHost() {
     tooltip
   };
 }
+;// ./src/frontend/components/core/axTheme/renderMode/canvasShadow.ts
+// Canvas shadow helper — single mode-aware funnel for every chart that
+// wants a glow / drop-shadow stroke. In Full mode it sets the standard
+// CanvasRenderingContext2D shadow* properties; in Eco it skips the
+// shadow setup entirely (no-op cost) and lets the draw run flat.
+//
+// Why a helper: shadowBlur is the heaviest per-fill cost on canvas —
+// every fill / stroke under a non-zero shadowBlur triggers an offscreen
+// composite, which dominates render time on the heatmaps. Funnelling
+// every site through one helper means new chart code automatically
+// honours the mode without each developer having to remember.
+//
+// The helper always restores ctx.shadow* state after the draw completes
+// (try/finally), so callers don't need to defensively zero shadowBlur.
+
+
+function withShadow(ctx, opts, draw) {
+  const eco = isEco();
+  if (!eco) {
+    ctx.shadowColor = opts.color;
+    ctx.shadowBlur = opts.blur;
+    if (opts.offsetX !== undefined) ctx.shadowOffsetX = opts.offsetX;
+    if (opts.offsetY !== undefined) ctx.shadowOffsetY = opts.offsetY;
+  }
+  try {
+    draw();
+  } finally {
+    if (!eco) {
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.shadowColor = "rgba(0,0,0,0)";
+    }
+  }
+}
 ;// ./src/shared/utils/math/marchingSquares.ts
 // ── Marching-squares contour extraction ─────────────────────────────────────
 // Given a 2D grid of scalar values, extract iso-line segments at a threshold.
@@ -56184,6 +56779,7 @@ function createRenderFrame(target, render) {
   };
 }
 ;// ./src/frontend/analysis_options/components/charts/VolatilitySurface.ts
+
 
 
 
@@ -56467,11 +57063,13 @@ function renderVolatilitySurface(surfaceData, underlyingPrice) {
         const cy = colHeaderH + lowestRow * cellH + cellH / 2;
         ctx.beginPath();
         ctx.arc(cx, cy, 3.5, 0, Math.PI * 2);
-        ctx.shadowColor = "rgba(26, 26, 46, 0.5)";
-        ctx.shadowBlur = 5;
-        ctx.fillStyle = "#1a1a2e";
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        withShadow(ctx, {
+          color: "rgba(26, 26, 46, 0.5)",
+          blur: 5
+        }, () => {
+          ctx.fillStyle = "#1a1a2e";
+          ctx.fill();
+        });
         ctx.strokeStyle = "#fff";
         ctx.lineWidth = 1.2;
         ctx.stroke();
@@ -61683,6 +62281,7 @@ function renderStatusBand(metaRows, expiryRows) {
 
 
 
+
 function HeatmapChart_createHeatmapChart(opts) {
   return new HeatmapChart(opts);
 }
@@ -61941,24 +62540,30 @@ class HeatmapChart {
       const cw = this.colW(col);
       const x = startX + this.colX(col);
       const y = startY + row * cellHeight;
-      this.ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-      this.ctx.shadowBlur = 8;
-      this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      this.ctx.lineWidth = 2;
-      this.traceRoundRect(x + gap, y + gap, cw - gap * 2, cellHeight - gap * 2, rad);
-      this.ctx.stroke();
+      withShadow(this.ctx, {
+        color: "rgba(0, 0, 0, 0.4)",
+        blur: 8
+      }, () => {
+        this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+        this.ctx.lineWidth = 2;
+        this.traceRoundRect(x + gap, y + gap, cw - gap * 2, cellHeight - gap * 2, rad);
+        this.ctx.stroke();
+      });
     }
     if (this.hoveredSummaryCol != null) {
       const col = this.hoveredSummaryCol;
       const cw = this.colW(col);
       const x = startX + this.colX(col);
       const summaryRowY = startY + this.options.rows.length * cellHeight + 8;
-      this.ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
-      this.ctx.shadowBlur = 8;
-      this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      this.ctx.lineWidth = 2;
-      this.traceRoundRect(x + gap, summaryRowY + gap, cw - gap * 2, cellHeight - gap * 2, rad);
-      this.ctx.stroke();
+      withShadow(this.ctx, {
+        color: "rgba(0, 0, 0, 0.4)",
+        blur: 8
+      }, () => {
+        this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+        this.ctx.lineWidth = 2;
+        this.traceRoundRect(x + gap, summaryRowY + gap, cw - gap * 2, cellHeight - gap * 2, rad);
+        this.ctx.stroke();
+      });
     }
     this.ctx.restore();
   }
@@ -62423,17 +63028,19 @@ class HeatmapChart {
     ctx.lineCap = "round";
 
     // Pass 1: soft glow
-    ctx.beginPath();
-    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-    for (let i = 1; i < pathPoints.length; i++) {
-      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-    }
-    ctx.shadowColor = "rgba(0, 122, 255, 0.45)";
-    ctx.shadowBlur = 10;
-    ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
-    ctx.lineWidth = 6;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    withShadow(ctx, {
+      color: "rgba(0, 122, 255, 0.45)",
+      blur: 10
+    }, () => {
+      ctx.beginPath();
+      ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+      for (let i = 1; i < pathPoints.length; i++) {
+        ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
+      }
+      ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
+      ctx.lineWidth = 6;
+      ctx.stroke();
+    });
 
     // Pass 2: white outline
     ctx.beginPath();
@@ -62459,11 +63066,13 @@ class HeatmapChart {
     for (const pt of pathPoints) {
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
-      ctx.shadowColor = "rgba(0, 122, 255, 0.5)";
-      ctx.shadowBlur = 6;
-      ctx.fillStyle = CHART_COLORS.info;
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      withShadow(ctx, {
+        color: "rgba(0, 122, 255, 0.5)",
+        blur: 6
+      }, () => {
+        ctx.fillStyle = CHART_COLORS.info;
+        ctx.fill();
+      });
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 1.5;
       ctx.stroke();
@@ -68234,484 +68843,115 @@ class AIAnalysisStore {
     });
   }
 }
-;// ./src/backend/services/ai/prompts/prompts.ts
-// ── Tool schemas appended to analysts that support tool-calling ────────────────
-
-const TOOL_SCHEMA_FUNDAMENTALS = `
-## Tool Access
-You may make UP TO 3 tool calls total. Stop as soon as any core financial statement returns data, or once all three are confirmed empty.
-
-Priority order (call in this sequence if needed):
-<tool_call>{"name": "get_barrons_ratings"}</tool_call>
-<tool_call>{"name": "get_barrons_financials"}</tool_call>
-
-If Barron's data is present in your context (sections prefixed with "BARRON'S"), treat it as a higher-confidence data source than Yahoo Finance for analyst consensus and financial ratios.
-If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block for that section and stop requesting that data type. Do NOT write narrative for missing data.`;
-const TOOL_SCHEMA_FINANCIAL_QUALITY = `
-## Tool Access
-You may make UP TO 3 tool calls total. Priority order:
-
-<tool_call>{"name": "get_cash_flow"}</tool_call>
-<tool_call>{"name": "get_balance_sheet"}</tool_call>
-<tool_call>{"name": "get_income_statement"}</tool_call>
-<tool_call>{"name": "get_insider_transactions"}</tool_call>
-<tool_call>{"name": "get_barrons_financials"}</tool_call>
-
-If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block for that section.`;
-const TOOL_SCHEMA_SENTIMENT_COMPANY = `
-## Tool Access
-If you need additional premium news, you may request Barron's news by appending a single tool call:
-
-<tool_call>{"name": "get_barrons_news"}</tool_call>
-
-NOTE ON SOURCE QUALITY: Barron's, Dow Jones Network, and Wall Street Journal are premium tier sources (high weight). If Barron's news is available, it should receive HIGHER weight than generic news aggregators.
-If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block; do NOT invent sentiment based on absent data.`;
-const TOOL_SCHEMA_SENTIMENT_MACRO = `
-## Tool Access
-If you need additional macro context, you may request ONE dataset:
-
-<tool_call>{"name": "get_global_macro_news"}</tool_call>
-
-If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block; do NOT invent sentiment based on absent data.`;
-const TOOL_SCHEMA_SELLSIDE = `
-## Tool Access
-If Barron's estimate data is not present in your context, you may request it:
-
-<tool_call>{"name": "get_barrons_ratings"}</tool_call>
-
-If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block.`;
-const TOOL_SCHEMA_OWNERSHIP = `
-## Tool Access
-If Barron's ownership data is not present in your context, you may request it:
-
-<tool_call>{"name": "get_barrons_ratings"}</tool_call>
-
-If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block.`;
-const TOOL_SCHEMA_DEBATER = `
-## Tool Access
-If specific data would materially strengthen your argument, append ONE tool call at the very end:
-
-<tool_call>{"name": "get_balance_sheet"}</tool_call>
-<tool_call>{"name": "get_cash_flow"}</tool_call>
-<tool_call>{"name": "get_income_statement"}</tool_call>
-<tool_call>{"name": "get_insider_transactions"}</tool_call>
-<tool_call>{"name": "get_global_macro_news"}</tool_call>
-<tool_call>{"name": "get_barrons_news"}</tool_call>
-<tool_call>{"name": "get_barrons_ratings"}</tool_call>`;
-
-// ── Debate intensity instructions ───────────────────────────────────────────
-
-const INTENSITY_INSTRUCTIONS = {
-  conservative: "\nDEBATE STYLE: Present balanced arguments. Acknowledge opposing points fairly and avoid dismissing counterarguments. Maintain a collaborative, measured tone throughout.",
-  moderate: "\nDEBATE STYLE: Argue your position firmly while acknowledging key counterpoints. Push back on weak arguments but concede strong ones.",
-  aggressive: "\nDEBATE STYLE: Take the STRONGEST possible position. Challenge every counterpoint raised by the opposing side. Leave no argument uncontested. Be forceful, direct, and uncompromising in your advocacy — your job is to stress-test the thesis to its limits."
-};
-
-// ── Exported prompt templates ─────────────────────────────────────────────────
-
-const PROMPTS = {
-  // ── Retained agents (unchanged or minimal changes) ──────────────────────
-
-  market_analyst: `You are a seasoned market analyst specializing in price action and market structure.
-Analyze the OHLCV data and recent price history provided to assess the current trading environment.
-Focus on:
-1. Current trend direction and momentum (bullish / bearish / sideways)
-2. Key price levels — recent swing highs/lows acting as support/resistance
-3. Volume patterns — confirmation or divergence with price (this section uses OHLCV data only; OBV trend is covered by the technicals analyst — do NOT reference OBV here)
-4. Any notable price patterns (consolidation, breakout, breakdown, topping/bottoming)
-5. Overall market structure assessment and near-term directional bias
-
-If BARRON'S PERFORMANCE data is present, incorporate the 5D/1M/3M/YTD/1Y return context into your trend assessment.
-
-Present your findings in concise, structured markdown. Do NOT make a buy/sell recommendation — only analyze market structure and price action.
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"trend":"<uptrend|downtrend|sideways>","trend_strength":<1-10>,"key_support":<number|null>,"key_resistance":<number|null>,"volume_regime":"<accumulation|distribution|neutral>"}`,
-  technicals_analyst: `You are a technical analyst specializing in momentum indicators, chart signals, and quantitative price analysis.
-You will receive a pre-computed OHLCV_FEATURES block at the top of your context. Use ONLY that structured data for your analysis — do not request additional data via tools.
-If a specific feature is absent from OHLCV_FEATURES, note it in a limitations[] section but do not halt analysis.
-
-Focus on:
-1. Trend confirmation: price vs SMA20/50/200 alignment, golden/death cross proximity
-2. Momentum: RSI series (overbought >70, oversold <30, divergence with price using the series, not just the final value)
-3. MACD: line vs signal position, histogram direction, any recent crossovers
-4. Volatility: Bollinger Band position (squeeze, expansion), ATR as % of price
-5. Volume: OBV trend (accumulation vs distribution), price vs VWAP relationship
-6. Key levels — use ONLY these three categories:
-   - trigger_levels: price levels whose reclaim or break would confirm a directional thesis
-   - regime_shift_levels: key MA or Bollinger Band levels whose breach changes the technical regime
-   - invalidations: the specific price(s) where the current technical thesis fails
-   Do NOT use the word "target." Call them levels that would change the technical thesis.
-7. Gap analysis: characterize recent gap behavior and gap risk using the gapStats data
-8. Volume profile: note top price zones by volume as areas of potential support/resistance
-
-At the end, include a short limitations[] list noting any features that were absent or computed from fewer bars than ideal.
-
-Present concise, structured markdown. Do NOT make a buy/sell recommendation.
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"technical_bias":"<bullish|bearish|neutral>","ma_stack":"<bullish|bearish|mixed>","rsi_state":"<overbought|oversold|neutral>","macd_state":"<bullish_cross|bearish_cross|converging|diverging>","levels":{"reclaim":<number|null>,"fail":<number|null>,"invalidation":<number|null>}}`,
-  // ── Refactored: fundamentals_analyst (narrowed to valuation + growth) ───
-
-  fundamentals_analyst: `You are a fundamental equity analyst specializing in valuation and growth analysis.
-Analyze the valuation metrics and growth data provided to assess whether the stock is fairly valued relative to its growth trajectory.
-
-CRITICAL: If a DATA_INTEGRITY_WARNING block appears at the top of your context, output ONLY the following and stop — do not produce any narrative:
-DATA_GAP: {"reason": "<what is missing>", "completeness": "critical_gap"}
-
-If fields are partially missing (DATA_NOTE present but not DATA_INTEGRITY_WARNING), note gaps inline and continue analysis.
-
-Focus on:
-1. Valuation: P/E, P/B, EV/EBITDA, P/S relative to typical ranges for this sector
-2. Revenue and earnings growth trajectory (YoY, trend across quarters)
-3. Analyst consensus: target price vs current price gap
-4. Peer comparison: how does valuation compare to competitors (if Barron's peer data available)
-
-If BARRON'S VALUATION RATIOS are present, cross-reference them with Yahoo data for consistency. Barron's provides finer-grained valuation metrics not available from Yahoo.
-
-Present concise, structured markdown with specific numbers. Do NOT make a buy/sell recommendation.
-If any tool returns empty data, output DATA_UNAVAILABLE for that section — do not narrate missing data.
-${TOOL_SCHEMA_FUNDAMENTALS}
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"valuation_grade":"<cheap|fair|expensive|unavailable>","growth_trajectory":"<accelerating|stable|decelerating>","data_completeness":"<full|partial|critical_gap>","key_metrics":{"pe":<number|null>,"pb":<number|null>,"ev_ebitda":<number|null>}}`,
-  // ── New: financial_quality_analyst ───────────────────────────────────────
-
-  financial_quality_analyst: `You are a financial quality analyst specializing in profitability quality, balance sheet health, and cash flow analysis.
-Analyze the financial statements, margin trends, and cash generation data provided to assess the company's financial quality.
-
-CRITICAL: If a DATA_INTEGRITY_WARNING block appears at the top of your context, output ONLY the following and stop:
-DATA_GAP: {"reason": "<what is missing>", "completeness": "critical_gap"}
-
-Focus on:
-1. Profitability trends: gross/operating/net margin trajectory across recent periods (expanding, stable, or compressing?)
-2. Return metrics: ROA, ROE, ROIC if available from Barron's Profitability ratios
-3. Earnings stability: consistency of net income across quarters, volatility assessment
-4. Balance sheet health: debt levels, current/quick ratio, cash position (Barron's Capitalization + Liquidity sections)
-5. Cash conversion: operating cash flow / net income ratio (higher is better quality earnings)
-6. Capital returns: (buybacks + dividends) / free cash flow — shareholder return efficiency
-7. Insider activity: recent insider buy/sell signals and their implications
-
-If BARRONS_FINANCIAL_QUALITY pre-computed data is present, use it as primary data for margin trends and ratio analysis.
-
-Present concise, structured markdown with specific numbers. Do NOT make a buy/sell recommendation.
-${TOOL_SCHEMA_FINANCIAL_QUALITY}
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"quality_score":<1-10>,"margin_trend":"<expanding|stable|compressing>","earnings_stability":"<high|medium|low>","cash_conversion_score":<1-10>,"capital_return_score":<1-10>}`,
-  // ── Split: sentiment_company (company-specific news only) ───────────────
-
-  sentiment_company: `You are a company sentiment analyst who synthesizes company-specific news flow and narrative.
-Analyze ONLY the company-specific news provided (both Yahoo and Barron's/Dow Jones sources) to assess the sentiment picture for this specific stock.
-
-Structure your output in these exact sections:
-
-## Reported Facts
-(Only direct claims directly supported by headline or summary text. No inference here.)
-
-## Inferences
-(Each inference must include: claim, confidence: high/med/low, reasoning)
-
-## Source Weight Applied
-WSJ/Barron's/Dow Jones Network = HIGH weight (premium financial journalism)
-MT Newswires = MID weight
-Benzinga/TheStreet/MotleyFool = LOW weight
-Note if output is dominated by low-weight sources.
-
-## Upcoming Company Catalysts
-(Earnings, product launches, regulatory events — with dates if known)
-
-## Headline Impact Score: X/10
-Impact pathway: [regulatory / cash flow / valuation multiple / sentiment]
-
-## Company Sentiment Verdict
-positive / negative / neutral — 1-2 sentence rationale
-
-Do NOT analyze macro/market-wide news — that is handled by the macro sentiment analyst.
-Do NOT make a buy/sell recommendation.
-If any tool returns empty data, output DATA_UNAVAILABLE for that section.
-${TOOL_SCHEMA_SENTIMENT_COMPANY}
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"company_sentiment":"<positive|neutral|negative>","headline_impact_score":<1-10>,"top_catalysts":["<string>"],"catalyst_density":"<high|medium|low>"}`,
-  // ── Split: sentiment_macro (macro/market news only) ─────────────────────
-
-  sentiment_macro: `You are a macro sentiment analyst who synthesizes global market conditions, Fed policy, and economic data to assess the macro backdrop.
-Analyze ONLY the macro and market-wide news provided to assess how broad conditions affect this stock.
-
-Structure your output in these exact sections:
-
-## Macro Environment Summary
-(Current state of: interest rates, inflation expectations, employment data, GDP outlook)
-
-## Market Regime Assessment
-risk_on / risk_off / neutral — with supporting evidence
-
-## Rate Environment
-dovish / neutral / hawkish — with impact on this stock's sector
-
-## Sector Rotation Signals
-(Any evidence of capital flowing into or out of this stock's sector)
-
-## Macro Risk Factors
-(Specific macro risks that could impact this stock: tariffs, regulation, geopolitical, etc.)
-
-## Macro Sentiment Verdict
-tailwind / headwind / neutral — 1-2 sentence rationale specifically for this stock
-
-Do NOT analyze company-specific news — that is handled by the company sentiment analyst.
-Do NOT make a buy/sell recommendation.
-${TOOL_SCHEMA_SENTIMENT_MACRO}
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"macro_regime":"<risk_on|neutral|risk_off>","rate_environment":"<dovish|neutral|hawkish>","sector_rotation":"<inflow|neutral|outflow>","macro_verdict":"<tailwind|headwind|neutral>"}`,
-  // ── New: sellside_analyst (highest ROI addition from Barron's data) ──────
-
-  sellside_analyst: `You are a sell-side research analyst specializing in analyst estimate revisions, earnings surprises, and consensus dynamics.
-Analyze the Barron's analyst data provided to assess the sell-side consensus and its trajectory.
-
-Focus on:
-1. Estimate revision momentum: are EPS estimates being revised UP or DOWN over 1-month and 3-month periods?
-2. Earnings surprise trend: is the company consistently beating or missing estimates? Count consecutive beats/misses.
-3. Price target dispersion: (high - low) / average target — higher = more analyst disagreement
-4. Rating migration: net change in Buy/Sell ratings from 3 months ago to current. Net upgrades = bullish signal.
-5. Expectation gap: (average target price - current price) / current price — positive = upside expected
-6. Next catalyst date: when is the next earnings report or guidance event?
-7. Forward estimates: are quarterly estimates trending up or down?
-
-If BARRONS_ESTIMATE_REVISIONS pre-computed data is present, use it as your primary data source.
-
-Present concise, structured markdown with specific numbers. Do NOT make a buy/sell recommendation.
-${TOOL_SCHEMA_SELLSIDE}
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"revision_momentum":"<strong_up|up|flat|down|strong_down>","surprise_trend":"<consistent_beat|mixed|consistent_miss>","target_dispersion":<number>,"rating_migration":<number>,"expectation_gap":<number>,"next_catalyst_date":"<ISO date or null>","next_catalyst_type":"<earnings|guidance|ex_dividend|other>"}`,
-  // ── New: ownership_analyst (with staleness hard-constraint) ──────────────
-
-  ownership_analyst: `You are an ownership and positioning analyst specializing in institutional ownership patterns, short interest dynamics, and holder concentration analysis.
-Analyze the Barron's ownership data provided to assess positioning risk and flow signals.
-
-STALENESS_WARNING: Barron's institutional and mutual fund holder data is based on SEC filings that are typically 6-18 months old. You MUST annotate each ownership-based conclusion with a confidence ceiling based on data freshness:
-- Data < 3 months old: high confidence
-- Data 3-6 months old: moderate confidence
-- Data > 6 months old: low confidence — flag as "STALE DATA" and cap conviction accordingly
-Short interest data (from keyData) is typically more recent and can receive higher weight.
-
-Focus on:
-1. Short interest: % of float shorted, recent changes, short squeeze potential
-2. Institutional concentration: top 10 holders as % of outstanding — high concentration = crowding risk
-3. Holder flow direction: are institutional holders increasing or decreasing positions (based on Chg column)?
-4. Float analysis: free float size relative to daily volume — liquidity assessment
-
-Present concise, structured markdown. Do NOT make a buy/sell recommendation.
-${TOOL_SCHEMA_OWNERSHIP}
-
-At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
-SUMMARY_JSON: {"short_interest_pct_float":<number>,"short_interest_change":<number>,"crowding_risk":"<high|medium|low>","ownership_data_staleness":"<fresh|moderate|stale>","top_holder_concentration":<number>}`,
-  // ── Debate agents ───────────────────────────────────────────────────────
-
-  bull_debater: (round, debateHistory, intensity = "moderate") => `You are the BULL advocate in a structured investment debate.
-This is round ${round} of the debate.
-${debateHistory ? `\nDebate so far:\n${debateHistory}\n` : ""}
-IMPORTANT: If fundamentals data in the analyst reports is marked MISSING, DATA_GAP, or DATA_UNAVAILABLE, do NOT invent valuation or growth numbers. Reframe ALL arguments explicitly as technical + narrative. Downgrade your stated conviction ceiling to a maximum of 6/10.
-${INTENSITY_INSTRUCTIONS[intensity]}
-
-Your task:
-1. Present the 3-4 strongest bull arguments. Each argument MUST include an evidence_ref citing a specific data point — for example: a price level, volume reading, indicator value, news date, ratio value, or a field from the ANALYST JSON SUMMARIES (e.g., rsi_state: "oversold", trend: "uptrend", revision_momentum: "strong_up").
-2. Address and rebut the most compelling bear arguments raised so far.
-3. Explain why the upside potential outweighs the stated risks.
-4. Reference the ANALYST JSON SUMMARIES section when available — cite JSON fields directly rather than paraphrasing the full narrative.
-
-Be persuasive, data-driven, and focused. Keep your response under 450 words.
-${TOOL_SCHEMA_DEBATER}`,
-  bear_debater: (round, debateHistory, intensity = "moderate") => `You are the BEAR advocate in a structured investment debate.
-This is round ${round} of the debate.
-${debateHistory ? `\nDebate so far:\n${debateHistory}\n` : ""}
-IMPORTANT: If fundamentals data in the analyst reports is marked MISSING, DATA_GAP, or DATA_UNAVAILABLE, do NOT invent valuation or growth numbers. Reframe ALL arguments explicitly as technical + narrative. Downgrade your stated conviction ceiling to a maximum of 6/10.
-${INTENSITY_INSTRUCTIONS[intensity]}
-
-Your task:
-1. Present the 3-4 strongest bear arguments. Each argument MUST include an evidence_ref citing a specific data point — for example: a price level, volume reading, indicator value, news date, ratio value, or a field from the ANALYST JSON SUMMARIES (e.g., ma_stack: "bearish", surprise_trend: "consistent_miss", crowding_risk: "high").
-2. Address and rebut the most compelling bull arguments raised so far.
-3. Explain why the downside risks outweigh the stated opportunities.
-4. Reference the ANALYST JSON SUMMARIES section when available — cite JSON fields directly rather than paraphrasing the full narrative.
-
-Be persuasive, data-driven, and focused. Keep your response under 450 words.
-${TOOL_SCHEMA_DEBATER}`,
-  // ── Research manager (updated: contradiction check requirement) ──────────
-
-  research_manager: isFinal => `You are a senior research manager who has just reviewed a structured bull/bear debate.
-Your task is to synthesize both sides and produce a balanced research judgment.
-
-Structure your response as:
-## Strongest Bull Points (top 3, ranked by conviction)
-## Strongest Bear Points (top 3, ranked by concern)
-## Key Uncertainties / Information Gaps
-## Contradiction Check
-Identify any contradictions between analyst reports. For each, output: {analyst_a, analyst_b, claim_conflict, data_quality_note}. If none, state "No significant contradictions found."
-## Research Verdict
-State clearly: Bull-leaning / Bear-leaning / Balanced — with a concise 2-3 sentence rationale explaining the decisive factors.
-If an INVESTOR FOCUS section is present in the context, include a dedicated "## Investor Focus Assessment" section evaluating whether the debate supports or contradicts the investor's stated interest.
-Do NOT make a specific trading recommendation — that is the trader's role.
-${!isFinal ? `
-After your verdict, on a new line, indicate whether another debate round would materially improve the analysis:
-<continue_debate>true</continue_debate>   ← if significant unresolved disagreements remain
-<continue_debate>false</continue_debate>  ← if the verdict is sufficiently clear` : ""}`,
-  // ── Trader (updated: reference new analysts) ────────────────────────────
-
-  trader: `You are a portfolio trader who has received detailed analyst reports and a research manager's verdict.
-Your task is to translate the research into a preliminary trading action.
-Specify clearly:
-- **Action**: BUY / SELL / HOLD / STRONG_BUY / STRONG_SELL
-- **Time Horizon**: short_term (days–weeks) / medium_term (weeks–months) / long_term (months+)
-- **Conviction**: 1–10 score with rationale
-- **Rationale**: 3–5 sentences explaining your decision based on the most important evidence
-- **Entry consideration**: approximate price level or condition for initiating the position
-- **Stop-loss consideration**: price level where your investment thesis is invalidated
-- **Position sizing**: recommended portfolio allocation percentage and reasoning
-
-NEW REQUIREMENTS:
-- If the SELL-SIDE ANALYST report includes a next_catalyst_date, you MUST reference it and determine whether to use an "event-aware" entry strategy (e.g., enter before/after earnings).
-- If the OWNERSHIP ANALYST report includes short_interest data, you MUST consider short squeeze or unwind risk.
-- Each scalePlan entry must explicitly indicate whether it is pre-event or post-event positioning.
-
-If an INVESTOR FOCUS section is present in your context, your recommendation MUST directly address the investor's stated interest — evaluate whether it aligns with the data, suggest modifications if needed, and explain risk/reward specifically for that strategy.
-
-Be pragmatic and specific. The risk team will review and may modify your recommendation.`,
-  // ── Risk analysts (unchanged) ───────────────────────────────────────────
-
-  risk_analyst_aggressive: `You are an aggressive risk analyst reviewing a trader's recommendation.
-Your perspective: you favor higher-conviction, higher-risk positions when the thesis is strong.
-Evaluate:
-1. Risk/reward ratio — is the upside compelling enough relative to the maximum downside?
-2. Key upside scenarios and their probability estimates
-3. What risks even an aggressive stance must monitor or hedge?
-4. Position sizing recommendation (aggressive tier: 3–5% of portfolio, >5% for very high conviction)
-5. Any conditions that would cause you to reduce or exit the position
-
-## Gap / Event Risk Mitigation (REQUIRED)
-You must address gap risk explicitly. Specify at least one of: defined-risk options structure (e.g., debit spread, protective put), reduced position size to limit gap exposure, avoiding holding through binary events (earnings, regulatory decisions), or a time-based stop. For high-beta or headline-driven situations, you MUST suggest at least one defined-risk alternative.
-
-Keep your response concise and action-oriented (under 350 words).`,
-  risk_analyst_conservative: `You are a conservative risk analyst reviewing a trader's recommendation.
-Your perspective: capital preservation is paramount; downside scenarios take priority.
-Evaluate:
-1. Worst-case scenarios and their plausibility — what could cause a 20–40% loss?
-2. Binary event risks (earnings, regulatory decisions, macro shocks) that could gap the position
-3. Are stop-loss levels appropriate for the stated volatility (ATR, beta)?
-4. Position sizing recommendation (conservative tier: 0.5–1.5% of portfolio)
-5. Conditions that should trigger an immediate exit
-
-Explicitly call out any risks underweighted in the bull case.
-
-## Gap / Event Risk Mitigation (REQUIRED)
-You must address gap risk explicitly. Specify at least one of: defined-risk options structure (e.g., debit spread, protective put), reduced position size to limit gap exposure, avoiding holding through binary events (earnings, regulatory decisions), or a time-based stop. For high-beta or headline-driven situations, you MUST suggest at least one defined-risk alternative.
-
-Keep your response concise (under 350 words).`,
-  risk_analyst_neutral: `You are a balanced risk analyst reviewing a trader's recommendation.
-Your perspective: you optimize for risk-adjusted returns, balancing upside capture with downside protection.
-Evaluate:
-1. Bull / base / bear scenario probabilities with rough return estimates for each
-2. Is the risk/reward ratio appropriate given current market conditions and volatility?
-3. How does this position interact with a diversified portfolio (correlation, sector concentration)?
-4. Position sizing recommendation (neutral tier: 1–3% of portfolio)
-5. Key price levels and metrics to monitor as early warning signals
-
-## Gap / Event Risk Mitigation (REQUIRED)
-You must address gap risk explicitly. Specify at least one of: defined-risk options structure (e.g., debit spread, protective put), reduced position size to limit gap exposure, avoiding holding through binary events (earnings, regulatory decisions), or a time-based stop. For high-beta or headline-driven situations, you MUST suggest at least one defined-risk alternative.
-
-Keep your response concise (under 350 words).`,
-  // ── Risk manager (updated: DATA_QUALITY_GATE + extended JSON schema) ────
-
-  risk_manager: isFinal => isFinal ? `You are the Chief Risk Officer making the FINAL trading decision.
-You have reviewed all analyst reports, the bull/bear research debate, the research manager verdict,
-the trader's recommendation, and perspectives from all three risk analysts.
-
-DATA_QUALITY_GATE:
-Read the DATA_QUALITY block in your context. Apply these hard constraints:
-- If overallGrade == "critical": set action="HOLD", conviction<=3, add "DATA_QUALITY_INSUFFICIENT" to riskFactors
-- If overallGrade == "low": conviction ceiling = 6, positionNowPct ceiling = 1.5%
-- If holdersStale is indicated: ignore any ownership-based arguments in bull/bear points
-- List all missing fields and conflict flags in your riskFactors array
-
-Synthesize everything and output your FINAL DECISION as a JSON object ONLY — no other text, no markdown fences.
-The JSON must exactly match this schema:
-{
-  "action": "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL",
-  "conviction": <integer 1-10>,
-  "targetPrice": <number or null>,
-  "stopLoss": <number or null>,
-  "timeHorizon": "short_term" | "medium_term" | "long_term",
-  "riskLevel": "low" | "medium" | "high",
-  "keyBullPoints": ["<string>", ...],
-  "keyBearPoints": ["<string>", ...],
-  "riskFactors": ["<string>", ...],
-  "summary": "<2-3 sentence final summary>",
-  "entryTriggers": [{"trigger_type": "close"|"intraday", "level": <number>, "confirmations": ["<string>"]}],
-  "invalidationLevel": <number or null>,
-  "scalePlan": [{"condition": "<string>", "targetPositionPct": <number>, "riskRationale": "<string>"}],
-  "hedgeSuggestion": "<string or null>",
-  "watchlistPlan": "<string describing entry conditions, or null>",
-  "gapRiskMitigation": ["<string>"],
-  "positionNowPct": <number or null>,
-  "compositeScores": {
-    "trend": "<bullish|bearish|sideways>",
-    "trendStrength": <1-10>,
-    "technicalBias": "<bullish|bearish|neutral>",
-    "rsiState": "<overbought|oversold|neutral>",
-    "macdState": "<bullish_cross|bearish_cross|converging|diverging>",
-    "valuationGrade": "<cheap|fair|expensive>",
-    "growthTrajectory": "<accelerating|stable|decelerating>",
-    "qualityScore": <1-10>,
-    "marginTrend": "<expanding|stable|compressing>",
-    "earningsStability": "<high|medium|low>",
-    "cashConversionScore": <1-10>,
-    "capitalReturnScore": <1-10>,
-    "revisionMomentum": "<strong_up|up|flat|down|strong_down>",
-    "surpriseTrend": "<consistent_beat|mixed|consistent_miss>",
-    "targetDispersion": <number>,
-    "ratingMigration": <number>,
-    "expectationGap": <number>,
-    "nextCatalystDate": "<ISO date string or null>",
-    "nextCatalystType": "<earnings|guidance|ex_dividend|other>",
-    "shortInterestPctFloat": <number>,
-    "shortInterestChange": <number>,
-    "crowdingRisk": "<high|medium|low>",
-    "ownershipDataStaleness": "<fresh|moderate|stale>",
-    "topHolderConcentration": <number>,
-    "companySentiment": "<positive|neutral|negative>",
-    "macroRegime": "<risk_on|neutral|risk_off>",
-    "catalystDensity": "<high|medium|low>"
-  },
-  "dataQuality": {
-    "overallGrade": "<high|medium|low|critical>",
-    "convictionCeiling": <number>,
-    "staleDataWarnings": ["<string>"],
-    "missingAnalysis": ["<string>"]
-  },
-  "aggregateScore": {
-    "bullScore": <0-100>,
-    "bearScore": <0-100>,
-    "netScore": <number>,
-    "confidenceInterval": [<number>, <number>],
-    "dominantFactor": "<string>"
+;// ./src/backend/services/ai/pipeline/parsers.ts
+/**
+ * Response parsers for the AI analysis pipeline.
+ *
+ * Extract structured data (tool calls, debate-continuation flags,
+ * JSON summaries, risk-manager decisions) from raw LLM output text,
+ * and evaluate data completeness of the MarketDataBundle.
+ */
+
+// ── Tool-call parsing ────────────────────────────────────────────────────────
+
+function parseToolCall(content) {
+  const match = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    const validNames = ["get_balance_sheet", "get_cash_flow", "get_income_statement", "get_insider_transactions", "get_global_macro_news", "get_barrons_news", "get_barrons_ratings", "get_barrons_financials"];
+    if (validNames.includes(parsed.name)) {
+      return {
+        name: parsed.name
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+function stripToolCallTag(content) {
+  return content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
+}
+
+// ── Debate continuation ──────────────────────────────────────────────────────
+
+function parseContinueDebate(content) {
+  const match = content.match(/<continue_debate>(true|false)<\/continue_debate>/i);
+  return match?.[1]?.toLowerCase() === "true";
+}
+
+// ── Summary JSON extraction ──────────────────────────────────────────────────
+
+/**
+ * Extract and parse the SUMMARY_JSON: {...} block from an analyst's response content.
+ * Returns null if no valid JSON block is found.
+ */
+function parseSummaryJSON(content) {
+  const match = content.match(/SUMMARY_JSON:\s*(\{[\s\S]*?\})/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
   }
 }
 
-RULES:
-- Even when action=HOLD, you MUST populate watchlistPlan with entry conditions and at least one scalePlan step.
-- You MUST populate compositeScores by extracting values from the ANALYST JSON SUMMARIES. Use the analyst's SUMMARY_JSON fields directly. If an analyst did not run or has no data, use reasonable defaults.
-- You MUST populate dataQuality based on the DATA_QUALITY block.
-- You MUST populate aggregateScore as a weighted synthesis of all factors.
-- If an INVESTOR FOCUS section is present, your summary MUST include a direct assessment of the investor's stated interest — whether it's supported by the analysis, what the specific risks are, and any recommended adjustments.` : `You are the Chief Risk Officer conducting an INTERMEDIATE risk review.
-You have reviewed the trader's recommendation and the three risk analyst perspectives for this round.
+/** Strip the SUMMARY_JSON block from displayed content. */
+function stripSummaryJSON(content) {
+  return content.replace(/SUMMARY_JSON:\s*\{[\s\S]*?\}/, "").trim();
+}
 
-Provide a brief 2–3 sentence assessment summarizing key areas of agreement and disagreement among the risk analysts.
-Then indicate whether another round of risk debate would materially improve the decision:
+// ── Risk-manager decision parsing ────────────────────────────────────────────
 
-<continue_debate>true</continue_debate>   ← if key risk disagreements remain unresolved
-<continue_debate>false</continue_debate>  ← if the risk picture is sufficiently clear for a final decision`
-};
+function parseRiskManagerDecision(content) {
+  try {
+    let jsonStr = content.trim();
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) jsonStr = fenceMatch[1].trim();
+    const parsed = JSON.parse(jsonStr);
+    // Inject defaults for extended fields so old stored records don't break
+    return {
+      action: parsed.action ?? "HOLD",
+      conviction: parsed.conviction ?? 5,
+      targetPrice: parsed.targetPrice ?? null,
+      stopLoss: parsed.stopLoss ?? null,
+      timeHorizon: parsed.timeHorizon ?? "medium_term",
+      riskLevel: parsed.riskLevel ?? "medium",
+      keyBullPoints: parsed.keyBullPoints ?? [],
+      keyBearPoints: parsed.keyBearPoints ?? [],
+      riskFactors: parsed.riskFactors ?? [],
+      summary: parsed.summary ?? "",
+      entryTriggers: parsed.entryTriggers ?? [],
+      invalidationLevel: parsed.invalidationLevel ?? null,
+      scalePlan: parsed.scalePlan ?? [],
+      hedgeSuggestion: parsed.hedgeSuggestion ?? null,
+      watchlistPlan: parsed.watchlistPlan ?? null,
+      gapRiskMitigation: parsed.gapRiskMitigation ?? [],
+      positionNowPct: parsed.positionNowPct ?? null,
+      compositeScores: parsed.compositeScores ?? null,
+      dataQuality: parsed.dataQuality ?? null,
+      aggregateScore: parsed.aggregateScore ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Data completeness evaluation ─────────────────────────────────────────────
+
+/** Evaluate MarketDataBundle for missing critical fields. */
+function evaluateDataCompleteness(data) {
+  const f = data.fundamentals;
+  const KEY_FIELDS = ["peRatio", "forwardPE", "priceToBook", "evToEbitda", "revenueGrowthYoy", "earningsGrowthYoy", "netMargin", "freeCashFlow"];
+  const missingFields = KEY_FIELDS.filter(k => f[k] == null);
+  const hasAnyStatement = (data.balanceSheet?.quarters?.length ?? 0) > 0 || (data.cashFlow?.quarters?.length ?? 0) > 0 || (data.incomeStatement?.quarters?.length ?? 0) > 0;
+  const criticalMissing = missingFields.length > 4 && !hasAnyStatement;
+  return {
+    missingFields,
+    criticalMissing
+  };
+}
 ;// ./src/backend/services/ai/pipeline/formatters.ts
 /**
  * Text formatters for the AI analysis pipeline.
@@ -69003,115 +69243,560 @@ function buildAnalystsContext(symbol, data) {
     ownership: ownershipCtx
   };
 }
-;// ./src/backend/services/ai/pipeline/parsers.ts
+;// ./src/backend/services/ai/pipeline/prepareBundle.ts
+
+
+
+
+
+
 /**
- * Response parsers for the AI analysis pipeline.
- *
- * Extract structured data (tool calls, debate-continuation flags,
- * JSON summaries, risk-manager decisions) from raw LLM output text,
- * and evaluate data completeness of the MarketDataBundle.
+ * Build the per-run bundle of context strings + tool executor that all
+ * downstream phases consume. Idempotent and side-effect-free apart from the
+ * memory-store read.
  */
-
-// ── Tool-call parsing ────────────────────────────────────────────────────────
-
-function parseToolCall(content) {
-  const match = content.match(/<tool_call>([\s\S]*?)<\/tool_call>/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[1].trim());
-    const validNames = ["get_balance_sheet", "get_cash_flow", "get_income_statement", "get_insider_transactions", "get_global_macro_news", "get_barrons_news", "get_barrons_ratings", "get_barrons_financials"];
-    if (validNames.includes(parsed.name)) {
-      return {
-        name: parsed.name
-      };
+async function prepareBundle(args) {
+  const {
+    symbol,
+    marketData,
+    fetcher,
+    memoryStore,
+    enableMemory
+  } = args;
+  let memoryCtx = "";
+  if (enableMemory && memoryStore) {
+    try {
+      const memories = await memoryStore.getRecentForSymbol(symbol, 3);
+      if (memories.length > 0) memoryCtx = formatMemoryContext(memories);
+    } catch {
+      // non-critical — memory absence is recoverable
     }
-  } catch {
-    // ignore
   }
-  return null;
-}
-function stripToolCallTag(content) {
-  return content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
-}
-
-// ── Debate continuation ──────────────────────────────────────────────────────
-
-function parseContinueDebate(content) {
-  const match = content.match(/<continue_debate>(true|false)<\/continue_debate>/i);
-  return match?.[1]?.toLowerCase() === "true";
-}
-
-// ── Summary JSON extraction ──────────────────────────────────────────────────
-
-/**
- * Extract and parse the SUMMARY_JSON: {...} block from an analyst's response content.
- * Returns null if no valid JSON block is found.
- */
-function parseSummaryJSON(content) {
-  const match = content.match(/SUMMARY_JSON:\s*(\{[\s\S]*?\})/);
-  if (!match) return null;
-  try {
-    return JSON.parse(match[1]);
-  } catch {
-    return null;
-  }
-}
-
-/** Strip the SUMMARY_JSON block from displayed content. */
-function stripSummaryJSON(content) {
-  return content.replace(/SUMMARY_JSON:\s*\{[\s\S]*?\}/, "").trim();
-}
-
-// ── Risk-manager decision parsing ────────────────────────────────────────────
-
-function parseRiskManagerDecision(content) {
-  try {
-    let jsonStr = content.trim();
-    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) jsonStr = fenceMatch[1].trim();
-    const parsed = JSON.parse(jsonStr);
-    // Inject defaults for extended fields so old stored records don't break
-    return {
-      action: parsed.action ?? "HOLD",
-      conviction: parsed.conviction ?? 5,
-      targetPrice: parsed.targetPrice ?? null,
-      stopLoss: parsed.stopLoss ?? null,
-      timeHorizon: parsed.timeHorizon ?? "medium_term",
-      riskLevel: parsed.riskLevel ?? "medium",
-      keyBullPoints: parsed.keyBullPoints ?? [],
-      keyBearPoints: parsed.keyBearPoints ?? [],
-      riskFactors: parsed.riskFactors ?? [],
-      summary: parsed.summary ?? "",
-      entryTriggers: parsed.entryTriggers ?? [],
-      invalidationLevel: parsed.invalidationLevel ?? null,
-      scalePlan: parsed.scalePlan ?? [],
-      hedgeSuggestion: parsed.hedgeSuggestion ?? null,
-      watchlistPlan: parsed.watchlistPlan ?? null,
-      gapRiskMitigation: parsed.gapRiskMitigation ?? [],
-      positionNowPct: parsed.positionNowPct ?? null,
-      compositeScores: parsed.compositeScores ?? null,
-      dataQuality: parsed.dataQuality ?? null,
-      aggregateScore: parsed.aggregateScore ?? null
-    };
-  } catch {
-    return null;
-  }
-}
-
-// ── Data completeness evaluation ─────────────────────────────────────────────
-
-/** Evaluate MarketDataBundle for missing critical fields. */
-function evaluateDataCompleteness(data) {
-  const f = data.fundamentals;
-  const KEY_FIELDS = ["peRatio", "forwardPE", "priceToBook", "evToEbitda", "revenueGrowthYoy", "earningsGrowthYoy", "netMargin", "freeCashFlow"];
-  const missingFields = KEY_FIELDS.filter(k => f[k] == null);
-  const hasAnyStatement = (data.balanceSheet?.quarters?.length ?? 0) > 0 || (data.cashFlow?.quarters?.length ?? 0) > 0 || (data.incomeStatement?.quarters?.length ?? 0) > 0;
-  const criticalMissing = missingFields.length > 4 && !hasAnyStatement;
+  const ctx = buildAnalystsContext(symbol, marketData);
+  const dataQuality = validateAndFlag(marketData);
+  const dqBlock = formatDataQualityBlock(dataQuality);
+  const dataCompleteness = evaluateDataCompleteness(marketData);
+  const dataWarningBlock = dataCompleteness.criticalMissing ? `\n## DATA_INTEGRITY_WARNING\nCritical fundamentals missing: ${dataCompleteness.missingFields.join(", ")}. No financial statements available. Output only a DATA_GAP block — do not write narrative.\n\n` : dataCompleteness.missingFields.length > 0 ? `\n## DATA_NOTE\nPartially missing fields: ${dataCompleteness.missingFields.join(", ")}. Note gaps inline and continue analysis.\n\n` : "";
+  const ohlcvFeatures = computeOHLCVFeatures(marketData.ohlcv90d);
+  const featureCtx = formatOHLCVFeatures(ohlcvFeatures, marketData.currentPrice);
+  const toolExecutor = buildToolExecutor(symbol, marketData, fetcher);
   return {
-    missingFields,
-    criticalMissing
+    ctx,
+    memoryCtx,
+    dqBlock,
+    dataWarningBlock,
+    featureCtx,
+    toolExecutor
   };
 }
+;// ./src/backend/services/ai/prompts/agents/marketAnalyst.ts
+const MARKET_ANALYST = `You are a seasoned market analyst specializing in price action and market structure.
+Analyze the OHLCV data and recent price history provided to assess the current trading environment.
+Focus on:
+1. Current trend direction and momentum (bullish / bearish / sideways)
+2. Key price levels — recent swing highs/lows acting as support/resistance
+3. Volume patterns — confirmation or divergence with price (this section uses OHLCV data only; OBV trend is covered by the technicals analyst — do NOT reference OBV here)
+4. Any notable price patterns (consolidation, breakout, breakdown, topping/bottoming)
+5. Overall market structure assessment and near-term directional bias
+
+If BARRON'S PERFORMANCE data is present, incorporate the 5D/1M/3M/YTD/1Y return context into your trend assessment.
+
+Present your findings in concise, structured markdown. Do NOT make a buy/sell recommendation — only analyze market structure and price action.
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"trend":"<uptrend|downtrend|sideways>","trend_strength":<1-10>,"key_support":<number|null>,"key_resistance":<number|null>,"volume_regime":"<accumulation|distribution|neutral>"}`;
+;// ./src/backend/services/ai/prompts/agents/technicalsAnalyst.ts
+const TECHNICALS_ANALYST = `You are a technical analyst specializing in momentum indicators, chart signals, and quantitative price analysis.
+You will receive a pre-computed OHLCV_FEATURES block at the top of your context. Use ONLY that structured data for your analysis — do not request additional data via tools.
+If a specific feature is absent from OHLCV_FEATURES, note it in a limitations[] section but do not halt analysis.
+
+Focus on:
+1. Trend confirmation: price vs SMA20/50/200 alignment, golden/death cross proximity
+2. Momentum: RSI series (overbought >70, oversold <30, divergence with price using the series, not just the final value)
+3. MACD: line vs signal position, histogram direction, any recent crossovers
+4. Volatility: Bollinger Band position (squeeze, expansion), ATR as % of price
+5. Volume: OBV trend (accumulation vs distribution), price vs VWAP relationship
+6. Key levels — use ONLY these three categories:
+   - trigger_levels: price levels whose reclaim or break would confirm a directional thesis
+   - regime_shift_levels: key MA or Bollinger Band levels whose breach changes the technical regime
+   - invalidations: the specific price(s) where the current technical thesis fails
+   Do NOT use the word "target." Call them levels that would change the technical thesis.
+7. Gap analysis: characterize recent gap behavior and gap risk using the gapStats data
+8. Volume profile: note top price zones by volume as areas of potential support/resistance
+
+At the end, include a short limitations[] list noting any features that were absent or computed from fewer bars than ideal.
+
+Present concise, structured markdown. Do NOT make a buy/sell recommendation.
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"technical_bias":"<bullish|bearish|neutral>","ma_stack":"<bullish|bearish|mixed>","rsi_state":"<overbought|oversold|neutral>","macd_state":"<bullish_cross|bearish_cross|converging|diverging>","levels":{"reclaim":<number|null>,"fail":<number|null>,"invalidation":<number|null>}}`;
+;// ./src/backend/services/ai/prompts/tools.ts
+// Tool schemas appended to analysts that support tool-calling.
+
+const TOOL_SCHEMA_FUNDAMENTALS = `
+## Tool Access
+You may make UP TO 3 tool calls total. Stop as soon as any core financial statement returns data, or once all three are confirmed empty.
+
+Priority order (call in this sequence if needed):
+<tool_call>{"name": "get_barrons_ratings"}</tool_call>
+<tool_call>{"name": "get_barrons_financials"}</tool_call>
+
+If Barron's data is present in your context (sections prefixed with "BARRON'S"), treat it as a higher-confidence data source than Yahoo Finance for analyst consensus and financial ratios.
+If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block for that section and stop requesting that data type. Do NOT write narrative for missing data.`;
+const TOOL_SCHEMA_FINANCIAL_QUALITY = `
+## Tool Access
+You may make UP TO 3 tool calls total. Priority order:
+
+<tool_call>{"name": "get_cash_flow"}</tool_call>
+<tool_call>{"name": "get_balance_sheet"}</tool_call>
+<tool_call>{"name": "get_income_statement"}</tool_call>
+<tool_call>{"name": "get_insider_transactions"}</tool_call>
+<tool_call>{"name": "get_barrons_financials"}</tool_call>
+
+If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block for that section.`;
+const TOOL_SCHEMA_SENTIMENT_COMPANY = `
+## Tool Access
+If you need additional premium news, you may request Barron's news by appending a single tool call:
+
+<tool_call>{"name": "get_barrons_news"}</tool_call>
+
+NOTE ON SOURCE QUALITY: Barron's, Dow Jones Network, and Wall Street Journal are premium tier sources (high weight). If Barron's news is available, it should receive HIGHER weight than generic news aggregators.
+If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block; do NOT invent sentiment based on absent data.`;
+const TOOL_SCHEMA_SENTIMENT_MACRO = `
+## Tool Access
+If you need additional macro context, you may request ONE dataset:
+
+<tool_call>{"name": "get_global_macro_news"}</tool_call>
+
+If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block; do NOT invent sentiment based on absent data.`;
+const TOOL_SCHEMA_SELLSIDE = `
+## Tool Access
+If Barron's estimate data is not present in your context, you may request it:
+
+<tool_call>{"name": "get_barrons_ratings"}</tool_call>
+
+If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block.`;
+const TOOL_SCHEMA_OWNERSHIP = `
+## Tool Access
+If Barron's ownership data is not present in your context, you may request it:
+
+<tool_call>{"name": "get_barrons_ratings"}</tool_call>
+
+If a tool returns empty or no data: output a compact DATA_UNAVAILABLE block.`;
+const TOOL_SCHEMA_DEBATER = `
+## Tool Access
+If specific data would materially strengthen your argument, append ONE tool call at the very end:
+
+<tool_call>{"name": "get_balance_sheet"}</tool_call>
+<tool_call>{"name": "get_cash_flow"}</tool_call>
+<tool_call>{"name": "get_income_statement"}</tool_call>
+<tool_call>{"name": "get_insider_transactions"}</tool_call>
+<tool_call>{"name": "get_global_macro_news"}</tool_call>
+<tool_call>{"name": "get_barrons_news"}</tool_call>
+<tool_call>{"name": "get_barrons_ratings"}</tool_call>`;
+;// ./src/backend/services/ai/prompts/agents/fundamentalsAnalyst.ts
+
+const FUNDAMENTALS_ANALYST = `You are a fundamental equity analyst specializing in valuation and growth analysis.
+Analyze the valuation metrics and growth data provided to assess whether the stock is fairly valued relative to its growth trajectory.
+
+CRITICAL: If a DATA_INTEGRITY_WARNING block appears at the top of your context, output ONLY the following and stop — do not produce any narrative:
+DATA_GAP: {"reason": "<what is missing>", "completeness": "critical_gap"}
+
+If fields are partially missing (DATA_NOTE present but not DATA_INTEGRITY_WARNING), note gaps inline and continue analysis.
+
+Focus on:
+1. Valuation: P/E, P/B, EV/EBITDA, P/S relative to typical ranges for this sector
+2. Revenue and earnings growth trajectory (YoY, trend across quarters)
+3. Analyst consensus: target price vs current price gap
+4. Peer comparison: how does valuation compare to competitors (if Barron's peer data available)
+
+If BARRON'S VALUATION RATIOS are present, cross-reference them with Yahoo data for consistency. Barron's provides finer-grained valuation metrics not available from Yahoo.
+
+Present concise, structured markdown with specific numbers. Do NOT make a buy/sell recommendation.
+If any tool returns empty data, output DATA_UNAVAILABLE for that section — do not narrate missing data.
+${TOOL_SCHEMA_FUNDAMENTALS}
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"valuation_grade":"<cheap|fair|expensive|unavailable>","growth_trajectory":"<accelerating|stable|decelerating>","data_completeness":"<full|partial|critical_gap>","key_metrics":{"pe":<number|null>,"pb":<number|null>,"ev_ebitda":<number|null>}}`;
+;// ./src/backend/services/ai/prompts/agents/financialQualityAnalyst.ts
+
+const FINANCIAL_QUALITY_ANALYST = `You are a financial quality analyst specializing in profitability quality, balance sheet health, and cash flow analysis.
+Analyze the financial statements, margin trends, and cash generation data provided to assess the company's financial quality.
+
+CRITICAL: If a DATA_INTEGRITY_WARNING block appears at the top of your context, output ONLY the following and stop:
+DATA_GAP: {"reason": "<what is missing>", "completeness": "critical_gap"}
+
+Focus on:
+1. Profitability trends: gross/operating/net margin trajectory across recent periods (expanding, stable, or compressing?)
+2. Return metrics: ROA, ROE, ROIC if available from Barron's Profitability ratios
+3. Earnings stability: consistency of net income across quarters, volatility assessment
+4. Balance sheet health: debt levels, current/quick ratio, cash position (Barron's Capitalization + Liquidity sections)
+5. Cash conversion: operating cash flow / net income ratio (higher is better quality earnings)
+6. Capital returns: (buybacks + dividends) / free cash flow — shareholder return efficiency
+7. Insider activity: recent insider buy/sell signals and their implications
+
+If BARRONS_FINANCIAL_QUALITY pre-computed data is present, use it as primary data for margin trends and ratio analysis.
+
+Present concise, structured markdown with specific numbers. Do NOT make a buy/sell recommendation.
+${TOOL_SCHEMA_FINANCIAL_QUALITY}
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"quality_score":<1-10>,"margin_trend":"<expanding|stable|compressing>","earnings_stability":"<high|medium|low>","cash_conversion_score":<1-10>,"capital_return_score":<1-10>}`;
+;// ./src/backend/services/ai/prompts/agents/sentimentCompany.ts
+
+const SENTIMENT_COMPANY = `You are a company sentiment analyst who synthesizes company-specific news flow and narrative.
+Analyze ONLY the company-specific news provided (both Yahoo and Barron's/Dow Jones sources) to assess the sentiment picture for this specific stock.
+
+Structure your output in these exact sections:
+
+## Reported Facts
+(Only direct claims directly supported by headline or summary text. No inference here.)
+
+## Inferences
+(Each inference must include: claim, confidence: high/med/low, reasoning)
+
+## Source Weight Applied
+WSJ/Barron's/Dow Jones Network = HIGH weight (premium financial journalism)
+MT Newswires = MID weight
+Benzinga/TheStreet/MotleyFool = LOW weight
+Note if output is dominated by low-weight sources.
+
+## Upcoming Company Catalysts
+(Earnings, product launches, regulatory events — with dates if known)
+
+## Headline Impact Score: X/10
+Impact pathway: [regulatory / cash flow / valuation multiple / sentiment]
+
+## Company Sentiment Verdict
+positive / negative / neutral — 1-2 sentence rationale
+
+Do NOT analyze macro/market-wide news — that is handled by the macro sentiment analyst.
+Do NOT make a buy/sell recommendation.
+If any tool returns empty data, output DATA_UNAVAILABLE for that section.
+${TOOL_SCHEMA_SENTIMENT_COMPANY}
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"company_sentiment":"<positive|neutral|negative>","headline_impact_score":<1-10>,"top_catalysts":["<string>"],"catalyst_density":"<high|medium|low>"}`;
+;// ./src/backend/services/ai/prompts/agents/sentimentMacro.ts
+
+const SENTIMENT_MACRO = `You are a macro sentiment analyst who synthesizes global market conditions, Fed policy, and economic data to assess the macro backdrop.
+Analyze ONLY the macro and market-wide news provided to assess how broad conditions affect this stock.
+
+Structure your output in these exact sections:
+
+## Macro Environment Summary
+(Current state of: interest rates, inflation expectations, employment data, GDP outlook)
+
+## Market Regime Assessment
+risk_on / risk_off / neutral — with supporting evidence
+
+## Rate Environment
+dovish / neutral / hawkish — with impact on this stock's sector
+
+## Sector Rotation Signals
+(Any evidence of capital flowing into or out of this stock's sector)
+
+## Macro Risk Factors
+(Specific macro risks that could impact this stock: tariffs, regulation, geopolitical, etc.)
+
+## Macro Sentiment Verdict
+tailwind / headwind / neutral — 1-2 sentence rationale specifically for this stock
+
+Do NOT analyze company-specific news — that is handled by the company sentiment analyst.
+Do NOT make a buy/sell recommendation.
+${TOOL_SCHEMA_SENTIMENT_MACRO}
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"macro_regime":"<risk_on|neutral|risk_off>","rate_environment":"<dovish|neutral|hawkish>","sector_rotation":"<inflow|neutral|outflow>","macro_verdict":"<tailwind|headwind|neutral>"}`;
+;// ./src/backend/services/ai/prompts/agents/sellsideAnalyst.ts
+
+const SELLSIDE_ANALYST = `You are a sell-side research analyst specializing in analyst estimate revisions, earnings surprises, and consensus dynamics.
+Analyze the Barron's analyst data provided to assess the sell-side consensus and its trajectory.
+
+Focus on:
+1. Estimate revision momentum: are EPS estimates being revised UP or DOWN over 1-month and 3-month periods?
+2. Earnings surprise trend: is the company consistently beating or missing estimates? Count consecutive beats/misses.
+3. Price target dispersion: (high - low) / average target — higher = more analyst disagreement
+4. Rating migration: net change in Buy/Sell ratings from 3 months ago to current. Net upgrades = bullish signal.
+5. Expectation gap: (average target price - current price) / current price — positive = upside expected
+6. Next catalyst date: when is the next earnings report or guidance event?
+7. Forward estimates: are quarterly estimates trending up or down?
+
+If BARRONS_ESTIMATE_REVISIONS pre-computed data is present, use it as your primary data source.
+
+Present concise, structured markdown with specific numbers. Do NOT make a buy/sell recommendation.
+${TOOL_SCHEMA_SELLSIDE}
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"revision_momentum":"<strong_up|up|flat|down|strong_down>","surprise_trend":"<consistent_beat|mixed|consistent_miss>","target_dispersion":<number>,"rating_migration":<number>,"expectation_gap":<number>,"next_catalyst_date":"<ISO date or null>","next_catalyst_type":"<earnings|guidance|ex_dividend|other>"}`;
+;// ./src/backend/services/ai/prompts/agents/ownershipAnalyst.ts
+
+const OWNERSHIP_ANALYST = `You are an ownership and positioning analyst specializing in institutional ownership patterns, short interest dynamics, and holder concentration analysis.
+Analyze the Barron's ownership data provided to assess positioning risk and flow signals.
+
+STALENESS_WARNING: Barron's institutional and mutual fund holder data is based on SEC filings that are typically 6-18 months old. You MUST annotate each ownership-based conclusion with a confidence ceiling based on data freshness:
+- Data < 3 months old: high confidence
+- Data 3-6 months old: moderate confidence
+- Data > 6 months old: low confidence — flag as "STALE DATA" and cap conviction accordingly
+Short interest data (from keyData) is typically more recent and can receive higher weight.
+
+Focus on:
+1. Short interest: % of float shorted, recent changes, short squeeze potential
+2. Institutional concentration: top 10 holders as % of outstanding — high concentration = crowding risk
+3. Holder flow direction: are institutional holders increasing or decreasing positions (based on Chg column)?
+4. Float analysis: free float size relative to daily volume — liquidity assessment
+
+Present concise, structured markdown. Do NOT make a buy/sell recommendation.
+${TOOL_SCHEMA_OWNERSHIP}
+
+At the very end of your response, output ONLY the following JSON block (no markdown fences, no extra text after it):
+SUMMARY_JSON: {"short_interest_pct_float":<number>,"short_interest_change":<number>,"crowding_risk":"<high|medium|low>","ownership_data_staleness":"<fresh|moderate|stale>","top_holder_concentration":<number>}`;
+;// ./src/backend/services/ai/prompts/intensity.ts
+const INTENSITY_INSTRUCTIONS = {
+  conservative: "\nDEBATE STYLE: Present balanced arguments. Acknowledge opposing points fairly and avoid dismissing counterarguments. Maintain a collaborative, measured tone throughout.",
+  moderate: "\nDEBATE STYLE: Argue your position firmly while acknowledging key counterpoints. Push back on weak arguments but concede strong ones.",
+  aggressive: "\nDEBATE STYLE: Take the STRONGEST possible position. Challenge every counterpoint raised by the opposing side. Leave no argument uncontested. Be forceful, direct, and uncompromising in your advocacy — your job is to stress-test the thesis to its limits."
+};
+;// ./src/backend/services/ai/prompts/agents/debateBull.ts
+
+
+const bull_debater = (round, debateHistory, intensity = "moderate") => `You are the BULL advocate in a structured investment debate.
+This is round ${round} of the debate.
+${debateHistory ? `\nDebate so far:\n${debateHistory}\n` : ""}
+IMPORTANT: If fundamentals data in the analyst reports is marked MISSING, DATA_GAP, or DATA_UNAVAILABLE, do NOT invent valuation or growth numbers. Reframe ALL arguments explicitly as technical + narrative. Downgrade your stated conviction ceiling to a maximum of 6/10.
+${INTENSITY_INSTRUCTIONS[intensity]}
+
+Your task:
+1. Present the 3-4 strongest bull arguments. Each argument MUST include an evidence_ref citing a specific data point — for example: a price level, volume reading, indicator value, news date, ratio value, or a field from the ANALYST JSON SUMMARIES (e.g., rsi_state: "oversold", trend: "uptrend", revision_momentum: "strong_up").
+2. Address and rebut the most compelling bear arguments raised so far.
+3. Explain why the upside potential outweighs the stated risks.
+4. Reference the ANALYST JSON SUMMARIES section when available — cite JSON fields directly rather than paraphrasing the full narrative.
+
+Be persuasive, data-driven, and focused. Keep your response under 450 words.
+${TOOL_SCHEMA_DEBATER}`;
+;// ./src/backend/services/ai/prompts/agents/debateBear.ts
+
+
+const bear_debater = (round, debateHistory, intensity = "moderate") => `You are the BEAR advocate in a structured investment debate.
+This is round ${round} of the debate.
+${debateHistory ? `\nDebate so far:\n${debateHistory}\n` : ""}
+IMPORTANT: If fundamentals data in the analyst reports is marked MISSING, DATA_GAP, or DATA_UNAVAILABLE, do NOT invent valuation or growth numbers. Reframe ALL arguments explicitly as technical + narrative. Downgrade your stated conviction ceiling to a maximum of 6/10.
+${INTENSITY_INSTRUCTIONS[intensity]}
+
+Your task:
+1. Present the 3-4 strongest bear arguments. Each argument MUST include an evidence_ref citing a specific data point — for example: a price level, volume reading, indicator value, news date, ratio value, or a field from the ANALYST JSON SUMMARIES (e.g., ma_stack: "bearish", surprise_trend: "consistent_miss", crowding_risk: "high").
+2. Address and rebut the most compelling bull arguments raised so far.
+3. Explain why the downside risks outweigh the stated opportunities.
+4. Reference the ANALYST JSON SUMMARIES section when available — cite JSON fields directly rather than paraphrasing the full narrative.
+
+Be persuasive, data-driven, and focused. Keep your response under 450 words.
+${TOOL_SCHEMA_DEBATER}`;
+;// ./src/backend/services/ai/prompts/agents/researchManager.ts
+const research_manager = isFinal => `You are a senior research manager who has just reviewed a structured bull/bear debate.
+Your task is to synthesize both sides and produce a balanced research judgment.
+
+Structure your response as:
+## Strongest Bull Points (top 3, ranked by conviction)
+## Strongest Bear Points (top 3, ranked by concern)
+## Key Uncertainties / Information Gaps
+## Contradiction Check
+Identify any contradictions between analyst reports. For each, output: {analyst_a, analyst_b, claim_conflict, data_quality_note}. If none, state "No significant contradictions found."
+## Research Verdict
+State clearly: Bull-leaning / Bear-leaning / Balanced — with a concise 2-3 sentence rationale explaining the decisive factors.
+If an INVESTOR FOCUS section is present in the context, include a dedicated "## Investor Focus Assessment" section evaluating whether the debate supports or contradicts the investor's stated interest.
+Do NOT make a specific trading recommendation — that is the trader's role.
+${!isFinal ? `
+After your verdict, on a new line, indicate whether another debate round would materially improve the analysis:
+<continue_debate>true</continue_debate>   ← if significant unresolved disagreements remain
+<continue_debate>false</continue_debate>  ← if the verdict is sufficiently clear` : ""}`;
+;// ./src/backend/services/ai/prompts/agents/trader.ts
+const TRADER = `You are a portfolio trader who has received detailed analyst reports and a research manager's verdict.
+Your task is to translate the research into a preliminary trading action.
+Specify clearly:
+- **Action**: BUY / SELL / HOLD / STRONG_BUY / STRONG_SELL
+- **Time Horizon**: short_term (days–weeks) / medium_term (weeks–months) / long_term (months+)
+- **Conviction**: 1–10 score with rationale
+- **Rationale**: 3–5 sentences explaining your decision based on the most important evidence
+- **Entry consideration**: approximate price level or condition for initiating the position
+- **Stop-loss consideration**: price level where your investment thesis is invalidated
+- **Position sizing**: recommended portfolio allocation percentage and reasoning
+
+NEW REQUIREMENTS:
+- If the SELL-SIDE ANALYST report includes a next_catalyst_date, you MUST reference it and determine whether to use an "event-aware" entry strategy (e.g., enter before/after earnings).
+- If the OWNERSHIP ANALYST report includes short_interest data, you MUST consider short squeeze or unwind risk.
+- Each scalePlan entry must explicitly indicate whether it is pre-event or post-event positioning.
+
+If an INVESTOR FOCUS section is present in your context, your recommendation MUST directly address the investor's stated interest — evaluate whether it aligns with the data, suggest modifications if needed, and explain risk/reward specifically for that strategy.
+
+Be pragmatic and specific. The risk team will review and may modify your recommendation.`;
+;// ./src/backend/services/ai/prompts/agents/riskAggressive.ts
+const RISK_AGGRESSIVE = `You are an aggressive risk analyst reviewing a trader's recommendation.
+Your perspective: you favor higher-conviction, higher-risk positions when the thesis is strong.
+Evaluate:
+1. Risk/reward ratio — is the upside compelling enough relative to the maximum downside?
+2. Key upside scenarios and their probability estimates
+3. What risks even an aggressive stance must monitor or hedge?
+4. Position sizing recommendation (aggressive tier: 3–5% of portfolio, >5% for very high conviction)
+5. Any conditions that would cause you to reduce or exit the position
+
+## Gap / Event Risk Mitigation (REQUIRED)
+You must address gap risk explicitly. Specify at least one of: defined-risk options structure (e.g., debit spread, protective put), reduced position size to limit gap exposure, avoiding holding through binary events (earnings, regulatory decisions), or a time-based stop. For high-beta or headline-driven situations, you MUST suggest at least one defined-risk alternative.
+
+Keep your response concise and action-oriented (under 350 words).`;
+;// ./src/backend/services/ai/prompts/agents/riskConservative.ts
+const RISK_CONSERVATIVE = `You are a conservative risk analyst reviewing a trader's recommendation.
+Your perspective: capital preservation is paramount; downside scenarios take priority.
+Evaluate:
+1. Worst-case scenarios and their plausibility — what could cause a 20–40% loss?
+2. Binary event risks (earnings, regulatory decisions, macro shocks) that could gap the position
+3. Are stop-loss levels appropriate for the stated volatility (ATR, beta)?
+4. Position sizing recommendation (conservative tier: 0.5–1.5% of portfolio)
+5. Conditions that should trigger an immediate exit
+
+Explicitly call out any risks underweighted in the bull case.
+
+## Gap / Event Risk Mitigation (REQUIRED)
+You must address gap risk explicitly. Specify at least one of: defined-risk options structure (e.g., debit spread, protective put), reduced position size to limit gap exposure, avoiding holding through binary events (earnings, regulatory decisions), or a time-based stop. For high-beta or headline-driven situations, you MUST suggest at least one defined-risk alternative.
+
+Keep your response concise (under 350 words).`;
+;// ./src/backend/services/ai/prompts/agents/riskNeutral.ts
+const RISK_NEUTRAL = `You are a balanced risk analyst reviewing a trader's recommendation.
+Your perspective: you optimize for risk-adjusted returns, balancing upside capture with downside protection.
+Evaluate:
+1. Bull / base / bear scenario probabilities with rough return estimates for each
+2. Is the risk/reward ratio appropriate given current market conditions and volatility?
+3. How does this position interact with a diversified portfolio (correlation, sector concentration)?
+4. Position sizing recommendation (neutral tier: 1–3% of portfolio)
+5. Key price levels and metrics to monitor as early warning signals
+
+## Gap / Event Risk Mitigation (REQUIRED)
+You must address gap risk explicitly. Specify at least one of: defined-risk options structure (e.g., debit spread, protective put), reduced position size to limit gap exposure, avoiding holding through binary events (earnings, regulatory decisions), or a time-based stop. For high-beta or headline-driven situations, you MUST suggest at least one defined-risk alternative.
+
+Keep your response concise (under 350 words).`;
+;// ./src/backend/services/ai/prompts/agents/riskManager.ts
+const risk_manager = isFinal => isFinal ? `You are the Chief Risk Officer making the FINAL trading decision.
+You have reviewed all analyst reports, the bull/bear research debate, the research manager verdict,
+the trader's recommendation, and perspectives from all three risk analysts.
+
+DATA_QUALITY_GATE:
+Read the DATA_QUALITY block in your context. Apply these hard constraints:
+- If overallGrade == "critical": set action="HOLD", conviction<=3, add "DATA_QUALITY_INSUFFICIENT" to riskFactors
+- If overallGrade == "low": conviction ceiling = 6, positionNowPct ceiling = 1.5%
+- If holdersStale is indicated: ignore any ownership-based arguments in bull/bear points
+- List all missing fields and conflict flags in your riskFactors array
+
+Synthesize everything and output your FINAL DECISION as a JSON object ONLY — no other text, no markdown fences.
+The JSON must exactly match this schema:
+{
+  "action": "BUY" | "SELL" | "HOLD" | "STRONG_BUY" | "STRONG_SELL",
+  "conviction": <integer 1-10>,
+  "targetPrice": <number or null>,
+  "stopLoss": <number or null>,
+  "timeHorizon": "short_term" | "medium_term" | "long_term",
+  "riskLevel": "low" | "medium" | "high",
+  "keyBullPoints": ["<string>", ...],
+  "keyBearPoints": ["<string>", ...],
+  "riskFactors": ["<string>", ...],
+  "summary": "<2-3 sentence final summary>",
+  "entryTriggers": [{"trigger_type": "close"|"intraday", "level": <number>, "confirmations": ["<string>"]}],
+  "invalidationLevel": <number or null>,
+  "scalePlan": [{"condition": "<string>", "targetPositionPct": <number>, "riskRationale": "<string>"}],
+  "hedgeSuggestion": "<string or null>",
+  "watchlistPlan": "<string describing entry conditions, or null>",
+  "gapRiskMitigation": ["<string>"],
+  "positionNowPct": <number or null>,
+  "compositeScores": {
+    "trend": "<bullish|bearish|sideways>",
+    "trendStrength": <1-10>,
+    "technicalBias": "<bullish|bearish|neutral>",
+    "rsiState": "<overbought|oversold|neutral>",
+    "macdState": "<bullish_cross|bearish_cross|converging|diverging>",
+    "valuationGrade": "<cheap|fair|expensive>",
+    "growthTrajectory": "<accelerating|stable|decelerating>",
+    "qualityScore": <1-10>,
+    "marginTrend": "<expanding|stable|compressing>",
+    "earningsStability": "<high|medium|low>",
+    "cashConversionScore": <1-10>,
+    "capitalReturnScore": <1-10>,
+    "revisionMomentum": "<strong_up|up|flat|down|strong_down>",
+    "surpriseTrend": "<consistent_beat|mixed|consistent_miss>",
+    "targetDispersion": <number>,
+    "ratingMigration": <number>,
+    "expectationGap": <number>,
+    "nextCatalystDate": "<ISO date string or null>",
+    "nextCatalystType": "<earnings|guidance|ex_dividend|other>",
+    "shortInterestPctFloat": <number>,
+    "shortInterestChange": <number>,
+    "crowdingRisk": "<high|medium|low>",
+    "ownershipDataStaleness": "<fresh|moderate|stale>",
+    "topHolderConcentration": <number>,
+    "companySentiment": "<positive|neutral|negative>",
+    "macroRegime": "<risk_on|neutral|risk_off>",
+    "catalystDensity": "<high|medium|low>"
+  },
+  "dataQuality": {
+    "overallGrade": "<high|medium|low|critical>",
+    "convictionCeiling": <number>,
+    "staleDataWarnings": ["<string>"],
+    "missingAnalysis": ["<string>"]
+  },
+  "aggregateScore": {
+    "bullScore": <0-100>,
+    "bearScore": <0-100>,
+    "netScore": <number>,
+    "confidenceInterval": [<number>, <number>],
+    "dominantFactor": "<string>"
+  }
+}
+
+RULES:
+- Even when action=HOLD, you MUST populate watchlistPlan with entry conditions and at least one scalePlan step.
+- You MUST populate compositeScores by extracting values from the ANALYST JSON SUMMARIES. Use the analyst's SUMMARY_JSON fields directly. If an analyst did not run or has no data, use reasonable defaults.
+- You MUST populate dataQuality based on the DATA_QUALITY block.
+- You MUST populate aggregateScore as a weighted synthesis of all factors.
+- If an INVESTOR FOCUS section is present, your summary MUST include a direct assessment of the investor's stated interest — whether it's supported by the analysis, what the specific risks are, and any recommended adjustments.` : `You are the Chief Risk Officer conducting an INTERMEDIATE risk review.
+You have reviewed the trader's recommendation and the three risk analyst perspectives for this round.
+
+Provide a brief 2–3 sentence assessment summarizing key areas of agreement and disagreement among the risk analysts.
+Then indicate whether another round of risk debate would materially improve the decision:
+
+<continue_debate>true</continue_debate>   ← if key risk disagreements remain unresolved
+<continue_debate>false</continue_debate>  ← if the risk picture is sufficiently clear for a final decision`;
+;// ./src/backend/services/ai/prompts/prompts.ts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const PROMPTS = {
+  market_analyst: MARKET_ANALYST,
+  technicals_analyst: TECHNICALS_ANALYST,
+  fundamentals_analyst: FUNDAMENTALS_ANALYST,
+  financial_quality_analyst: FINANCIAL_QUALITY_ANALYST,
+  sentiment_company: SENTIMENT_COMPANY,
+  sentiment_macro: SENTIMENT_MACRO,
+  sellside_analyst: SELLSIDE_ANALYST,
+  ownership_analyst: OWNERSHIP_ANALYST,
+  bull_debater: bull_debater,
+  bear_debater: bear_debater,
+  research_manager: research_manager,
+  trader: TRADER,
+  risk_analyst_aggressive: RISK_AGGRESSIVE,
+  risk_analyst_conservative: RISK_CONSERVATIVE,
+  risk_analyst_neutral: RISK_NEUTRAL,
+  risk_manager: risk_manager
+};
 ;// ./src/backend/services/ai/pipeline/summarizers.ts
 /**
  * Analyst-report summarizers for the AI analysis pipeline.
@@ -69151,12 +69836,547 @@ function summarizeAnalystsWithJSON(stages) {
   if (!jsonEntries.length) return narrative;
   return narrative + "\n\n---\n\n## ANALYST JSON SUMMARIES\n" + jsonEntries.join("\n");
 }
+;// ./src/backend/services/ai/service/aiAgentRunner.ts
+
+/**
+ * Generic ReAct/tool-loop runner used by every agent phase.
+ * Behavior preserved verbatim from the previous AIOrchestrator method:
+ *   - Streams only on the final (non-tool) iteration when an onStream callback is provided.
+ *   - Tool calls iterate up to `maxIter` times; an iteration without a tool call ends the loop.
+ *   - Mutates `record.totalTokensUsed` and `state.stages` to reflect progress.
+ */
+async function runAgentWithTools(args) {
+  const {
+    record,
+    state,
+    onProgress,
+    role,
+    labelOverride,
+    systemPrompt,
+    initialUserContent,
+    targetProgress,
+    enableTools,
+    toolExecutor,
+    maxIter,
+    client,
+    temperatureOverride,
+    onStream,
+    webSearch,
+    signal
+  } = args;
+  const result = {
+    role,
+    label: labelOverride,
+    status: "running",
+    content: "",
+    toolCallsMade: 0
+  };
+  const startMs = Date.now();
+  state.stages = [...state.stages.filter(s => !(s.role === role && s.label === labelOverride)), result];
+  onProgress({
+    ...state
+  });
+  try {
+    const messages = [{
+      role: "user",
+      content: initialUserContent
+    }];
+    let lastContent = "";
+    let totalTokens = 0;
+    let toolCallsMade = 0;
+    let thinkingContent = "";
+    const citations = [];
+    const iterLimit = enableTools ? Math.max(1, maxIter) : 1;
+    for (let iter = 0; iter < iterLimit; iter++) {
+      const isLastIteration = !enableTools || iter >= iterLimit - 1;
+      const shouldStream = isLastIteration && onStream != null;
+      if (shouldStream) {
+        let accumulated = "";
+        let thinkingAccumulated = "";
+        for await (const chunk of client.completeStream({
+          messages,
+          systemPrompt,
+          ...(temperatureOverride != null ? {
+            temperature: temperatureOverride
+          } : {}),
+          webSearch,
+          signal
+        })) {
+          if (chunk.type === "text") {
+            accumulated += chunk.delta ?? "";
+            onStream({
+              type: "stage_text",
+              role,
+              label: labelOverride,
+              delta: chunk.delta ?? "",
+              accumulated
+            });
+          } else if (chunk.type === "thinking") {
+            thinkingAccumulated += chunk.delta ?? "";
+            onStream({
+              type: "stage_thinking",
+              role,
+              label: labelOverride,
+              delta: chunk.delta ?? "",
+              accumulated: thinkingAccumulated
+            });
+          } else if (chunk.type === "annotation" && chunk.annotation) {
+            citations.push(chunk.annotation);
+            onStream({
+              type: "stage_annotation",
+              role,
+              label: labelOverride,
+              annotation: chunk.annotation
+            });
+          } else if (chunk.type === "done") {
+            totalTokens += chunk.tokensUsed ?? 0;
+          } else if (chunk.type === "error") {
+            throw new Error(chunk.error ?? "Stream error");
+          }
+        }
+        lastContent = accumulated;
+        thinkingContent = thinkingAccumulated;
+        onStream({
+          type: "stage_done",
+          role,
+          label: labelOverride
+        });
+        break;
+      } else {
+        const response = await client.complete({
+          messages,
+          systemPrompt,
+          ...(temperatureOverride != null ? {
+            temperature: temperatureOverride
+          } : {})
+        });
+        lastContent = response.content;
+        totalTokens += response.tokensUsed;
+        if (!enableTools || iter >= iterLimit - 1) break;
+        const toolCall = parseToolCall(response.content);
+        if (!toolCall) break;
+        const executor = toolExecutor[toolCall.name];
+        if (!executor) break;
+        let toolResult;
+        try {
+          toolResult = await executor();
+        } catch (toolErr) {
+          toolResult = `Error fetching ${toolCall.name}: ${String(toolErr)}`;
+        }
+        toolCallsMade++;
+        messages.push({
+          role: "assistant",
+          content: response.content
+        });
+        messages.push({
+          role: "user",
+          content: `Tool result for ${toolCall.name}:\n\n${toolResult}\n\nPlease complete your analysis incorporating this additional data.`
+        });
+      }
+    }
+    result.content = stripToolCallTag(lastContent);
+    result.tokensUsed = totalTokens;
+    result.toolCallsMade = toolCallsMade;
+    result.status = "done";
+    result.systemPrompt = systemPrompt;
+    result.inputMessages = [...messages];
+    if (thinkingContent) result.thinkingContent = thinkingContent;
+    if (citations.length > 0) result.citations = citations;
+  } catch (err) {
+    result.status = "error";
+    result.errorMessage = err instanceof Error ? err.message : String(err);
+    // Don't rethrow — let pipeline continue
+  }
+  result.durationMs = Date.now() - startMs;
+  record.totalTokensUsed = (record.totalTokensUsed ?? 0) + (result.tokensUsed ?? 0);
+  state.stages = [...state.stages.filter(s => !(s.role === role && s.label === labelOverride)), result];
+  state.progress = targetProgress;
+  onProgress({
+    ...state
+  });
+  return result;
+}
+;// ./src/backend/services/ai/service/aiPhaseAnalysts.ts
+
+
+
+
+
+/**
+ * Phase 2 — run the eight analyst agents in parallel, parse SUMMARY_JSON
+ * trailers, and produce the cross-analyst summary used by the debate phase.
+ *
+ * Behavior preserved verbatim:
+ *   - Same analyst → context mapping (dqBlock, featureCtx, dataWarningBlock prefixes).
+ *   - Same per-analyst progress percentages (12, 16, 20, 24, 28, 32, 36, 40).
+ *   - Fundamentals + financial_quality get extra tool iterations (max(maxIter, 3)).
+ */
+async function runAnalystsPhase(args) {
+  const {
+    record,
+    state,
+    onProgress,
+    bundle,
+    focusBlock,
+    selectedAnalysts,
+    enableToolCalling,
+    maxToolIterations,
+    client,
+    streamCb,
+    enableWebSearch,
+    signal
+  } = args;
+  const {
+    ctx,
+    memoryCtx,
+    dqBlock,
+    dataWarningBlock,
+    featureCtx,
+    toolExecutor
+  } = bundle;
+  const analystMap = [["market", "market_analyst", dqBlock + ctx.market, 12], ["technicals", "technicals_analyst", dqBlock + featureCtx + "\n\n" + ctx.technicals, 16], ["fundamentals", "fundamentals_analyst", dqBlock + dataWarningBlock + ctx.fundamentals, 20], ["financial_quality", "financial_quality_analyst", dqBlock + dataWarningBlock + ctx.financialQuality, 24], ["sentiment_company", "sentiment_company", dqBlock + ctx.sentimentCompany, 28], ["sentiment_macro", "sentiment_macro", dqBlock + ctx.sentimentMacro, 32], ["sellside", "sellside_analyst", dqBlock + ctx.sellside, 36], ["ownership", "ownership_analyst", dqBlock + ctx.ownership, 40]];
+  const analystPromises = analystMap.filter(([key]) => selectedAnalysts.includes(key)).map(([key, role, ctxText, pct]) => runAgentWithTools({
+    record,
+    state,
+    onProgress,
+    role: role,
+    labelOverride: undefined,
+    systemPrompt: PROMPTS[role],
+    initialUserContent: focusBlock + memoryCtx + ctxText,
+    targetProgress: pct,
+    enableTools: enableToolCalling,
+    toolExecutor,
+    maxIter: key === "fundamentals" || key === "financial_quality" ? Math.max(maxToolIterations, 3) : maxToolIterations,
+    client,
+    onStream: streamCb,
+    webSearch: enableWebSearch,
+    signal
+  }));
+  const analystResults = await Promise.all(analystPromises);
+  for (const result of analystResults) {
+    if (result.status === "done" && result.content) {
+      result.summaryJSON = parseSummaryJSON(result.content) ?? undefined;
+      result.content = stripSummaryJSON(result.content);
+    }
+  }
+  record.stages.push(...analystResults);
+  const analystSummary = summarizeAnalystsWithJSON(record.stages);
+  return {
+    analystResults,
+    analystSummary
+  };
+}
+;// ./src/backend/services/ai/service/aiPhaseDebate.ts
+
+
+
+
+function checkCancelled(signal) {
+  if (signal.aborted) throw new Error("Cancelled");
+}
+
+/**
+ * Phase 3 — bull/bear debate with dynamic continuation, then a final
+ * Research Manager synthesis. Returns the full transcript + the final RM
+ * stage result + the actual round count used.
+ */
+async function runDebatePhase(args) {
+  const {
+    record,
+    state,
+    onProgress,
+    bundle,
+    symbol,
+    marketData,
+    analystSummary,
+    focusBlock,
+    maxDebateRounds,
+    debateIntensity,
+    debateHeat,
+    enableToolCalling,
+    maxToolIterations,
+    client,
+    streamCb,
+    signal
+  } = args;
+  const {
+    memoryCtx,
+    toolExecutor
+  } = bundle;
+  let debateHistory = "";
+  let actualDebateRounds = maxDebateRounds;
+  for (let round = 1; round <= maxDebateRounds; round++) {
+    const debateUserContent = focusBlock + (memoryCtx ? `${memoryCtx}---\n` : "") + `ANALYST REPORTS:\n${analystSummary}\n\nSYMBOL: ${symbol}, CURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}`;
+    const [bull, bear] = await Promise.all([runAgentWithTools({
+      record,
+      state,
+      onProgress,
+      role: "bull_debater",
+      labelOverride: `Bull Advocate (Round ${round})`,
+      systemPrompt: PROMPTS.bull_debater(round, debateHistory, debateIntensity),
+      initialUserContent: debateUserContent,
+      targetProgress: 50 + Math.round((round - 1) / maxDebateRounds * 15),
+      enableTools: enableToolCalling,
+      toolExecutor,
+      maxIter: maxToolIterations,
+      client,
+      temperatureOverride: debateHeat,
+      onStream: streamCb,
+      webSearch: false,
+      signal
+    }), runAgentWithTools({
+      record,
+      state,
+      onProgress,
+      role: "bear_debater",
+      labelOverride: `Bear Advocate (Round ${round})`,
+      systemPrompt: PROMPTS.bear_debater(round, debateHistory, debateIntensity),
+      initialUserContent: debateUserContent,
+      targetProgress: 52 + Math.round((round - 1) / maxDebateRounds * 15),
+      enableTools: enableToolCalling,
+      toolExecutor,
+      maxIter: maxToolIterations,
+      client,
+      temperatureOverride: debateHeat,
+      onStream: streamCb,
+      webSearch: false,
+      signal
+    })]);
+    record.stages.push(bull, bear);
+    debateHistory += `\n### BULL (Round ${round}):\n${stripToolCallTag(bull.content)}\n\n### BEAR (Round ${round}):\n${stripToolCallTag(bear.content)}\n`;
+    checkCancelled(signal);
+    if (round < maxDebateRounds) {
+      const interimRmContent = `ANALYST REPORTS:\n${analystSummary}\n\n---\n\nDEBATE HISTORY:\n${debateHistory}`;
+      const interimRm = await runAgentWithTools({
+        record,
+        state,
+        onProgress,
+        role: "research_manager",
+        labelOverride: `Research Manager (Round ${round} Assessment)`,
+        systemPrompt: PROMPTS.research_manager(false),
+        initialUserContent: interimRmContent,
+        targetProgress: 55 + Math.round(round / maxDebateRounds * 10),
+        enableTools: false,
+        toolExecutor,
+        maxIter: 0,
+        client,
+        onStream: streamCb,
+        webSearch: false,
+        signal
+      });
+      record.stages.push(interimRm);
+      checkCancelled(signal);
+      if (!parseContinueDebate(interimRm.content)) {
+        actualDebateRounds = round;
+        break;
+      }
+    }
+  }
+  const finalRmContent = `ANALYST REPORTS:\n${analystSummary}\n\n---\n\nFULL DEBATE (${actualDebateRounds} rounds):\n${debateHistory}`;
+  const rmResult = await runAgentWithTools({
+    record,
+    state,
+    onProgress,
+    role: "research_manager",
+    labelOverride: "Research Manager (Final Verdict)",
+    systemPrompt: PROMPTS.research_manager(true),
+    initialUserContent: finalRmContent,
+    targetProgress: 68,
+    enableTools: false,
+    toolExecutor,
+    maxIter: 0,
+    client,
+    onStream: streamCb,
+    webSearch: false,
+    signal
+  });
+  record.stages.push(rmResult);
+  checkCancelled(signal);
+  return {
+    debateHistory,
+    rmResult,
+    actualDebateRounds
+  };
+}
+
+/**
+ * Phase 4 — trader synthesizes a preliminary recommendation from the analyst
+ * reports and the Research Manager verdict.
+ */
+async function runTraderPhase(args) {
+  const {
+    record,
+    state,
+    onProgress,
+    bundle,
+    symbol,
+    marketData,
+    analystSummary,
+    rmResult,
+    focusBlock,
+    client,
+    streamCb,
+    signal
+  } = args;
+  const traderContent = focusBlock + (bundle.memoryCtx ? `${bundle.memoryCtx}---\n` : "") + `SYMBOL: ${symbol}\nCURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}\n\n` + `ANALYST REPORTS:\n${analystSummary}\n\n---\n\n` + `RESEARCH MANAGER VERDICT:\n${stripToolCallTag(rmResult.content)}`;
+  const traderResult = await runAgentWithTools({
+    record,
+    state,
+    onProgress,
+    role: "trader",
+    labelOverride: undefined,
+    systemPrompt: PROMPTS.trader,
+    initialUserContent: traderContent,
+    targetProgress: 75,
+    enableTools: false,
+    toolExecutor: bundle.toolExecutor,
+    maxIter: 0,
+    client,
+    onStream: streamCb,
+    webSearch: false,
+    signal
+  });
+  record.stages.push(traderResult);
+  checkCancelled(signal);
+  return traderResult;
+}
+
+/**
+ * Phase 5+6 — risk debate rounds (with dynamic continuation) followed by the
+ * final Risk Manager decision. Returns the parsed final decision.
+ */
+async function runRiskPhase(args) {
+  const {
+    record,
+    state,
+    onProgress,
+    bundle,
+    symbol,
+    marketData,
+    analystSummary,
+    traderResult,
+    focusBlock,
+    maxRiskRounds,
+    client,
+    streamCb,
+    signal
+  } = args;
+  const {
+    dqBlock,
+    toolExecutor
+  } = bundle;
+  const baseRiskCtx = focusBlock + `SYMBOL: ${symbol}\nCURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}\n` + `ATR(14): ${formatters_fmt(marketData.technicals.atr14)} | Beta: ${formatters_fmt(marketData.fundamentals.beta)}\n\n` + `ANALYST SUMMARY (excerpt):\n${analystSummary.slice(0, 2000)}\n\n---\n\n` + `TRADER RECOMMENDATION:\n${traderResult.content}`;
+  let riskHistory = "";
+  let actualRiskRounds = maxRiskRounds;
+  for (let round = 1; round <= maxRiskRounds; round++) {
+    const riskCtxWithHistory = riskHistory ? `${baseRiskCtx}\n\n---\n\nPREVIOUS RISK ROUND(S):\n${riskHistory}` : baseRiskCtx;
+    const roundPct = 75 + Math.round(round / maxRiskRounds * 12);
+    const [riskAgg, riskCons, riskNeut] = await Promise.all([runAgentWithTools({
+      record,
+      state,
+      onProgress,
+      role: "risk_analyst_aggressive",
+      labelOverride: maxRiskRounds > 1 ? `Risk Analyst - Aggressive (Round ${round})` : undefined,
+      systemPrompt: PROMPTS.risk_analyst_aggressive,
+      initialUserContent: riskCtxWithHistory,
+      targetProgress: roundPct,
+      enableTools: false,
+      toolExecutor,
+      maxIter: 0,
+      client,
+      onStream: streamCb,
+      webSearch: false,
+      signal
+    }), runAgentWithTools({
+      record,
+      state,
+      onProgress,
+      role: "risk_analyst_conservative",
+      labelOverride: maxRiskRounds > 1 ? `Risk Analyst - Conservative (Round ${round})` : undefined,
+      systemPrompt: PROMPTS.risk_analyst_conservative,
+      initialUserContent: riskCtxWithHistory,
+      targetProgress: roundPct + 2,
+      enableTools: false,
+      toolExecutor,
+      maxIter: 0,
+      client,
+      onStream: streamCb,
+      webSearch: false,
+      signal
+    }), runAgentWithTools({
+      record,
+      state,
+      onProgress,
+      role: "risk_analyst_neutral",
+      labelOverride: maxRiskRounds > 1 ? `Risk Analyst - Neutral (Round ${round})` : undefined,
+      systemPrompt: PROMPTS.risk_analyst_neutral,
+      initialUserContent: riskCtxWithHistory,
+      targetProgress: roundPct + 4,
+      enableTools: false,
+      toolExecutor,
+      maxIter: 0,
+      client,
+      onStream: streamCb,
+      webSearch: false,
+      signal
+    })]);
+    record.stages.push(riskAgg, riskCons, riskNeut);
+    riskHistory += `\n### AGGRESSIVE (Round ${round}):\n${riskAgg.content}\n\n` + `### CONSERVATIVE (Round ${round}):\n${riskCons.content}\n\n` + `### NEUTRAL (Round ${round}):\n${riskNeut.content}\n`;
+    checkCancelled(signal);
+    if (round < maxRiskRounds) {
+      const interimRiskMgrContent = `${baseRiskCtx}\n\n---\n\nRISK DEBATE (Round ${round}):\n` + `AGGRESSIVE:\n${riskAgg.content}\n\nCONSERVATIVE:\n${riskCons.content}\n\nNEUTRAL:\n${riskNeut.content}`;
+      const interimRiskMgr = await runAgentWithTools({
+        record,
+        state,
+        onProgress,
+        role: "risk_manager",
+        labelOverride: `Risk Manager (Round ${round} Assessment)`,
+        systemPrompt: PROMPTS.risk_manager(false),
+        initialUserContent: interimRiskMgrContent,
+        targetProgress: roundPct + 6,
+        enableTools: false,
+        toolExecutor,
+        maxIter: 0,
+        client,
+        onStream: streamCb,
+        webSearch: false,
+        signal
+      });
+      record.stages.push(interimRiskMgr);
+      checkCancelled(signal);
+      if (!parseContinueDebate(interimRiskMgr.content)) {
+        actualRiskRounds = round;
+        break;
+      }
+    }
+  }
+  const finalRiskContent = focusBlock + `SYMBOL: ${symbol}\nCURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}\n\n` + dqBlock + `TRADER RECOMMENDATION:\n${traderResult.content}\n\n---\n\n` + `RISK DEBATE (${actualRiskRounds} rounds):\n${riskHistory}`;
+  const riskManagerResult = await runAgentWithTools({
+    record,
+    state,
+    onProgress,
+    role: "risk_manager",
+    labelOverride: "Risk Manager (Final Decision)",
+    systemPrompt: PROMPTS.risk_manager(true),
+    initialUserContent: finalRiskContent,
+    targetProgress: 95,
+    enableTools: false,
+    toolExecutor,
+    maxIter: 0,
+    client,
+    onStream: streamCb,
+    webSearch: false,
+    signal
+  });
+  record.stages.push(riskManagerResult);
+  const finalDecision = parseRiskManagerDecision(riskManagerResult.content);
+  return {
+    riskManagerResult,
+    finalDecision,
+    actualRiskRounds
+  };
+}
 ;// ./src/backend/services/ai/AIOrchestrator.ts
-
-
-
-
-
 
 
 
@@ -69165,6 +70385,11 @@ function summarizeAnalystsWithJSON(stages) {
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
+/**
+ * Thin coordinator. All phase logic lives in `service/aiPhase*.ts` and
+ * `pipeline/prepareBundle.ts`; this class wires them together, owns the
+ * AbortController, and drives the AIAnalysisRecord lifecycle.
+ */
 class AIOrchestrator {
   cancelled = false;
   abortController = null;
@@ -69196,8 +70421,6 @@ class AIOrchestrator {
     } = config;
     const clampedDebateRounds = Math.max(2, Math.min(5, maxDebateRounds));
     const clampedRiskRounds = Math.max(1, Math.min(3, maxRiskRounds));
-
-    // Build focus block — injected into every agent's user context when present
     const focusBlock = focusTopic ? `\n## INVESTOR FOCUS\nThe investor's specific interest: "${focusTopic}"\nWhile completing your standard analysis, pay special attention to how your findings relate to this specific interest. Address it directly in your output.\n\n` : "";
     const provider = this.clients.analysts.provider;
     const record = {
@@ -69232,8 +70455,6 @@ class AIOrchestrator {
     onProgress({
       ...state
     });
-
-    // Resolve streaming params for agent runner
     const streamCb = enableStreaming ? onStream : undefined;
     const signal = this.abortController.signal;
     try {
@@ -69243,127 +70464,97 @@ class AIOrchestrator {
       record.marketData = marketData;
       this.checkCancelled();
 
-      // ── Load memory context ───────────────────────────────────────────
-      let memoryCtx = "";
-      if (enableMemory && this.memoryStore) {
-        try {
-          const memories = await this.memoryStore.getRecentForSymbol(symbol, 3);
-          if (memories.length > 0) memoryCtx = formatMemoryContext(memories);
-        } catch {
-          // non-critical
-        }
-      }
-      const ctx = buildAnalystsContext(symbol, marketData);
+      // ── Bundle: memory + dq + features + tool executor ────────────────
+      const bundle = await prepareBundle({
+        symbol,
+        marketData,
+        fetcher: this.fetcher,
+        memoryStore: this.memoryStore,
+        enableMemory
+      });
 
-      // ── Data quality gate ─────────────────────────────────────────────
-      const dataQuality = validateAndFlag(marketData);
-      const dqBlock = formatDataQualityBlock(dataQuality);
-
-      // Data integrity gate for missing fundamentals/statement inputs
-      const dataCompleteness = evaluateDataCompleteness(marketData);
-      const dataWarningBlock = dataCompleteness.criticalMissing ? `\n## DATA_INTEGRITY_WARNING\nCritical fundamentals missing: ${dataCompleteness.missingFields.join(", ")}. No financial statements available. Output only a DATA_GAP block — do not write narrative.\n\n` : dataCompleteness.missingFields.length > 0 ? `\n## DATA_NOTE\nPartially missing fields: ${dataCompleteness.missingFields.join(", ")}. Note gaps inline and continue analysis.\n\n` : "";
-
-      // ── OHLCV feature builder (suggestion 3) ────────────────────────
-      const ohlcvFeatures = computeOHLCVFeatures(marketData.ohlcv90d);
-      const featureCtx = formatOHLCVFeatures(ohlcvFeatures, marketData.currentPrice);
-
-      // Build tool executor that uses pre-fetched bundle data first
-      const toolExecutor = buildToolExecutor(symbol, marketData, this.fetcher);
-
-      // ── Phase 2: Run selected analysts in parallel (8 agents) ───────
+      // ── Phase 2: Analysts (parallel) ──────────────────────────────────
       this.tick(state, "running_analysts", 8, "Running analyst agents in parallel...", onProgress);
-      const analystMap = [["market", "market_analyst", dqBlock + ctx.market, 12], ["technicals", "technicals_analyst", dqBlock + featureCtx + "\n\n" + ctx.technicals, 16], ["fundamentals", "fundamentals_analyst", dqBlock + dataWarningBlock + ctx.fundamentals, 20], ["financial_quality", "financial_quality_analyst", dqBlock + dataWarningBlock + ctx.financialQuality, 24], ["sentiment_company", "sentiment_company", dqBlock + ctx.sentimentCompany, 28], ["sentiment_macro", "sentiment_macro", dqBlock + ctx.sentimentMacro, 32], ["sellside", "sellside_analyst", dqBlock + ctx.sellside, 36], ["ownership", "ownership_analyst", dqBlock + ctx.ownership, 40]];
-      const analystPromises = analystMap.filter(([key]) => selectedAnalysts.includes(key)).map(([key, role, ctxText, pct]) => this.runAgentWithTools(record, state, onProgress, role, undefined, PROMPTS[role], focusBlock + memoryCtx + ctxText, pct, enableToolCalling, toolExecutor,
-      // Fundamentals and financial quality get extra tool iterations
-      key === "fundamentals" || key === "financial_quality" ? Math.max(maxToolIterations, 3) : maxToolIterations, this.clients.analysts, undefined, streamCb, enableWebSearch, signal));
-      const analystResults = await Promise.all(analystPromises);
-
-      // Suggestion 8: parse and strip summaryJSON from each analyst result
-      for (const result of analystResults) {
-        if (result.status === "done" && result.content) {
-          result.summaryJSON = parseSummaryJSON(result.content) ?? undefined;
-          result.content = stripSummaryJSON(result.content);
-        }
-      }
-      record.stages.push(...analystResults);
+      const {
+        analystSummary
+      } = await runAnalystsPhase({
+        record,
+        state,
+        onProgress,
+        bundle,
+        focusBlock,
+        selectedAnalysts,
+        enableToolCalling,
+        maxToolIterations,
+        client: this.clients.analysts,
+        streamCb,
+        enableWebSearch,
+        signal
+      });
       this.checkCancelled();
 
-      // Suggestion 8: use JSON-enriched summary so debaters can reference structured fields
-      const analystSummary = summarizeAnalystsWithJSON(record.stages);
-
-      // ── Phase 3: Bull/Bear debate with dynamic continuation ───────────
+      // ── Phase 3: Bull/Bear debate + Research Manager ──────────────────
       this.tick(state, "running_debate", 50, "Running bull/bear debate...", onProgress);
-      let debateHistory = "";
-      let actualDebateRounds = clampedDebateRounds;
-      for (let round = 1; round <= clampedDebateRounds; round++) {
-        const debateUserContent = focusBlock + (memoryCtx ? `${memoryCtx}---\n` : "") + `ANALYST REPORTS:\n${analystSummary}\n\nSYMBOL: ${symbol}, CURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}`;
-        const [bull, bear] = await Promise.all([this.runAgentWithTools(record, state, onProgress, "bull_debater", `Bull Advocate (Round ${round})`, PROMPTS.bull_debater(round, debateHistory, debateIntensity), debateUserContent, 50 + Math.round((round - 1) / clampedDebateRounds * 15), enableToolCalling, toolExecutor, maxToolIterations, this.clients.debate, debateHeat, streamCb, false, signal), this.runAgentWithTools(record, state, onProgress, "bear_debater", `Bear Advocate (Round ${round})`, PROMPTS.bear_debater(round, debateHistory, debateIntensity), debateUserContent, 52 + Math.round((round - 1) / clampedDebateRounds * 15), enableToolCalling, toolExecutor, maxToolIterations, this.clients.debate, debateHeat, streamCb, false, signal)]);
-        record.stages.push(bull, bear);
-        debateHistory += `\n### BULL (Round ${round}):\n${stripToolCallTag(bull.content)}\n\n### BEAR (Round ${round}):\n${stripToolCallTag(bear.content)}\n`;
-        this.checkCancelled();
-
-        // Check continuation only if there are more potential rounds
-        if (round < clampedDebateRounds) {
-          const interimRmContent = `ANALYST REPORTS:\n${analystSummary}\n\n---\n\nDEBATE HISTORY:\n${debateHistory}`;
-          const interimRm = await this.runAgentWithTools(record, state, onProgress, "research_manager", `Research Manager (Round ${round} Assessment)`, PROMPTS.research_manager(false), interimRmContent, 55 + Math.round(round / clampedDebateRounds * 10), false, toolExecutor, 0, this.clients.debate, undefined, streamCb, false, signal);
-          record.stages.push(interimRm);
-          this.checkCancelled();
-          if (!parseContinueDebate(interimRm.content)) {
-            actualDebateRounds = round;
-            break; // Research manager says enough debate
-          }
-        }
-      }
-
-      // Final research manager synthesis
-      const finalRmContent = `ANALYST REPORTS:\n${analystSummary}\n\n---\n\nFULL DEBATE (${actualDebateRounds} rounds):\n${debateHistory}`;
-      const rmResult = await this.runAgentWithTools(record, state, onProgress, "research_manager", "Research Manager (Final Verdict)", PROMPTS.research_manager(true), finalRmContent, 68, false, toolExecutor, 0, this.clients.debate, undefined, streamCb, false, signal);
-      record.stages.push(rmResult);
-      this.checkCancelled();
+      const {
+        rmResult
+      } = await runDebatePhase({
+        record,
+        state,
+        onProgress,
+        bundle,
+        symbol,
+        marketData,
+        analystSummary,
+        focusBlock,
+        maxDebateRounds: clampedDebateRounds,
+        debateIntensity,
+        debateHeat,
+        enableToolCalling,
+        maxToolIterations,
+        client: this.clients.debate,
+        streamCb,
+        signal
+      });
 
       // ── Phase 4: Trader ───────────────────────────────────────────────
       this.tick(state, "running_trader", 68, "Trader synthesizing recommendation...", onProgress);
-      const traderContent = focusBlock + (memoryCtx ? `${memoryCtx}---\n` : "") + `SYMBOL: ${symbol}\nCURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}\n\n` + `ANALYST REPORTS:\n${analystSummary}\n\n---\n\n` + `RESEARCH MANAGER VERDICT:\n${stripToolCallTag(rmResult.content)}`;
-      const traderResult = await this.runAgentWithTools(record, state, onProgress, "trader", undefined, PROMPTS.trader, traderContent, 75, false, toolExecutor, 0, this.clients.trader, undefined, streamCb, false, signal);
-      record.stages.push(traderResult);
-      this.checkCancelled();
+      const traderResult = await runTraderPhase({
+        record,
+        state,
+        onProgress,
+        bundle,
+        symbol,
+        marketData,
+        analystSummary,
+        rmResult,
+        focusBlock,
+        client: this.clients.trader,
+        streamCb,
+        signal
+      });
 
-      // ── Phase 5: Risk debate rounds ───────────────────────────────────
+      // ── Phase 5+6: Risk debate + Final decision ───────────────────────
       this.tick(state, "running_risk", 75, "Running risk team debate...", onProgress);
-      const baseRiskCtx = focusBlock + `SYMBOL: ${symbol}\nCURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}\n` + `ATR(14): ${formatters_fmt(marketData.technicals.atr14)} | Beta: ${formatters_fmt(marketData.fundamentals.beta)}\n\n` + `ANALYST SUMMARY (excerpt):\n${analystSummary.slice(0, 2000)}\n\n---\n\n` + `TRADER RECOMMENDATION:\n${traderResult.content}`;
-      let riskHistory = "";
-      let actualRiskRounds = clampedRiskRounds;
-      for (let round = 1; round <= clampedRiskRounds; round++) {
-        const riskCtxWithHistory = riskHistory ? `${baseRiskCtx}\n\n---\n\nPREVIOUS RISK ROUND(S):\n${riskHistory}` : baseRiskCtx;
-        const roundPct = 75 + Math.round(round / clampedRiskRounds * 12);
-        const [riskAgg, riskCons, riskNeut] = await Promise.all([this.runAgentWithTools(record, state, onProgress, "risk_analyst_aggressive", clampedRiskRounds > 1 ? `Risk Analyst - Aggressive (Round ${round})` : undefined, PROMPTS.risk_analyst_aggressive, riskCtxWithHistory, roundPct, false, toolExecutor, 0, this.clients.risk, undefined, streamCb, false, signal), this.runAgentWithTools(record, state, onProgress, "risk_analyst_conservative", clampedRiskRounds > 1 ? `Risk Analyst - Conservative (Round ${round})` : undefined, PROMPTS.risk_analyst_conservative, riskCtxWithHistory, roundPct + 2, false, toolExecutor, 0, this.clients.risk, undefined, streamCb, false, signal), this.runAgentWithTools(record, state, onProgress, "risk_analyst_neutral", clampedRiskRounds > 1 ? `Risk Analyst - Neutral (Round ${round})` : undefined, PROMPTS.risk_analyst_neutral, riskCtxWithHistory, roundPct + 4, false, toolExecutor, 0, this.clients.risk, undefined, streamCb, false, signal)]);
-        record.stages.push(riskAgg, riskCons, riskNeut);
-        riskHistory += `\n### AGGRESSIVE (Round ${round}):\n${riskAgg.content}\n\n` + `### CONSERVATIVE (Round ${round}):\n${riskCons.content}\n\n` + `### NEUTRAL (Round ${round}):\n${riskNeut.content}\n`;
-        this.checkCancelled();
-
-        // Check continuation for non-final rounds
-        if (round < clampedRiskRounds) {
-          const interimRiskMgrContent = `${baseRiskCtx}\n\n---\n\nRISK DEBATE (Round ${round}):\n` + `AGGRESSIVE:\n${riskAgg.content}\n\nCONSERVATIVE:\n${riskCons.content}\n\nNEUTRAL:\n${riskNeut.content}`;
-          const interimRiskMgr = await this.runAgentWithTools(record, state, onProgress, "risk_manager", `Risk Manager (Round ${round} Assessment)`, PROMPTS.risk_manager(false), interimRiskMgrContent, roundPct + 6, false, toolExecutor, 0, this.clients.risk, undefined, streamCb, false, signal);
-          record.stages.push(interimRiskMgr);
-          this.checkCancelled();
-          if (!parseContinueDebate(interimRiskMgr.content)) {
-            actualRiskRounds = round;
-            break;
-          }
-        }
-      }
-
-      // ── Phase 6: Final risk manager decision ──────────────────────────
+      const {
+        finalDecision
+      } = await runRiskPhase({
+        record,
+        state,
+        onProgress,
+        bundle,
+        symbol,
+        marketData,
+        analystSummary,
+        traderResult,
+        focusBlock,
+        maxRiskRounds: clampedRiskRounds,
+        client: this.clients.risk,
+        streamCb,
+        signal
+      });
       this.tick(state, "finalizing", 88, "Risk manager making final decision...", onProgress);
-      const finalRiskContent = focusBlock + `SYMBOL: ${symbol}\nCURRENT PRICE: ${marketData.currentPrice != null ? "$" + marketData.currentPrice.toFixed(2) : "N/A"}\n\n` + dqBlock + `TRADER RECOMMENDATION:\n${traderResult.content}\n\n---\n\n` + `RISK DEBATE (${actualRiskRounds} rounds):\n${riskHistory}`;
-      const riskManagerResult = await this.runAgentWithTools(record, state, onProgress, "risk_manager", "Risk Manager (Final Decision)", PROMPTS.risk_manager(true), finalRiskContent, 95, false, toolExecutor, 0, this.clients.risk, undefined, streamCb, false, signal);
-      record.stages.push(riskManagerResult);
-      const finalDecision = parseRiskManagerDecision(riskManagerResult.content);
       record.finalDecision = finalDecision;
       state.finalDecision = finalDecision;
-
-      // ── Save memory (reflection) ──────────────────────────────────────
       record.status = "completed";
       record.completedAt = new Date().toISOString();
       record.totalTokensUsed = record.stages.reduce((s, r) => s + (r.tokensUsed ?? 0), 0);
@@ -69397,149 +70588,6 @@ class AIOrchestrator {
       });
       throw err;
     }
-  }
-
-  // ── Agent runner with tool-calling ReAct loop ────────────────────────────
-
-  async runAgentWithTools(record, state, onProgress, role, labelOverride, systemPrompt, initialUserContent, targetProgress, enableTools, toolExecutor, maxIter, client, temperatureOverride, onStream, webSearch, signal) {
-    const result = {
-      role,
-      label: labelOverride,
-      status: "running",
-      content: "",
-      toolCallsMade: 0
-    };
-    const startMs = Date.now();
-
-    // Mark as running in UI
-    state.stages = [...state.stages.filter(s => !(s.role === role && s.label === labelOverride)), result];
-    onProgress({
-      ...state
-    });
-    try {
-      const messages = [{
-        role: "user",
-        content: initialUserContent
-      }];
-      let lastContent = "";
-      let totalTokens = 0;
-      let toolCallsMade = 0;
-      let thinkingContent = "";
-      const citations = [];
-      const iterLimit = enableTools ? Math.max(1, maxIter) : 1;
-      const activeClient = client ?? this.clients.analysts;
-      for (let iter = 0; iter < iterLimit; iter++) {
-        const isLastIteration = !enableTools || iter >= iterLimit - 1;
-        const shouldStream = isLastIteration && onStream != null;
-        if (shouldStream) {
-          // ── Streaming path (final iteration only) ──────────────────
-          let accumulated = "";
-          let thinkingAccumulated = "";
-          for await (const chunk of activeClient.completeStream({
-            messages,
-            systemPrompt,
-            ...(temperatureOverride != null ? {
-              temperature: temperatureOverride
-            } : {}),
-            webSearch,
-            signal
-          })) {
-            if (chunk.type === "text") {
-              accumulated += chunk.delta ?? "";
-              onStream({
-                type: "stage_text",
-                role,
-                label: labelOverride,
-                delta: chunk.delta ?? "",
-                accumulated
-              });
-            } else if (chunk.type === "thinking") {
-              thinkingAccumulated += chunk.delta ?? "";
-              onStream({
-                type: "stage_thinking",
-                role,
-                label: labelOverride,
-                delta: chunk.delta ?? "",
-                accumulated: thinkingAccumulated
-              });
-            } else if (chunk.type === "annotation" && chunk.annotation) {
-              citations.push(chunk.annotation);
-              onStream({
-                type: "stage_annotation",
-                role,
-                label: labelOverride,
-                annotation: chunk.annotation
-              });
-            } else if (chunk.type === "done") {
-              totalTokens += chunk.tokensUsed ?? 0;
-            } else if (chunk.type === "error") {
-              throw new Error(chunk.error ?? "Stream error");
-            }
-          }
-          lastContent = accumulated;
-          thinkingContent = thinkingAccumulated;
-          onStream({
-            type: "stage_done",
-            role,
-            label: labelOverride
-          });
-          break;
-        } else {
-          // ── Non-streaming path (tool-calling iterations) ───────────
-          const response = await activeClient.complete({
-            messages,
-            systemPrompt,
-            ...(temperatureOverride != null ? {
-              temperature: temperatureOverride
-            } : {})
-          });
-          lastContent = response.content;
-          totalTokens += response.tokensUsed;
-          if (!enableTools || iter >= iterLimit - 1) break;
-          const toolCall = parseToolCall(response.content);
-          if (!toolCall) break;
-
-          // Execute tool and continue conversation
-          const executor = toolExecutor[toolCall.name];
-          if (!executor) break;
-          let toolResult;
-          try {
-            toolResult = await executor();
-          } catch (toolErr) {
-            toolResult = `Error fetching ${toolCall.name}: ${String(toolErr)}`;
-          }
-          toolCallsMade++;
-          messages.push({
-            role: "assistant",
-            content: response.content
-          });
-          messages.push({
-            role: "user",
-            content: `Tool result for ${toolCall.name}:\n\n${toolResult}\n\nPlease complete your analysis incorporating this additional data.`
-          });
-        }
-      }
-      result.content = stripToolCallTag(lastContent);
-      result.tokensUsed = totalTokens;
-      result.toolCallsMade = toolCallsMade;
-      result.status = "done";
-      result.systemPrompt = systemPrompt;
-      result.inputMessages = [...messages];
-      if (thinkingContent) result.thinkingContent = thinkingContent;
-      if (citations.length > 0) result.citations = citations;
-    } catch (err) {
-      result.status = "error";
-      result.errorMessage = err instanceof Error ? err.message : String(err);
-      // Don't rethrow — let pipeline continue
-    }
-    result.durationMs = Date.now() - startMs;
-    record.totalTokensUsed = (record.totalTokensUsed ?? 0) + (result.tokensUsed ?? 0);
-    state.stages = [...state.stages.filter(s => !(s.role === role && s.label === labelOverride)), result];
-    state.progress = targetProgress;
-    onProgress({
-      ...state
-    });
-    return result;
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -69930,6 +70978,153 @@ function formatPrice(model, openAIPricingTier = "standard") {
   if (!p) return "";
   const fmtNum = n => `$${n}`;
   return `${fmtNum(p.input)} / ${fmtNum(p.output)}`;
+}
+;// ./src/backend/services/ai/pipeline/reportBuilder.ts
+// Report = decision summary + per-agent output (what each agent concluded)
+function buildReport(record) {
+  const lines = [];
+  const d = record.finalDecision;
+  const ts = new Date(record.completedAt ?? record.requestedAt).toLocaleString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const divider = "\u2500".repeat(64);
+  const bigDivider = "\u2550".repeat(64);
+  lines.push(`AI Analysis Report \u2014 ${record.symbol}`);
+  lines.push(`Generated: ${ts}`);
+  lines.push(`Model: ${record.model} | Provider: ${record.provider}`);
+  lines.push(`${record.stages.length} agents \u00b7 ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens \u00b7 ${(record.totalDurationMs / 1000).toFixed(0)}s`);
+  lines.push("");
+  if (d) {
+    lines.push(bigDivider);
+    lines.push("FINAL DECISION");
+    lines.push(bigDivider);
+    lines.push(`DECISION: ${d.action}  |  Conviction: ${d.conviction}/10`);
+    lines.push(`Time Horizon: ${d.timeHorizon.replace(/_/g, " ")}  |  Risk Level: ${d.riskLevel}`);
+    if (d.targetPrice != null) lines.push(`Target Price: $${d.targetPrice.toFixed(2)}`);
+    if (d.stopLoss != null) lines.push(`Stop Loss:    $${d.stopLoss.toFixed(2)}`);
+    lines.push("");
+    lines.push("Summary:");
+    lines.push(d.summary);
+    lines.push("");
+    if (d.keyBullPoints.length > 0) {
+      lines.push("Bull Case:");
+      d.keyBullPoints.forEach(p => lines.push(`  \u2022 ${p}`));
+      lines.push("");
+    }
+    if (d.keyBearPoints.length > 0) {
+      lines.push("Bear Case:");
+      d.keyBearPoints.forEach(p => lines.push(`  \u2022 ${p}`));
+      lines.push("");
+    }
+    if (d.riskFactors.length > 0) {
+      lines.push("Risk Factors:");
+      d.riskFactors.forEach(p => lines.push(`  \u2022 ${p}`));
+      lines.push("");
+    }
+  }
+  for (const stage of record.stages) {
+    lines.push(divider);
+    const label = stage.label ?? stage.role;
+    const meta = [stage.status];
+    if (stage.durationMs != null) meta.push(`${(stage.durationMs / 1000).toFixed(1)}s`);
+    if (stage.tokensUsed != null) meta.push(`${stage.tokensUsed.toLocaleString()} tokens`);
+    if (stage.toolCallsMade != null && stage.toolCallsMade > 0) meta.push(`${stage.toolCallsMade} tool call${stage.toolCallsMade !== 1 ? "s" : ""}`);
+    lines.push(`[${label}]  (${meta.join(" | ")})`);
+    lines.push("");
+    if (stage.errorMessage) {
+      lines.push(`ERROR: ${stage.errorMessage}`);
+    } else {
+      lines.push(stage.content || "(no output)");
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+// Transcript = raw market data + every LLM exchange (system prompt -> user input -> assistant reply, including tool rounds)
+function buildTranscript(record) {
+  const lines = [];
+  const ts = new Date(record.completedAt ?? record.requestedAt).toLocaleString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const thin = "\u2500".repeat(64);
+  const thick = "\u2550".repeat(64);
+  lines.push(`AI Analysis Full Transcript \u2014 ${record.symbol}`);
+  lines.push(`Generated: ${ts}`);
+  lines.push(`Model: ${record.model} | Provider: ${record.provider}`);
+  lines.push(`${record.stages.length} stages \u00b7 ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens \u00b7 ${(record.totalDurationMs / 1000).toFixed(0)}s`);
+  lines.push("");
+  if (record.marketData) {
+    lines.push(thick);
+    lines.push("RAW MARKET DATA");
+    lines.push(thick);
+    lines.push(JSON.stringify(record.marketData, null, 2));
+    lines.push("");
+  }
+  for (const stage of record.stages) {
+    lines.push(thick);
+    const label = stage.label ?? stage.role;
+    const meta = [stage.status];
+    if (stage.durationMs != null) meta.push(`${(stage.durationMs / 1000).toFixed(1)}s`);
+    if (stage.tokensUsed != null) meta.push(`${stage.tokensUsed.toLocaleString()} tokens`);
+    if (stage.toolCallsMade != null && stage.toolCallsMade > 0) meta.push(`${stage.toolCallsMade} tool call${stage.toolCallsMade !== 1 ? "s" : ""}`);
+    lines.push(`STAGE: ${label}  (${meta.join(" | ")})`);
+    lines.push(thick);
+    if (stage.systemPrompt) {
+      lines.push(`${thin}`);
+      lines.push("SYSTEM PROMPT");
+      lines.push(`${thin}`);
+      lines.push(stage.systemPrompt);
+      lines.push("");
+    }
+    if (stage.inputMessages && stage.inputMessages.length > 0) {
+      for (let i = 0; i < stage.inputMessages.length; i++) {
+        const msg = stage.inputMessages[i];
+        lines.push(`${thin}`);
+        lines.push(`${msg.role === "user" ? "USER INPUT" : "ASSISTANT"} [turn ${i + 1}]`);
+        lines.push(`${thin}`);
+        lines.push(msg.content);
+        lines.push("");
+      }
+    } else {
+      lines.push("(prompt not recorded \u2014 generated before transcript logging was added)");
+      lines.push("");
+    }
+    lines.push(`${thin}`);
+    lines.push("ASSISTANT RESPONSE (final output)");
+    lines.push(`${thin}`);
+    if (stage.errorMessage) {
+      lines.push(`ERROR: ${stage.errorMessage}`);
+    } else {
+      lines.push(stage.content || "(no output)");
+    }
+    lines.push("");
+  }
+  if (record.finalDecision) {
+    lines.push(thick);
+    lines.push("FINAL DECISION (JSON)");
+    lines.push(thick);
+    lines.push(JSON.stringify(record.finalDecision, null, 2));
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+function decisionColor(action) {
+  if (action === "BUY" || action === "STRONG_BUY") return "var(--ios-green)";
+  if (action === "SELL" || action === "STRONG_SELL") return "var(--ios-red)";
+  return "var(--ios-orange)";
 }
 ;// ./src/shared/utils/markdown.ts
 /**
@@ -70323,6 +71518,302 @@ function renderDecisionSummary(decision, marketData) {
   addList("Bear Case", decision.keyBearPoints, DS_COLORS.negative);
   addList("Risk Factors", decision.riskFactors, DS_COLORS.neutral);
   return panel;
+}
+;// ./src/frontend/analysis_ai/components/reportList.ts
+
+
+
+
+
+
+// ── Copy button factory ──────────────────────────────────────────────────────
+
+const copyBtnStyle = DS_BUTTONS.secondary + " padding: 3px 8px; font-size: 10px; border-radius: 6px;";
+function makeCopyBtn(label, buildFn) {
+  const btn = createElement_ui_createElement("button", {
+    text: label,
+    styleString: copyBtnStyle
+  });
+  btn.addEventListener("click", async e => {
+    e.stopPropagation();
+    const orig = btn.textContent ?? label;
+    try {
+      await ui_copyTextToClipboard(buildFn());
+      btn.textContent = "Copied!";
+    } catch {
+      btn.textContent = "Failed";
+    }
+    setTimeout(() => {
+      btn.textContent = orig;
+    }, 1500);
+  });
+  return btn;
+}
+
+// ── Report list rendering ────────────────────────────────────────────────────
+
+function createReportList(opts) {
+  const {
+    onSelectReport,
+    onDeleteReport,
+    statusLabel,
+    compareBtn
+  } = opts;
+  let allReports = [];
+  const section = createElement_ui_createElement("div", {
+    styleString: "display: flex; flex-direction: column; gap: 6px;"
+  });
+  const render = records => {
+    section.innerHTML = "";
+    allReports = records;
+    const completed = records.filter(r => r.status === "completed");
+    compareBtn.disabled = completed.length < 2;
+    compareBtn.style.opacity = completed.length < 2 ? "0.45" : "1";
+    if (records.length === 0) {
+      section.appendChild(createElement_ui_createElement("div", {
+        text: "No reports yet. Click \u25b6 New Report to run the first analysis.",
+        styleString: "font-size: 12px; color: var(--ios-text-secondary); padding: 6px 0;"
+      }));
+      return;
+    }
+    section.appendChild(createElement_ui_createElement("span", {
+      text: `Reports (${records.length})`,
+      styleString: "font-size: 11px; font-weight: 700; color: var(--ios-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;"
+    }));
+    for (const rec of records) {
+      const ts = new Date(rec.completedAt ?? rec.requestedAt).toLocaleString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      });
+      const card = createElement_ui_createElement("div", {
+        styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 8px 12px;" + " background: var(--ax-glass-2-bg); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" + (rec.status === "completed" ? " cursor: pointer;" : "") + " transition: background 0.15s;"
+      });
+      if (rec.status === "completed") {
+        card.addEventListener("mouseenter", () => {
+          card.style.background = "var(--ax-bg-card)";
+        });
+        card.addEventListener("mouseleave", () => {
+          card.style.background = "var(--ax-glass-2-bg)";
+        });
+      }
+      const metaStyle = "font-size: 11px; color: var(--ios-text-secondary); white-space: nowrap; flex-shrink: 0;";
+      const dotStyle = "font-size: 11px; color: var(--ios-border); flex-shrink: 0;";
+      const dot = () => createElement_ui_createElement("span", {
+        text: "\u00b7",
+        styleString: dotStyle
+      });
+      card.appendChild(createElement_ui_createElement("span", {
+        text: ts,
+        styleString: metaStyle
+      }));
+      if (rec.finalDecision) {
+        const d = rec.finalDecision;
+        const color = decisionColor(d.action);
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: `${d.action} \u00b7 ${d.conviction}/10`,
+          styleString: `font-size: 11px; font-weight: 700; color: ${color}; white-space: nowrap;`
+        }));
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: d.timeHorizon.replace(/_/g, " "),
+          styleString: metaStyle
+        }));
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: d.riskLevel,
+          styleString: metaStyle
+        }));
+        if (d.targetPrice != null) {
+          card.appendChild(dot());
+          card.appendChild(createElement_ui_createElement("span", {
+            text: `\u2192$${d.targetPrice.toFixed(2)}`,
+            styleString: metaStyle
+          }));
+        }
+        if (d.stopLoss != null) {
+          card.appendChild(dot());
+          card.appendChild(createElement_ui_createElement("span", {
+            text: `\u2715$${d.stopLoss.toFixed(2)}`,
+            styleString: metaStyle
+          }));
+        }
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: formatTimeAgo(rec.completedAt ?? rec.requestedAt),
+          styleString: metaStyle
+        }));
+      } else if (rec.status === "failed") {
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: "Failed",
+          styleString: "font-size: 11px; color: var(--ios-red);"
+        }));
+      } else if (rec.status === "in_progress") {
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: "In Progress",
+          styleString: "font-size: 11px; color: var(--ios-orange);"
+        }));
+      }
+      if (rec.totalTokensUsed > 0) {
+        card.appendChild(dot());
+        card.appendChild(createElement_ui_createElement("span", {
+          text: `${(rec.totalTokensUsed / 1000).toFixed(1)}K tok`,
+          styleString: metaStyle
+        }));
+      }
+      card.appendChild(createElement_ui_createElement("span", {
+        styleString: "flex: 1;"
+      }));
+      if (rec.status === "completed") {
+        card.appendChild(makeCopyBtn("Report", () => buildReport(rec)));
+        card.appendChild(makeCopyBtn("Transcript", () => buildTranscript(rec)));
+      }
+      const delBtn = createElement_ui_createElement("button", {
+        text: "\u00d7",
+        styleString: "background: none; border: none; font-size: 18px; line-height: 1; cursor: pointer;" + " color: var(--ios-text-secondary); padding: 0 3px; font-weight: 300; flex-shrink: 0;"
+      });
+      delBtn.title = "Delete this report";
+      delBtn.addEventListener("click", async e => {
+        e.stopPropagation();
+        try {
+          statusLabel.textContent = "";
+          await onDeleteReport(rec.symbol, rec.id);
+        } catch {
+          /* ignore */
+        }
+      });
+      card.appendChild(delBtn);
+      if (rec.status === "completed") {
+        card.addEventListener("click", e => {
+          if (e.target.closest("button")) return;
+          onSelectReport(rec);
+          statusLabel.textContent = `Showing report from ${ts}`;
+        });
+      }
+      section.appendChild(card);
+    }
+  };
+  return {
+    element: section,
+    render,
+    getAllReports: () => allReports
+  };
+}
+;// ./src/frontend/analysis_ai/components/LiveResultsPanel.ts
+
+
+
+
+
+
+
+/**
+ * Encapsulates the live streaming-output panel and the finalized report view.
+ *
+ * - `handleStream(event)`: receives stream events, lazily creates per-stage
+ *   cards, and updates them in place.
+ * - `finalizeFromState(state)`: walks `state.stages` and finalizes any
+ *   streaming card whose stage has reached a terminal status.
+ * - `showRecord(record)`: clears the panel and renders a complete report
+ *   (decision summary + per-agent stage cards + copy buttons).
+ * - `reset()`: clears streaming state at the start of a new run.
+ */
+function createLiveResultsPanel(deps) {
+  const {
+    resultsSection
+  } = deps;
+  const streamingCards = new Map();
+  let streamingStagesBox = null;
+  const cardKey = (role, label) => label ? `${role}::${label}` : role;
+  function ensureStreamingHost() {
+    if (streamingStagesBox) return streamingStagesBox;
+    streamingStagesBox = createElement_ui_createElement("div", {
+      styleString: "display: flex; flex-direction: column; gap: 6px;"
+    });
+    resultsSection.style.display = "flex";
+    resultsSection.innerHTML = "";
+    resultsSection.appendChild(createElement_ui_createElement("span", {
+      text: "Live Agent Output",
+      styleString: DS_TYPOGRAPHY.heading
+    }));
+    resultsSection.appendChild(streamingStagesBox);
+    return streamingStagesBox;
+  }
+  function handleStream(event) {
+    const key = cardKey(event.role, event.label);
+    let card = streamingCards.get(key);
+    if (!card) {
+      card = createStreamingStageCard(event.role, event.label);
+      streamingCards.set(key, card);
+      ensureStreamingHost().appendChild(card.element);
+    }
+    if (event.type !== "stage_done") {
+      card.updateFromStream(event);
+    }
+  }
+  function finalizeFromState(state) {
+    if (streamingCards.size === 0) return;
+    for (const stage of state.stages) {
+      if (stage.status !== "running") {
+        const key = cardKey(stage.role, stage.label);
+        const card = streamingCards.get(key);
+        if (card) {
+          card.finalize(stage);
+          streamingCards.delete(key);
+        }
+      }
+    }
+  }
+  function showRecord(record) {
+    resultsSection.innerHTML = "";
+    resultsSection.style.display = "flex";
+    streamingCards.clear();
+    streamingStagesBox = null;
+    if (record.finalDecision) {
+      resultsSection.appendChild(renderDecisionSummary(record.finalDecision, record.marketData));
+    }
+    const stagesHeader = createElement_ui_createElement("div", {
+      styleString: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"
+    });
+    stagesHeader.appendChild(createElement_ui_createElement("span", {
+      text: "Agent Reports",
+      styleString: DS_TYPOGRAPHY.heading
+    }));
+    stagesHeader.appendChild(createElement_ui_createElement("span", {
+      text: `${record.stages.length} agents · ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens · ${(record.totalDurationMs / 1000).toFixed(0)}s`,
+      styleString: "font-size: 11px; color: var(--ios-text-secondary);"
+    }));
+    stagesHeader.appendChild(createElement_ui_createElement("span", {
+      styleString: "flex: 1;"
+    }));
+    stagesHeader.appendChild(makeCopyBtn("Copy Report", () => buildReport(record)));
+    stagesHeader.appendChild(makeCopyBtn("Copy Transcript", () => buildTranscript(record)));
+    resultsSection.appendChild(stagesHeader);
+    const stagesBox = createElement_ui_createElement("div", {
+      styleString: "display: flex; flex-direction: column; gap: 6px;"
+    });
+    for (const stage of record.stages) {
+      stagesBox.appendChild(renderStageCard(stage));
+    }
+    resultsSection.appendChild(stagesBox);
+  }
+  function reset() {
+    streamingCards.clear();
+    streamingStagesBox = null;
+  }
+  return {
+    handleStream,
+    finalizeFromState,
+    showRecord,
+    reset
+  };
 }
 ;// ./src/backend/services/ai/config/clientConfigFactory.ts
 
@@ -71525,153 +73016,6 @@ function createAISettingsPanel(opts) {
     getModelPriceLabel: modelSec.getModelPriceLabel
   };
 }
-;// ./src/backend/services/ai/pipeline/reportBuilder.ts
-// Report = decision summary + per-agent output (what each agent concluded)
-function buildReport(record) {
-  const lines = [];
-  const d = record.finalDecision;
-  const ts = new Date(record.completedAt ?? record.requestedAt).toLocaleString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-  const divider = "\u2500".repeat(64);
-  const bigDivider = "\u2550".repeat(64);
-  lines.push(`AI Analysis Report \u2014 ${record.symbol}`);
-  lines.push(`Generated: ${ts}`);
-  lines.push(`Model: ${record.model} | Provider: ${record.provider}`);
-  lines.push(`${record.stages.length} agents \u00b7 ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens \u00b7 ${(record.totalDurationMs / 1000).toFixed(0)}s`);
-  lines.push("");
-  if (d) {
-    lines.push(bigDivider);
-    lines.push("FINAL DECISION");
-    lines.push(bigDivider);
-    lines.push(`DECISION: ${d.action}  |  Conviction: ${d.conviction}/10`);
-    lines.push(`Time Horizon: ${d.timeHorizon.replace(/_/g, " ")}  |  Risk Level: ${d.riskLevel}`);
-    if (d.targetPrice != null) lines.push(`Target Price: $${d.targetPrice.toFixed(2)}`);
-    if (d.stopLoss != null) lines.push(`Stop Loss:    $${d.stopLoss.toFixed(2)}`);
-    lines.push("");
-    lines.push("Summary:");
-    lines.push(d.summary);
-    lines.push("");
-    if (d.keyBullPoints.length > 0) {
-      lines.push("Bull Case:");
-      d.keyBullPoints.forEach(p => lines.push(`  \u2022 ${p}`));
-      lines.push("");
-    }
-    if (d.keyBearPoints.length > 0) {
-      lines.push("Bear Case:");
-      d.keyBearPoints.forEach(p => lines.push(`  \u2022 ${p}`));
-      lines.push("");
-    }
-    if (d.riskFactors.length > 0) {
-      lines.push("Risk Factors:");
-      d.riskFactors.forEach(p => lines.push(`  \u2022 ${p}`));
-      lines.push("");
-    }
-  }
-  for (const stage of record.stages) {
-    lines.push(divider);
-    const label = stage.label ?? stage.role;
-    const meta = [stage.status];
-    if (stage.durationMs != null) meta.push(`${(stage.durationMs / 1000).toFixed(1)}s`);
-    if (stage.tokensUsed != null) meta.push(`${stage.tokensUsed.toLocaleString()} tokens`);
-    if (stage.toolCallsMade != null && stage.toolCallsMade > 0) meta.push(`${stage.toolCallsMade} tool call${stage.toolCallsMade !== 1 ? "s" : ""}`);
-    lines.push(`[${label}]  (${meta.join(" | ")})`);
-    lines.push("");
-    if (stage.errorMessage) {
-      lines.push(`ERROR: ${stage.errorMessage}`);
-    } else {
-      lines.push(stage.content || "(no output)");
-    }
-    lines.push("");
-  }
-  return lines.join("\n");
-}
-
-// Transcript = raw market data + every LLM exchange (system prompt -> user input -> assistant reply, including tool rounds)
-function buildTranscript(record) {
-  const lines = [];
-  const ts = new Date(record.completedAt ?? record.requestedAt).toLocaleString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-  const thin = "\u2500".repeat(64);
-  const thick = "\u2550".repeat(64);
-  lines.push(`AI Analysis Full Transcript \u2014 ${record.symbol}`);
-  lines.push(`Generated: ${ts}`);
-  lines.push(`Model: ${record.model} | Provider: ${record.provider}`);
-  lines.push(`${record.stages.length} stages \u00b7 ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens \u00b7 ${(record.totalDurationMs / 1000).toFixed(0)}s`);
-  lines.push("");
-  if (record.marketData) {
-    lines.push(thick);
-    lines.push("RAW MARKET DATA");
-    lines.push(thick);
-    lines.push(JSON.stringify(record.marketData, null, 2));
-    lines.push("");
-  }
-  for (const stage of record.stages) {
-    lines.push(thick);
-    const label = stage.label ?? stage.role;
-    const meta = [stage.status];
-    if (stage.durationMs != null) meta.push(`${(stage.durationMs / 1000).toFixed(1)}s`);
-    if (stage.tokensUsed != null) meta.push(`${stage.tokensUsed.toLocaleString()} tokens`);
-    if (stage.toolCallsMade != null && stage.toolCallsMade > 0) meta.push(`${stage.toolCallsMade} tool call${stage.toolCallsMade !== 1 ? "s" : ""}`);
-    lines.push(`STAGE: ${label}  (${meta.join(" | ")})`);
-    lines.push(thick);
-    if (stage.systemPrompt) {
-      lines.push(`${thin}`);
-      lines.push("SYSTEM PROMPT");
-      lines.push(`${thin}`);
-      lines.push(stage.systemPrompt);
-      lines.push("");
-    }
-    if (stage.inputMessages && stage.inputMessages.length > 0) {
-      for (let i = 0; i < stage.inputMessages.length; i++) {
-        const msg = stage.inputMessages[i];
-        lines.push(`${thin}`);
-        lines.push(`${msg.role === "user" ? "USER INPUT" : "ASSISTANT"} [turn ${i + 1}]`);
-        lines.push(`${thin}`);
-        lines.push(msg.content);
-        lines.push("");
-      }
-    } else {
-      lines.push("(prompt not recorded \u2014 generated before transcript logging was added)");
-      lines.push("");
-    }
-    lines.push(`${thin}`);
-    lines.push("ASSISTANT RESPONSE (final output)");
-    lines.push(`${thin}`);
-    if (stage.errorMessage) {
-      lines.push(`ERROR: ${stage.errorMessage}`);
-    } else {
-      lines.push(stage.content || "(no output)");
-    }
-    lines.push("");
-  }
-  if (record.finalDecision) {
-    lines.push(thick);
-    lines.push("FINAL DECISION (JSON)");
-    lines.push(thick);
-    lines.push(JSON.stringify(record.finalDecision, null, 2));
-    lines.push("");
-  }
-  return lines.join("\n");
-}
-function decisionColor(action) {
-  if (action === "BUY" || action === "STRONG_BUY") return "var(--ios-green)";
-  if (action === "SELL" || action === "STRONG_SELL") return "var(--ios-red)";
-  return "var(--ios-orange)";
-}
 ;// ./src/frontend/analysis_ai/pipeline/agentSelector.ts
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -72353,193 +73697,6 @@ function createPipelineFlow() {
     getState: () => currentPipelineState
   };
 }
-;// ./src/frontend/analysis_ai/components/reportList.ts
-
-
-
-
-
-
-// ── Copy button factory ──────────────────────────────────────────────────────
-
-const copyBtnStyle = DS_BUTTONS.secondary + " padding: 3px 8px; font-size: 10px; border-radius: 6px;";
-function makeCopyBtn(label, buildFn) {
-  const btn = createElement_ui_createElement("button", {
-    text: label,
-    styleString: copyBtnStyle
-  });
-  btn.addEventListener("click", async e => {
-    e.stopPropagation();
-    const orig = btn.textContent ?? label;
-    try {
-      await ui_copyTextToClipboard(buildFn());
-      btn.textContent = "Copied!";
-    } catch {
-      btn.textContent = "Failed";
-    }
-    setTimeout(() => {
-      btn.textContent = orig;
-    }, 1500);
-  });
-  return btn;
-}
-
-// ── Report list rendering ────────────────────────────────────────────────────
-
-function createReportList(opts) {
-  const {
-    onSelectReport,
-    onDeleteReport,
-    statusLabel,
-    compareBtn
-  } = opts;
-  let allReports = [];
-  const section = createElement_ui_createElement("div", {
-    styleString: "display: flex; flex-direction: column; gap: 6px;"
-  });
-  const render = records => {
-    section.innerHTML = "";
-    allReports = records;
-    const completed = records.filter(r => r.status === "completed");
-    compareBtn.disabled = completed.length < 2;
-    compareBtn.style.opacity = completed.length < 2 ? "0.45" : "1";
-    if (records.length === 0) {
-      section.appendChild(createElement_ui_createElement("div", {
-        text: "No reports yet. Click \u25b6 New Report to run the first analysis.",
-        styleString: "font-size: 12px; color: var(--ios-text-secondary); padding: 6px 0;"
-      }));
-      return;
-    }
-    section.appendChild(createElement_ui_createElement("span", {
-      text: `Reports (${records.length})`,
-      styleString: "font-size: 11px; font-weight: 700; color: var(--ios-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;"
-    }));
-    for (const rec of records) {
-      const ts = new Date(rec.completedAt ?? rec.requestedAt).toLocaleString("en-US", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit"
-      });
-      const card = createElement_ui_createElement("div", {
-        styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 8px 12px;" + " background: var(--ax-glass-2-bg); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;" + (rec.status === "completed" ? " cursor: pointer;" : "") + " transition: background 0.15s;"
-      });
-      if (rec.status === "completed") {
-        card.addEventListener("mouseenter", () => {
-          card.style.background = "var(--ax-bg-card)";
-        });
-        card.addEventListener("mouseleave", () => {
-          card.style.background = "var(--ax-glass-2-bg)";
-        });
-      }
-      const metaStyle = "font-size: 11px; color: var(--ios-text-secondary); white-space: nowrap; flex-shrink: 0;";
-      const dotStyle = "font-size: 11px; color: var(--ios-border); flex-shrink: 0;";
-      const dot = () => createElement_ui_createElement("span", {
-        text: "\u00b7",
-        styleString: dotStyle
-      });
-      card.appendChild(createElement_ui_createElement("span", {
-        text: ts,
-        styleString: metaStyle
-      }));
-      if (rec.finalDecision) {
-        const d = rec.finalDecision;
-        const color = decisionColor(d.action);
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: `${d.action} \u00b7 ${d.conviction}/10`,
-          styleString: `font-size: 11px; font-weight: 700; color: ${color}; white-space: nowrap;`
-        }));
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: d.timeHorizon.replace(/_/g, " "),
-          styleString: metaStyle
-        }));
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: d.riskLevel,
-          styleString: metaStyle
-        }));
-        if (d.targetPrice != null) {
-          card.appendChild(dot());
-          card.appendChild(createElement_ui_createElement("span", {
-            text: `\u2192$${d.targetPrice.toFixed(2)}`,
-            styleString: metaStyle
-          }));
-        }
-        if (d.stopLoss != null) {
-          card.appendChild(dot());
-          card.appendChild(createElement_ui_createElement("span", {
-            text: `\u2715$${d.stopLoss.toFixed(2)}`,
-            styleString: metaStyle
-          }));
-        }
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: formatTimeAgo(rec.completedAt ?? rec.requestedAt),
-          styleString: metaStyle
-        }));
-      } else if (rec.status === "failed") {
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: "Failed",
-          styleString: "font-size: 11px; color: var(--ios-red);"
-        }));
-      } else if (rec.status === "in_progress") {
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: "In Progress",
-          styleString: "font-size: 11px; color: var(--ios-orange);"
-        }));
-      }
-      if (rec.totalTokensUsed > 0) {
-        card.appendChild(dot());
-        card.appendChild(createElement_ui_createElement("span", {
-          text: `${(rec.totalTokensUsed / 1000).toFixed(1)}K tok`,
-          styleString: metaStyle
-        }));
-      }
-      card.appendChild(createElement_ui_createElement("span", {
-        styleString: "flex: 1;"
-      }));
-      if (rec.status === "completed") {
-        card.appendChild(makeCopyBtn("Report", () => buildReport(rec)));
-        card.appendChild(makeCopyBtn("Transcript", () => buildTranscript(rec)));
-      }
-      const delBtn = createElement_ui_createElement("button", {
-        text: "\u00d7",
-        styleString: "background: none; border: none; font-size: 18px; line-height: 1; cursor: pointer;" + " color: var(--ios-text-secondary); padding: 0 3px; font-weight: 300; flex-shrink: 0;"
-      });
-      delBtn.title = "Delete this report";
-      delBtn.addEventListener("click", async e => {
-        e.stopPropagation();
-        try {
-          statusLabel.textContent = "";
-          await onDeleteReport(rec.symbol, rec.id);
-        } catch {
-          /* ignore */
-        }
-      });
-      card.appendChild(delBtn);
-      if (rec.status === "completed") {
-        card.addEventListener("click", e => {
-          if (e.target.closest("button")) return;
-          onSelectReport(rec);
-          statusLabel.textContent = `Showing report from ${ts}`;
-        });
-      }
-      section.appendChild(card);
-    }
-  };
-  return {
-    element: section,
-    render,
-    getAllReports: () => allReports
-  };
-}
 ;// ./src/frontend/analysis_ai/orchestration/reportComparison.ts
 
 
@@ -72752,8 +73909,6 @@ async function runAnalysis(deps) {
   };
 }
 ;// ./src/frontend/analysis_ai/page.ts
-
-
 
 
 
@@ -72997,39 +74152,12 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
   let currentSymbol = initialSymbol;
 
   // ── Streaming stage card management ────────────────────────────────────
-  const streamingCards = new Map();
-  let streamingStagesBox = null;
-  const streamCardKey = (role, label) => label ? `${role}::${label}` : role;
-  const handleStreamEvent = event => {
-    const key = streamCardKey(event.role, event.label);
-    let card = streamingCards.get(key);
-    if (!card) {
-      // Create streaming stage card on first event
-      card = createStreamingStageCard(event.role, event.label);
-      streamingCards.set(key, card);
-      if (!streamingStagesBox) {
-        streamingStagesBox = createElement_ui_createElement("div", {
-          styleString: "display: flex; flex-direction: column; gap: 6px;"
-        });
-        resultsSection.style.display = "flex";
-        resultsSection.innerHTML = "";
-        resultsSection.appendChild(createElement_ui_createElement("span", {
-          text: "Live Agent Output",
-          styleString: DS_TYPOGRAPHY.heading
-        }));
-        resultsSection.appendChild(streamingStagesBox);
-      }
-      streamingStagesBox.appendChild(card.element);
-    }
-    if (event.type !== "stage_done") {
-      card.updateFromStream(event);
-    }
-  };
+  const liveResults = createLiveResultsPanel({
+    resultsSection
+  });
 
   // ── Show a full report in the results section ─────────────────────────────
   function showResults(record) {
-    resultsSection.innerHTML = "";
-    resultsSection.style.display = "flex";
     const completedState = {
       recordId: record.id,
       symbol: record.symbol,
@@ -73042,33 +74170,7 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
       startedAt: new Date(record.requestedAt).getTime()
     };
     updatePipelineFlow(completedState);
-    if (record.finalDecision) {
-      resultsSection.appendChild(renderDecisionSummary(record.finalDecision, record.marketData));
-    }
-    const stagesHeader = createElement_ui_createElement("div", {
-      styleString: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;"
-    });
-    stagesHeader.appendChild(createElement_ui_createElement("span", {
-      text: "Agent Reports",
-      styleString: DS_TYPOGRAPHY.heading
-    }));
-    stagesHeader.appendChild(createElement_ui_createElement("span", {
-      text: `${record.stages.length} agents \u00b7 ${(record.totalTokensUsed / 1000).toFixed(1)}K tokens \u00b7 ${(record.totalDurationMs / 1000).toFixed(0)}s`,
-      styleString: "font-size: 11px; color: var(--ios-text-secondary);"
-    }));
-    stagesHeader.appendChild(createElement_ui_createElement("span", {
-      styleString: "flex: 1;"
-    }));
-    stagesHeader.appendChild(makeCopyBtn("Copy Report", () => buildReport(record)));
-    stagesHeader.appendChild(makeCopyBtn("Copy Transcript", () => buildTranscript(record)));
-    resultsSection.appendChild(stagesHeader);
-    const stagesBox = createElement_ui_createElement("div", {
-      styleString: "display: flex; flex-direction: column; gap: 6px;"
-    });
-    for (const stage of record.stages) {
-      stagesBox.appendChild(renderStageCard(stage));
-    }
-    resultsSection.appendChild(stagesBox);
+    liveResults.showRecord(record);
   }
 
   // ── Load all reports for a symbol ─────────────────────────────────────────
@@ -73093,25 +74195,12 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
   const renderProgress = state => {
     statusLabel.textContent = state.progressLabel;
     updatePipelineFlow(state);
-
-    // Finalize streaming cards when their stage completes
-    if (streamingCards.size > 0) {
-      for (const stage of state.stages) {
-        if (stage.status !== "running") {
-          const key = streamCardKey(stage.role, stage.label);
-          const card = streamingCards.get(key);
-          if (card) {
-            card.finalize(stage);
-            streamingCards.delete(key);
-          }
-        }
-      }
-    }
+    liveResults.finalizeFromState(state);
   };
 
   // ── Subscribe to AIService (survives page navigation) ─────────────────────
   unsubscribe = aiService.subscribe(renderProgress);
-  unsubscribeStream = aiService.subscribeStream(handleStreamEvent);
+  unsubscribeStream = aiService.subscribeStream(liveResults.handleStream);
   if (aiService.isRunning()) {
     const runningState = aiService.getState();
     if (runningState) {
@@ -73177,8 +74266,7 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
     statusLabel.textContent = "Starting analysis\u2026";
 
     // Clear streaming state from previous run
-    streamingCards.clear();
-    streamingStagesBox = null;
+    liveResults.reset();
     try {
       const result = await runAnalysis({
         symbol,
@@ -73257,7 +74345,7 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
     unsubscribe = null;
     unsubscribeStream?.();
     unsubscribeStream = null;
-    streamingCards.clear();
+    liveResults.reset();
   };
 }
 ;// ./src/frontend/news_page/settings/settingsPanel.ts
@@ -76188,6 +77276,9 @@ function analysisVisualize_renderPage(ctx) {
 
 const RenderEngine_log = logService.namespace("render");
 class RenderEngine {
+  /** Views registered as persistent: rendered once, hidden when inactive. */
+  persistentViews = new Map();
+  disposed = false;
   constructor(contentContainer, ctx, uiElements) {
     this.contentContainer = contentContainer;
     this.ctx = ctx;
@@ -76200,50 +77291,86 @@ class RenderEngine {
     this.currentView = null;
     this.currentContainer = null;
   }
+
+  /**
+   * Mark a view as persistent: it is rendered once on first activation and
+   * hidden (`display: none`) on subsequent view-outs instead of being
+   * unmounted. The view's optional `getState()` hook is called on view-out
+   * and the result is exposed via `viewCtx.restoredViewState` on view-in.
+   */
+  registerPersistentView(viewName) {
+    if (!this.persistentViews.has(viewName)) {
+      this.persistentViews.set(viewName, {
+        container: null,
+        capturedState: undefined
+      });
+    }
+  }
   changeView(viewName) {
+    if (this.disposed) return;
     if (this.currentView === viewName) return;
     const previousView = this.currentView;
-    if (this.currentContainer && typeof this.currentContainer.cleanup === "function") {
-      this.currentContainer.cleanup();
+    const previousContainer = this.currentContainer;
+
+    // ── 1. Tear down or hide the previous view ──────────────────────────
+    if (previousContainer) {
+      const prevEntry = previousView ? this.persistentViews.get(previousView) : undefined;
+      if (prevEntry) {
+        try {
+          if (typeof previousContainer.getState === "function") {
+            prevEntry.capturedState = previousContainer.getState();
+          }
+        } catch (e) {
+          RenderEngine_log.warn("view.getState.error", {
+            view: previousView,
+            error: e?.message ?? String(e)
+          });
+        }
+        previousContainer.style.display = "none";
+      } else {
+        if (typeof previousContainer.cleanup === "function") {
+          try {
+            previousContainer.cleanup();
+          } catch (e) {
+            RenderEngine_log.warn("view.cleanup.error", {
+              view: previousView,
+              error: e?.message ?? String(e)
+            });
+          }
+        }
+        previousContainer.remove();
+      }
     }
-    this.contentContainer.innerHTML = "";
     this.currentView = viewName;
     RenderEngine_log.info("view.changed", {
       from: previousView,
       to: viewName
     });
-    let newContent;
     Object.assign(this.viewCtx, this.uiElements);
-    switch (viewName) {
-      case "HOLDINGS":
-        newContent = holdings_renderPage(this.viewCtx);
-        break;
-      case "PORTFOLIO":
-        newContent = riskManagement_renderPage(this.viewCtx);
-        break;
-      case "VISUALIZE":
-        newContent = analysisVisualize_renderPage(this.viewCtx);
-        break;
-      case "OPTIONS":
-        newContent = options_renderPage(this.viewCtx);
-        break;
-      case "OPTION_FLOW":
-        newContent = optionFlow_renderPage(this.viewCtx);
-        break;
-      case "AI_ANALYSIS":
-        newContent = aiAnalysis_renderPage(this.viewCtx);
-        break;
-      case "NEWS":
-        newContent = news_renderPage(this.viewCtx);
-        break;
-      default:
-        newContent = document.createElement("div");
-        newContent.textContent = "Unknown View";
+
+    // ── 2. Resolve target container ─────────────────────────────────────
+    const persistent = this.persistentViews.get(viewName);
+    let target;
+    if (persistent && persistent.container) {
+      target = persistent.container;
+      target.style.display = "";
+    } else {
+      // First activation (persistent or non-persistent): render fresh.
+      // Inject any captured state into viewCtx for the renderer to consume.
+      this.viewCtx.restoredViewState = persistent?.capturedState ?? null;
+      target = this.renderView(viewName);
+      this.viewCtx.restoredViewState = null;
+      if (persistent) {
+        persistent.container = target;
+      }
     }
-    this.currentContainer = newContent;
-    this.contentContainer.appendChild(newContent);
+    this.currentContainer = target;
+    if (target.parentNode !== this.contentContainer) {
+      this.contentContainer.appendChild(target);
+    }
   }
   updateContext(newCtx, options = {}) {
+    if (this.disposed) return;
     const {
       rerender = true
     } = options;
@@ -76255,8 +77382,88 @@ class RenderEngine {
     if (!this.currentView) return;
     if (!rerender) return;
     const view = this.currentView;
+    // Force a fresh render. For persistent views, drop the cached container
+    // so renderView() rebuilds from current ctx.
+    const persistent = this.persistentViews.get(view);
+    if (persistent && persistent.container) {
+      const old = persistent.container;
+      if (typeof old.cleanup === "function") {
+        try {
+          old.cleanup();
+        } catch {
+          /* swallow */
+        }
+      }
+      old.remove();
+      persistent.container = null;
+    }
     this.currentView = null;
     this.changeView(view);
+  }
+
+  /** Tear down the current view + every persistent view. */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.currentContainer && !this.isContainerOwnedByPersistent(this.currentContainer)) {
+      this.tryCleanup(this.currentContainer);
+      this.currentContainer.remove();
+    }
+    this.currentContainer = null;
+    this.currentView = null;
+    for (const [, entry] of this.persistentViews) {
+      if (entry.container) {
+        this.tryCleanup(entry.container);
+        entry.container.remove();
+        entry.container = null;
+      }
+      entry.capturedState = undefined;
+    }
+  }
+
+  // ── Internal helpers ─────────────────────────────────────────────────────
+
+  renderView(viewName) {
+    const ctx = this.viewCtx;
+    switch (viewName) {
+      case "HOLDINGS":
+        return holdings_renderPage(ctx);
+      case "PORTFOLIO":
+        return riskManagement_renderPage(ctx);
+      case "VISUALIZE":
+        return analysisVisualize_renderPage(ctx);
+      case "OPTIONS":
+        return options_renderPage(ctx);
+      case "OPTION_FLOW":
+        return optionFlow_renderPage(ctx);
+      case "AI_ANALYSIS":
+        return aiAnalysis_renderPage(ctx);
+      case "NEWS":
+        return news_renderPage(ctx);
+      default:
+        {
+          const fallback = document.createElement("div");
+          fallback.textContent = "Unknown View";
+          return fallback;
+        }
+    }
+  }
+  isContainerOwnedByPersistent(container) {
+    for (const entry of this.persistentViews.values()) {
+      if (entry.container === container) return true;
+    }
+    return false;
+  }
+  tryCleanup(container) {
+    if (typeof container.cleanup === "function") {
+      try {
+        container.cleanup();
+      } catch (e) {
+        RenderEngine_log.warn("view.cleanup.error", {
+          error: e?.message ?? String(e)
+        });
+      }
+    }
   }
 }
 ;// ./src/frontend/components/core/axTokens/surfaces.ts
@@ -76504,6 +77711,56 @@ const AX_LIGHT_CRITICAL_SOFT_BG = axColorWithAlpha(AX_LIGHT_RAW.critical, 0.06);
 const AX_DARK_CRITICAL_SOFT_BG = axColorWithAlpha(AX_DARK_RAW.critical, 0.12);
 const AX_LIGHT_CRITICAL_BORDER = axColorWithAlpha(AX_LIGHT_RAW.critical, 0.25);
 const AX_DARK_CRITICAL_BORDER = axColorWithAlpha(AX_DARK_RAW.critical, 0.35);
+
+// ──────────────────────────────────────────────────────────────────────────
+// Mouse-tracked glass rim (.ax-glass-rim) — fully parameterised so the same
+// CSS algorithm renders for every theme. baseCss.ts emits ONE rim definition
+// that reads `--ax-rim-*` vars; cssVars.ts swaps the values per theme.
+//
+// `color`        — RGB triplet (no alpha) the gradient interpolates through.
+//                  Dark uses near-white; light uses cool dark navy so the
+//                  multiply blend reads as a soft cool edge on white scenery.
+// `alpha*Base`   — gradient stop alpha at rest (mouse centred).
+// `alpha*Mod`    — extra alpha per 1% of mouse-x offset; the rim brightens
+//                  toward the cursor side. Multiplied by abs(mx)∈[0..50].
+// `*Blend`       — mix-blend-mode on the corresponding pseudo-element.
+//                  Dark pairs `screen + overlay` for a luminous halo over
+//                  saturated dark scenery; light pairs `multiply + multiply`
+//                  for a subtractive cool shadow rim on white scenery.
+// `*OpacityBase` / `*OpacityHoverBoost` — pseudo-element opacity at rest
+//                  and its hover-driven boost (CSS reads --ax-lg-hover∈[0,1]).
+//
+// Light tier intensity is dialled to ~40% of dark — same two-layer structure,
+// same mouse-tracked highlight, just softer so it doesn't read as a heavy
+// black rim against light backgrounds.
+// ──────────────────────────────────────────────────────────────────────────
+
+const AX_DARK_RIM = {
+  color: "255,255,255",
+  alphaNearBase: 0.04,
+  alphaNearMod: 0.014,
+  alphaFarBase: 0.10,
+  alphaFarMod: 0.018,
+  primaryBlend: "screen",
+  primaryOpacityBase: 0.40,
+  primaryOpacityHoverBoost: 0.30,
+  secondaryBlend: "overlay",
+  secondaryOpacityBase: 0.28,
+  secondaryOpacityHoverBoost: 0.20
+};
+const AX_LIGHT_RIM = {
+  color: "15,30,60",
+  alphaNearBase: 0.012,
+  alphaNearMod: 0.004,
+  alphaFarBase: 0.028,
+  alphaFarMod: 0.005,
+  primaryBlend: "multiply",
+  primaryOpacityBase: 0.50,
+  primaryOpacityHoverBoost: 0.30,
+  secondaryBlend: "multiply",
+  secondaryOpacityBase: 0.18,
+  secondaryOpacityHoverBoost: 0.14
+};
 ;// ./src/frontend/components/core/axTokens/motion.ts
 // Motion tokens — durations + easing curves.
 
@@ -76656,7 +77913,8 @@ const LIGHT = {
   tooltip: AX_LIGHT_TOOLTIP,
   fgDisabled: AX_LIGHT_FG_DISABLED,
   scenery: AX_LIGHT_SCENERY,
-  titleGradient: AX_LIGHT_TITLE_GRADIENT
+  titleGradient: AX_LIGHT_TITLE_GRADIENT,
+  rim: AX_LIGHT_RIM
 };
 const DARK = {
   palette: AX_DARK_RAW,
@@ -76674,10 +77932,14 @@ const DARK = {
   tooltip: AX_DARK_TOOLTIP,
   fgDisabled: AX_DARK_FG_DISABLED,
   scenery: AX_DARK_SCENERY,
-  titleGradient: AX_DARK_TITLE_GRADIENT
+  titleGradient: AX_DARK_TITLE_GRADIENT,
+  rim: AX_DARK_RIM
 };
 function emitGlassTier(prefix, tier) {
   return [`${prefix}-blur: ${tier.blur};`, `${prefix}-saturate: ${tier.saturate};`, `${prefix}-brightness: ${tier.brightness};`, `${prefix}-bg: ${tier.bg};`, `${prefix}-border: ${tier.border};`, `${prefix}-shadow: ${tier.shadow};`, `${prefix}-edge: ${tier.edge};`].join("\n      ");
+}
+function emitRim(rim) {
+  return [`--ax-rim-color: ${rim.color};`, `--ax-rim-alpha-near-base: ${rim.alphaNearBase};`, `--ax-rim-alpha-near-mod: ${rim.alphaNearMod};`, `--ax-rim-alpha-far-base: ${rim.alphaFarBase};`, `--ax-rim-alpha-far-mod: ${rim.alphaFarMod};`, `--ax-rim-primary-blend: ${rim.primaryBlend};`, `--ax-rim-primary-opacity-base: ${rim.primaryOpacityBase};`, `--ax-rim-primary-opacity-hover-boost: ${rim.primaryOpacityHoverBoost};`, `--ax-rim-secondary-blend: ${rim.secondaryBlend};`, `--ax-rim-secondary-opacity-base: ${rim.secondaryOpacityBase};`, `--ax-rim-secondary-opacity-hover-boost: ${rim.secondaryOpacityHoverBoost};`].join("\n      ");
 }
 function emitTheme(t) {
   return `
@@ -76771,6 +78033,11 @@ function emitTheme(t) {
       ${emitGlassTier("--ax-glass-3", t.glass.tier3)}
 
       --ax-glass-3-hover: ${t.glass3Hover};
+
+      /* ─── Mouse-tracked glass rim (.ax-glass-rim) ───
+             Tokens in axTokens/glass.ts; CSS algorithm in baseCss.ts
+             reads these vars so light + dark use the same rim definition. */
+      ${emitRim(t.rim)}
 
       /* ─── Tinted glass washes ─── */
       --ax-glass-tint-positive: ${t.glassTints.positive};
@@ -77120,8 +78387,13 @@ const axResetCss = `
 //
 // `.ax-glass-rim` adds the mouse-tracked dual-blend gradient rim. JS in
 // liquidGlass.ts writes --ax-lg-mx / --ax-lg-my / --ax-lg-hover; CSS turns
-// those into a cubic-bezier-eased rim that follows the pointer. The rim
-// renders best on dark glass (light theme falls back to a static glow).
+// those into a cubic-bezier-eased rim that follows the pointer.
+//
+// The rim algorithm is fully parameterised via --ax-rim-* CSS vars emitted
+// by cssVars.ts (sourced from AX_DARK_RIM / AX_LIGHT_RIM in axTokens/glass.ts).
+// Both themes share this single CSS definition; per-theme intensity, blend
+// modes, and gradient color are pure data swaps. Adding a new theme = define
+// a new rim-token block; no CSS edits needed.
 // ──────────────────────────────────────────────────────────────────────────
 
 const axGlassCss = `
@@ -77150,9 +78422,12 @@ const axGlassCss = `
       backdrop-filter: blur(var(--ax-glass-3-blur)) saturate(var(--ax-glass-3-saturate)) brightness(var(--ax-glass-3-brightness));
     }
 
-    /* ─── Mouse-tracked rim (dark theme — full cubic-bezier gradient) ───
-       Two pseudo-elements on the same border-box give us screen + overlay
-       blend modes simultaneously, ported from recorder.user.js .lg-rim--*. */
+    /* ─── Mouse-tracked rim — single parameterised algorithm ───
+       Two pseudo-elements on the same border-box give us a primary + secondary
+       blend pair, ported from recorder.user.js .lg-rim--*. Every per-theme
+       knob (gradient color, alpha curve, blend mode, base/hover opacity) is
+       exposed as a --ax-rim-* var so light + dark share this one definition.
+       Token values: AX_DARK_RIM / AX_LIGHT_RIM in axTokens/glass.ts. */
     .ax-glass-rim { position: relative; }
     .ax-glass-rim::before,
     .ax-glass-rim::after {
@@ -77169,35 +78444,20 @@ const axGlassCss = `
               mask-composite: exclude;
       background: linear-gradient(
         calc((135 + var(--ax-lg-mx, 0) * 1.2) * 1deg),
-        rgba(255,255,255,0) 0%,
-        rgba(255,255,255, calc(0.04 + var(--ax-lg-mx-abs, 0) * 0.014)) calc(max(10, 33 + var(--ax-lg-my, 0) * 0.3) * 1%),
-        rgba(255,255,255, calc(0.10 + var(--ax-lg-mx-abs, 0) * 0.018)) calc(min(90, 66 + var(--ax-lg-my, 0) * 0.4) * 1%),
-        rgba(255,255,255,0) 100%
+        rgba(var(--ax-rim-color), 0) 0%,
+        rgba(var(--ax-rim-color), calc(var(--ax-rim-alpha-near-base) + var(--ax-lg-mx-abs, 0) * var(--ax-rim-alpha-near-mod))) calc(max(10, 33 + var(--ax-lg-my, 0) * 0.3) * 1%),
+        rgba(var(--ax-rim-color), calc(var(--ax-rim-alpha-far-base) + var(--ax-lg-mx-abs, 0) * var(--ax-rim-alpha-far-mod))) calc(min(90, 66 + var(--ax-lg-my, 0) * 0.4) * 1%),
+        rgba(var(--ax-rim-color), 0) 100%
       );
       transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
     }
     .ax-glass-rim::before {
-      mix-blend-mode: screen;
-      opacity: calc(0.40 + var(--ax-lg-hover, 0) * 0.30);
+      mix-blend-mode: var(--ax-rim-primary-blend);
+      opacity: calc(var(--ax-rim-primary-opacity-base) + var(--ax-lg-hover, 0) * var(--ax-rim-primary-opacity-hover-boost));
     }
     .ax-glass-rim::after {
-      mix-blend-mode: overlay;
-      opacity: calc(0.28 + var(--ax-lg-hover, 0) * 0.20);
-    }
-    /* Light theme rim is much subtler — strong overlay blend on white reads
-       as a black halo, so we drop it to a thin cool inner highlight only. */
-    body:not(.theme-dark) .ax-glass-rim::before {
-      background: linear-gradient(
-        calc((135 + var(--ax-lg-mx, 0) * 1.2) * 1deg),
-        rgba(15,30,60,0) 0%,
-        rgba(15,30,60, calc(0.02 + var(--ax-lg-mx-abs, 0) * 0.005)) 50%,
-        rgba(15,30,60,0) 100%
-      );
-      mix-blend-mode: multiply;
-      opacity: calc(0.50 + var(--ax-lg-hover, 0) * 0.30);
-    }
-    body:not(.theme-dark) .ax-glass-rim::after {
-      display: none;
+      mix-blend-mode: var(--ax-rim-secondary-blend);
+      opacity: calc(var(--ax-rim-secondary-opacity-base) + var(--ax-lg-hover, 0) * var(--ax-rim-secondary-opacity-hover-boost));
     }
 
     /* ─── Liquid-glass refraction filter handle ───
@@ -78744,9 +80004,107 @@ const axShellCss = `
     .ios-table td { line-height: 1.2; padding-top: 6px; padding-bottom: 6px; }
     .ios-table th { line-height: 1.2; padding-top: 8px; padding-bottom: 8px; }
   `;
+;// ./src/frontend/components/core/axTheme/renderMode/overrideCss.ts
+// All Eco-mode CSS overrides live here. Injected once after the rest of
+// the AlexQuant stylesheet so the !important rules take precedence over
+// the Full-mode glass / animation defaults defined in baseCss.ts.
+//
+// Eco is theme-orthogonal: every override below targets `body.ax-eco`
+// without a `.theme-dark` qualifier, so the same rule applies in both
+// light-Eco and dark-Eco. Anything theme-specific stays in baseCss.ts /
+// shellCss.ts and reads the --ax-* vars from cssVars.ts.
+//
+// Strategy:
+//   - Hard disables for the 🔴/🟠 hot spots: backdrop-filter, glass
+//     refract filter, glass rim, glass shadow, infinite pulse animation.
+//   - Universal duration zeroing using the W3C reduced-motion idiom.
+//     Kills every transition / animation duration without touching the
+//     property + easing declarations themselves, so toggling back to
+//     Full instantly restores motion.
+//   - Whitelisted exceptions: data-update flashes (flash-update-*) and
+//     the dock streamer flash carry information ("price changed",
+//     "streamer reconnected"), so they keep their original duration.
+
+const axEcoOverrideCss = `
+    /* ─── Glass surfaces: drop backdrop-filter + box-shadow, swap in
+           solid theme background. Borders stay in place via the inherited
+           --ax-glass-N-border vars so the surface keeps its outline. The
+           selector list covers every preset that composes a glass tier;
+           any new glass-based preset must be added here too. ─────────── */
+    body.ax-eco .ax-glass-1,
+    body.ax-eco .ax-glass-2,
+    body.ax-eco .ax-glass-3,
+    body.ax-eco .az-preset-panel,
+    body.ax-eco .az-preset-card,
+    body.ax-eco .az-preset-collapsible-card,
+    body.ax-eco .az-preset-metric-cell,
+    body.ax-eco .az-preset-metric-cell-inline {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      background: var(--ax-bg-card) !important;
+      box-shadow: none !important;
+    }
+
+    /* ─── Glass refract: SVG chromatic-aberration filter is the
+           single most expensive composite in Full mode (a 12-primitive
+           feFilter pipeline). Disabled wholesale. The JS bootstrap also
+           skips ensureLiquidGlassFilter() when Eco is the boot mode. */
+    body.ax-eco .ax-glass-refract {
+      filter: none !important;
+    }
+
+    /* ─── Glass rim pseudo-elements: hide the parameterised primary +
+           secondary blend layers. The JS listeners are also detached
+           when Eco is active, so the per-mousemove rAF flush stops
+           firing too. */
+    body.ax-eco .ax-glass-rim::before,
+    body.ax-eco .ax-glass-rim::after {
+      display: none !important;
+    }
+
+    /* ─── Status-dot pulse: kill the 1.8s infinite box-shadow
+           animation on .ax-status-dot--live / --alert. The colored dot
+           itself stays so users still see live / alert state. */
+    body.ax-eco .ax-status-dot--live,
+    body.ax-eco .ax-status-dot--alert {
+      animation: none !important;
+    }
+
+    /* ─── Universal duration zero — standard reduced-motion idiom.
+           Keeps transition property + easing intact (so a toggle back
+           to Full restores motion immediately) but drops every
+           animation / transition to instantaneous. Covers every
+           transition and keyframe animation across the frontend without
+           each component having to opt in. */
+    body.ax-eco *,
+    body.ax-eco *::before,
+    body.ax-eco *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
+    }
+
+    /* ─── Whitelist: data-change flashes carry information ("price
+           updated", "streamer reconnected"), so we restore their
+           original durations after the universal rule above.
+           The unqualified body.ax-eco selector already matches both
+           light-Eco and dark-Eco (the dark-theme override only swaps
+           the keyframe name, not the selector), so no theme-qualified
+           duplicate is needed here. */
+    body.ax-eco .flash-update-green,
+    body.ax-eco .flash-update-red {
+      animation-duration: 0.6s !important;
+    }
+    body.ax-eco .dock-status-dot--streamer-flash {
+      animation-duration: 0.2s !important;
+    }
+  `;
 ;// ./src/frontend/components/core/axTheme/runtime.ts
 // CSS runtime — injects the full UI stylesheet into <head> on first use.
 // Idempotent: subsequent calls are a single boolean check.
+
+
 
 
 
@@ -78775,6 +80133,13 @@ function bootstrapLiquidGlassRuntime() {
   }
 }
 function ensureAxUICss() {
+  // Render mode must be resolved before bootstrapLiquidGlassRuntime() so
+  // the liquidGlassEnabled flag is set when ensureLiquidGlassFilter() and
+  // attachLiquidGlassRim() run on DOMContentLoaded. initRenderMode() is
+  // idempotent — calling it from every entry point of the runtime is
+  // cheap and means consumers cannot accidentally bootstrap before the
+  // renderMode controller has read its persisted preference.
+  initRenderMode();
   if (injected) {
     bootstrapLiquidGlassRuntime();
     return;
@@ -78787,7 +80152,11 @@ function ensureAxUICss() {
   }
   const style = document.createElement("style");
   style.id = STYLE_ID;
-  style.textContent = [axCssVars(), axResetCss, axGlassCss, axUtilitiesCss, axPresetsCss, axAnimationsCss, axShellCss].join("\n");
+  // axEcoOverrideCss goes last: even though !important wins regardless
+  // of source order, putting the eco overrides at the tail keeps the
+  // stylesheet self-documenting (Full-mode rules first, Eco hot-fix
+  // overrides at the bottom).
+  style.textContent = [axCssVars(), axResetCss, axGlassCss, axUtilitiesCss, axPresetsCss, axAnimationsCss, axShellCss, axEcoOverrideCss].join("\n");
   // <head> may not exist yet at document_start; fall back to documentElement
   // so the stylesheet still lands above any later content.
   const target = document.head ?? document.documentElement;
@@ -78816,7 +80185,7 @@ function cx(...parts) {
 // design-token system in ./axTheme. Existing callsites import the same
 // three functions (addAnimationStyles / addGlobalStyle / applyColorTheme),
 // which now bootstrap the unified theme stylesheet and apply the chosen
-// light / dark / auto mode.
+// light / dark mode.
 
 
 
@@ -78833,11 +80202,11 @@ function addAnimationStyles() {
 
 /**
  * Initialise / apply a colour theme. Recognised values:
- *   - "default" / "auto" → boot-mode: load persisted preference, fall back
- *                          to system preference if none. Does not overwrite
- *                          the user's stored mode.
- *   - "light"            → force light theme (persists choice).
- *   - "dark"             → force dark theme (persists choice).
+ *   - "default" → boot-mode: load persisted preference (falls back to
+ *                  the dark default if none). Does not overwrite the
+ *                  user's stored mode.
+ *   - "light"   → force light theme (persists choice).
+ *   - "dark"    → force dark theme (persists choice).
  *
  * Always idempotent: ensures CSS is injected and the controller is wired.
  */
@@ -78848,8 +80217,8 @@ function applyColorTheme(theme = "default") {
     const mode = theme;
     setTheme(mode);
   }
-  // "default" / "auto" / anything else → keep the persisted/system mode
-  // already applied by initTheme().
+  // "default" / anything else → keep the persisted mode already applied
+  // by initTheme().
   return theme;
 }
 ;// ./src/shared/log/devTools.ts
@@ -80059,16 +81428,370 @@ function buildSelectionContext(mode, items) {
     byRequestDate
   };
 }
+;// ./src/frontend/analysis_optionFlow/monitor/monitorScheduler.ts
+/**
+ * Scheduler / cycle helpers — extracted from MonitorController.
+ *
+ * `runMonitorCycle` walks the configured symbol universe, throttling by
+ * concurrency, and orchestrates per-symbol refreshes via the runtime.
+ *
+ * `getMinutesSinceLastCycle` / `saveMonitorLastCycleTimestamp` are
+ * standalone IndexedDB helpers consumed by the scheduler.
+ *
+ * `createCycleScheduler` produces a tick handle aligned to interval-minute
+ * boundaries (with a 250 ms grace period).
+ */
+
+
+
+
+
+
+const monitorScheduler_log = logService.namespace("compute");
+/**
+ * Run a single monitor cycle: fetch every configured symbol (concurrency-
+ * limited), tally results, save the last-cycle timestamp, and broadcast
+ * status. No-op if a cycle is already running or if the market is closed
+ * (manual cycles bypass the closed-market gate).
+ */
+async function runMonitorCycle(runtime, reason = "scheduled") {
+  if (runtime.isRunning()) {
+    runtime.broadcast("Monitor sync already in progress.", "#c97100");
+    return;
+  }
+  // Skip automated cycles during market-closed hours (nights + weekends).
+  // Manual cycles are always allowed.
+  if (reason !== "manual" && isMarketClosedCT(Date.now())) {
+    runtime.broadcast("Monitor skipped — market closed.", "var(--ios-text-secondary)");
+    runtime.scheduleNext();
+    return;
+  }
+  runtime.setRunning(true);
+  try {
+    if (!runtime.authToken) {
+      runtime.broadcast("Monitor waiting for auth token.", "#c97100");
+      return;
+    }
+    const symbols = Array.from(new Set(runtime.settings.symbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0)));
+    if (symbols.length === 0) {
+      runtime.broadcast("Monitor has no tickers configured.", "#c97100");
+      return;
+    }
+    const startedAt = new Date();
+    runtime.broadcast(`Monitor syncing (${reason})...`);
+    let updated = 0;
+    let failed = 0;
+    let keptTotal = 0;
+    const processSymbol = async symbol => {
+      try {
+        const response = await withTimeout(runtime.refreshSymbol(symbol), SYMBOL_REFRESH_TIMEOUT_MS, `refreshSymbol(${symbol})`);
+        if (response) {
+          updated += 1;
+          keptTotal += (await readOptionCaptures(symbol)).length;
+        } else {
+          failed += 1;
+        }
+      } catch (error) {
+        monitorScheduler_log.warn("monitor.cycle.error", {
+          symbol,
+          error: error?.message ?? String(error)
+        });
+        failed += 1;
+      }
+    };
+    const concurrency = runtime.settings.concurrency;
+    for (let i = 0; i < symbols.length; i += concurrency) {
+      await Promise.all(symbols.slice(i, i + concurrency).map(processSymbol));
+    }
+    await saveMonitorLastCycleTimestamp();
+    const hhmm = startedAt.toLocaleTimeString("en-US", {
+      timeZone: APP_TIMEZONE,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+    const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
+    const color = failed > 0 ? "#c97100" : "var(--ios-text-secondary)";
+    runtime.broadcast(`Monitor ${hhmm}: ${updated}/${symbols.length} updated, ${failed} failed, kept ${keptTotal} (${elapsed}s).`, color);
+  } catch (error) {
+    monitorScheduler_log.error("monitor.cycle.fail", {
+      reason,
+      error: error?.message ?? String(error)
+    });
+    runtime.broadcast(`Monitor sync failed (${reason}).`, "#c97100");
+  } finally {
+    runtime.setRunning(false);
+  }
+}
+
+/** Minutes since the last persisted cycle timestamp. Returns null if absent. */
+async function getMinutesSinceLastCycle() {
+  try {
+    const db = await openAlexQuantDB();
+    const kv = new KVStore(db);
+    const ts = await kv.get("monitor.lastCycleAt");
+    if (typeof ts !== "number" || ts <= 0) return null;
+    return (Date.now() - ts) / 60_000;
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the current wall-clock as the monitor's last-cycle timestamp. */
+async function saveMonitorLastCycleTimestamp() {
+  try {
+    const db = await openAlexQuantDB();
+    const kv = new KVStore(db);
+    await kv.set("monitor.lastCycleAt", Date.now());
+  } catch {
+    // best-effort — failing to save is non-fatal.
+  }
+}
+/**
+ * Build a cycle scheduler that fires aligned to interval-minute boundaries
+ * (plus a 250 ms grace period). The tick callback runs the cycle and the
+ * scheduler self-rearms while the runtime remains enabled.
+ */
+function createCycleScheduler(opts) {
+  let timer = null;
+  const clear = () => {
+    if (timer != null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+  };
+  const schedule = () => {
+    clear();
+    if (!opts.isEnabled()) return;
+    const intervalMs = opts.getIntervalMinutes() * 60 * 1000;
+    const now = Date.now();
+    const remainder = now % intervalMs;
+    const delay = (remainder === 0 ? intervalMs : intervalMs - remainder) + 250;
+    timer = window.setTimeout(async () => {
+      timer = null;
+      if (!opts.isEnabled()) return;
+      await opts.onTick();
+      schedule();
+    }, delay);
+  };
+  return {
+    schedule,
+    clear
+  };
+}
+;// ./src/frontend/analysis_optionFlow/monitor/monitorFetchPipeline.ts
+/**
+ * Fetch pipeline — per-symbol refresh + DB persistence.
+ *
+ * Extracted from MonitorController. Free functions take a `MonitorRuntime`
+ * so the controller stays focused on lifecycle and listeners.
+ */
+
+
+
+
+
+
+const monitorFetchPipeline_log = logService.namespace("compute");
+
+/**
+ * Fetch one symbol and persist its snapshot to IndexedDB.
+ *
+ * The monitor_openings snapshot is always written on success.
+ * The full opening DB persist runs fire-and-forget in the background.
+ */
+async function refreshSymbol(runtime, symbol) {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  if (!normalizedSymbol) return null;
+  if (!runtime.authToken) {
+    monitorFetchPipeline_log.warn("monitor.refresh.noAuth", {
+      symbol: normalizedSymbol
+    });
+    return null;
+  }
+  const capturedAtUtc = new Date().toISOString();
+  try {
+    const refreshContext = await loadRefreshContext(runtime, normalizedSymbol, capturedAtUtc);
+    if (!refreshContext || refreshContext.response.expirations.length === 0) {
+      monitorFetchPipeline_log.warn("monitor.refresh.noExpirations", {
+        symbol: normalizedSymbol
+      });
+      return null;
+    }
+    const {
+      response,
+      selectionContext
+    } = refreshContext;
+    runtime.responseCache.set(normalizedSymbol, {
+      response,
+      capturedAt: capturedAtUtc
+    });
+    const opening = await buildOptionCapture(normalizedSymbol, response, capturedAtUtc, selectionContext);
+    let stored = false;
+    if (opening) {
+      try {
+        const now = new Date();
+        const existing = await readOptionCaptures(normalizedSymbol);
+        const compacted = mergeAndCompact(existing, opening, now);
+        await writeOptionCaptures(normalizedSymbol, compacted);
+        stored = true;
+      } catch (storageErr) {
+        monitorFetchPipeline_log.warn("monitor.refresh.storageError", {
+          symbol: normalizedSymbol,
+          error: storageErr?.message ?? String(storageErr)
+        });
+      }
+    }
+    fireAndForgetDbPersist(runtime, normalizedSymbol, response, capturedAtUtc, selectionContext);
+    runtime.broadcastSymbolUpdate({
+      symbol: normalizedSymbol,
+      capturedAt: capturedAtUtc,
+      dataTimestamp: response.currentDateTime || capturedAtUtc,
+      localStored: stored,
+      dbPersisted: stored
+    });
+    return response;
+  } catch (error) {
+    monitorFetchPipeline_log.warn("monitor.refresh.fail", {
+      symbol: normalizedSymbol,
+      error: error?.message ?? String(error)
+    });
+    return null;
+  }
+}
+
+/**
+ * Resolve which expirations to fetch for `symbol` and produce a selection
+ * context describing the universe (for downstream ETL).
+ */
+async function loadRefreshContext(runtime, symbol, capturedAtUtc) {
+  const authToken = runtime.authToken;
+  if (!authToken) return null;
+  const mode = runtime.settings.universeMode;
+  const topN = runtime.getTopNForSymbol(symbol);
+  const ctDate = toCtDateKey(new Date(capturedAtUtc));
+  const loadFullAndBuildUniverse = async () => {
+    const full = await fetchOptionChains(symbol, authToken);
+    pruneLowOIExpirations(full);
+    if (full.expirations.length === 0) return null;
+    if (mode === "all") {
+      runtime.universeBySymbol.delete(symbol);
+      return {
+        response: full,
+        selectionContext: {
+          mode: "all"
+        }
+      };
+    }
+    const items = buildUniverseItems(full, mode, topN, capturedAtUtc);
+    if (items.length === 0) {
+      runtime.universeBySymbol.delete(symbol);
+      return {
+        response: full,
+        selectionContext: {
+          mode: "all"
+        }
+      };
+    }
+    const filtered = filterResponseByUniverse(full, items);
+    if (filtered.expirations.length === 0) {
+      runtime.universeBySymbol.delete(symbol);
+      return {
+        response: full,
+        selectionContext: {
+          mode: "all"
+        }
+      };
+    }
+    runtime.universeBySymbol.set(symbol, {
+      ctDate,
+      mode,
+      topN,
+      items
+    });
+    return {
+      response: filtered,
+      selectionContext: buildSelectionContext(mode, items)
+    };
+  };
+  if (mode === "all") {
+    return loadFullAndBuildUniverse();
+  }
+  const cached = runtime.universeBySymbol.get(symbol);
+  const shouldRebuild = !cached || cached.ctDate !== ctDate || cached.mode !== mode || cached.topN !== topN || cached.items.length === 0;
+  if (shouldRebuild) {
+    return loadFullAndBuildUniverse();
+  }
+  try {
+    const targeted = await fetchOptionChains(symbol, authToken, {
+      expirationDates: cached.items.map(item => item.requestDate)
+    });
+    if (targeted.expirations.length === 0) {
+      return loadFullAndBuildUniverse();
+    }
+    const filtered = filterResponseByUniverse(targeted, cached.items);
+    if (filtered.expirations.length === 0) {
+      return loadFullAndBuildUniverse();
+    }
+    return {
+      response: filtered,
+      selectionContext: buildSelectionContext(mode, cached.items)
+    };
+  } catch (err) {
+    monitorFetchPipeline_log.warn("monitor.fetch.fallbackFull", {
+      symbol,
+      mode,
+      error: err?.message ?? String(err)
+    });
+    return loadFullAndBuildUniverse();
+  }
+}
+
+/**
+ * Persist to IndexedDB without blocking the caller. Skips if a write for the
+ * same symbol is already in progress (prevents the ConstraintError race on
+ * the unique [symbol, dataTimestamp] index).
+ */
+function fireAndForgetDbPersist(runtime, symbol, response, capturedAtUtc, selectionContext) {
+  if (runtime.dbWriteInProgress.has(symbol)) {
+    monitorFetchPipeline_log.debug("monitor.persist.skippedBusy", {
+      symbol
+    });
+    return;
+  }
+  runtime.dbWriteInProgress.add(symbol);
+  void (async () => {
+    try {
+      const stores = await openCaptureStores();
+      const status = await persistCaptureToIndexedDb(symbol, response, capturedAtUtc, selectionContext, stores);
+      monitorFetchPipeline_log.debug("monitor.persist.done", {
+        symbol,
+        status
+      });
+    } catch (error) {
+      monitorFetchPipeline_log.warn("monitor.persist.fail", {
+        symbol,
+        error: error?.message ?? String(error)
+      });
+    } finally {
+      runtime.dbWriteInProgress.delete(symbol);
+    }
+  })();
+}
 ;// ./src/frontend/analysis_optionFlow/monitor/MonitorController.ts
 /**
- * Monitor controller — drives periodic options-chain fetching,
- * IndexedDB snapshots, and best-effort opening persistence.
+ * Monitor controller — thin coordinator around the scheduler + fetch pipeline.
+ *
+ * Cycle / timing logic lives in `monitorScheduler.ts`.
+ * Fetch + persist logic lives in `monitorFetchPipeline.ts`.
+ * This class owns lifecycle, settings, listeners, and the IndexedDB
+ * caches (response, universe, dbWriteInProgress).
  *
  * Data flow (per symbol, per refresh):
- *   1. Network fetch  (always first)
- *   2. Build OptionCapture from raw response  (synchronous, no DB)
+ *   1. Network fetch
+ *   2. Build OptionCapture from raw response
  *   3. Write snapshot to IndexedDB monitor_openings store
- *   4. DB persist full opening  (fire-and-forget; errors are logged only)
+ *   4. DB persist full opening (fire-and-forget)
  *   5. Broadcast update to UI listeners
  */
 
@@ -80084,74 +81807,99 @@ function buildSelectionContext(mode, items) {
 
 
 
-// ── Sibling modules ──────────────────────────────────────────────────────────
-
-
 
 const MonitorController_log = logService.namespace("compute");
-
-// ---------------------------------------------------------------------------
-// Public types for cross-page linkage
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// MonitorController
-// ---------------------------------------------------------------------------
-
 class MonitorController {
   enabled = false;
   running = false;
-  timer = null;
-  authToken = null;
+  _authToken = null;
   statusListeners = new Set();
   symbolUpdateListeners = new Set();
   responseCache = new Map();
   universeBySymbol = new Map();
-
-  /**
-   * Symbols currently being written to IndexedDB.
-   * Prevents a second concurrent DB write for the same symbol (which would
-   * cause a ConstraintError on the unique [symbol, dataTimestamp] index).
-   */
+  /** Symbols currently being written to IndexedDB. */
   dbWriteInProgress = new Set();
   constructor() {
-    this.settings = cloneMonitorSettings(DEFAULT_MONITOR_SETTINGS);
+    this._settings = cloneMonitorSettings(DEFAULT_MONITOR_SETTINGS);
+    this.scheduler = createCycleScheduler({
+      isEnabled: () => this.enabled,
+      getIntervalMinutes: () => this._settings.intervalMinutes,
+      onTick: () => this.runCycle("scheduled")
+    });
   }
 
-  /** Load persisted settings from IndexedDB. Call before start(). */
-  async init() {
-    this.settings = cloneMonitorSettings(await loadMonitorSettings());
+  // ── MonitorRuntime surface ───────────────────────────────────────────────
+
+  get authToken() {
+    return this._authToken;
   }
-
-  // ---- public API --------------------------------------------------------
-
-  setAuthToken(token) {
-    this.authToken = token;
+  get settings() {
+    return this._settings;
   }
   isEnabled() {
     return this.enabled;
   }
+  isRunning() {
+    return this.running;
+  }
+  setRunning(value) {
+    this.running = value;
+  }
+  scheduleNext() {
+    this.scheduler.schedule();
+  }
+  broadcast(text, color) {
+    for (const listener of this.statusListeners) {
+      try {
+        listener(text, color);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  broadcastSymbolUpdate(update) {
+    for (const listener of this.symbolUpdateListeners) {
+      try {
+        listener(update);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  // ── Init + lifecycle ─────────────────────────────────────────────────────
+
+  /** Load persisted settings from IndexedDB. Call before start(). */
+  async init() {
+    this._settings = cloneMonitorSettings(await loadMonitorSettings());
+  }
+  setAuthToken(token) {
+    this._authToken = token;
+  }
+
+  // ── Settings + universe getters (used by UI panels) ──────────────────────
+
   getSymbols() {
-    return this.settings.symbols;
+    return this._settings.symbols;
   }
   getSettings() {
-    return this.settings;
+    return this._settings;
   }
   getUniverseMode() {
-    return this.settings.universeMode;
+    return this._settings.universeMode;
   }
   getDefaultTopN() {
-    return this.settings.defaultTopN;
+    return this._settings.defaultTopN;
   }
   getTopNForSymbol(symbol) {
     const sym = symbol.trim().toUpperCase();
-    return this.settings.topNBySymbol[sym] ?? this.settings.defaultTopN;
+    return this._settings.topNBySymbol[sym] ?? this._settings.defaultTopN;
   }
   getSelectedExpiries(symbol) {
     const sym = symbol.trim().toUpperCase();
-    if (!sym || this.settings.universeMode === "all") return [];
+    if (!sym || this._settings.universeMode === "all") return [];
     const cached = this.universeBySymbol.get(sym);
-    if (!cached || cached.mode !== this.settings.universeMode) return [];
+    if (!cached || cached.mode !== this._settings.universeMode) return [];
     const todayCt = toCtDateKey(new Date());
     if (cached.ctDate !== todayCt) return [];
     return cached.items.map(item => ({
@@ -80173,51 +81921,54 @@ class MonitorController {
     let shouldResetUniverse = false;
     if (patch.symbols !== undefined) {
       const nextSymbols = patch.symbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0);
-      const removed = this.settings.symbols.filter(s => !nextSymbols.includes(s));
-      this.settings.symbols = nextSymbols;
+      const removed = this._settings.symbols.filter(s => !nextSymbols.includes(s));
+      this._settings.symbols = nextSymbols;
       for (const sym of removed) {
-        delete this.settings.topNBySymbol[sym];
+        delete this._settings.topNBySymbol[sym];
         this.universeBySymbol.delete(sym);
       }
     }
     if (patch.intervalMinutes !== undefined) {
-      this.settings.intervalMinutes = Math.max(1, Math.min(60, patch.intervalMinutes));
+      this._settings.intervalMinutes = Math.max(1, Math.min(60, patch.intervalMinutes));
     }
     if (patch.concurrency !== undefined) {
-      this.settings.concurrency = Math.max(1, Math.min(10, patch.concurrency));
+      this._settings.concurrency = Math.max(1, Math.min(10, patch.concurrency));
     }
     if (patch.enabled !== undefined) {
-      this.settings.enabled = patch.enabled;
+      this._settings.enabled = patch.enabled;
     }
     if (patch.universeMode !== undefined) {
       const nextMode = patch.universeMode === "top_n" || patch.universeMode === "fixed_slots" ? patch.universeMode : "all";
-      if (nextMode !== this.settings.universeMode) shouldResetUniverse = true;
-      this.settings.universeMode = nextMode;
+      if (nextMode !== this._settings.universeMode) shouldResetUniverse = true;
+      this._settings.universeMode = nextMode;
     }
     if (patch.defaultTopN !== undefined) {
-      const nextDefaultTopN = normalizeTopNValue(patch.defaultTopN, this.settings.defaultTopN);
-      if (nextDefaultTopN !== this.settings.defaultTopN) shouldResetUniverse = true;
-      this.settings.defaultTopN = nextDefaultTopN;
+      const nextDefaultTopN = normalizeTopNValue(patch.defaultTopN, this._settings.defaultTopN);
+      if (nextDefaultTopN !== this._settings.defaultTopN) shouldResetUniverse = true;
+      this._settings.defaultTopN = nextDefaultTopN;
     }
     if (patch.topNBySymbol !== undefined) {
       const normalized = normalizeTopNBySymbol(patch.topNBySymbol);
       const filtered = {};
-      for (const sym of this.settings.symbols) {
+      for (const sym of this._settings.symbols) {
         if (normalized[sym] != null) filtered[sym] = normalized[sym];
       }
-      this.settings.topNBySymbol = filtered;
+      this._settings.topNBySymbol = filtered;
       shouldResetUniverse = true;
     }
     // Keep a stable global default to reduce mode-side complexity in UI.
-    if (this.settings.defaultTopN !== DEFAULT_MONITOR_TOP_N) {
-      this.settings.defaultTopN = DEFAULT_MONITOR_TOP_N;
+    if (this._settings.defaultTopN !== DEFAULT_MONITOR_TOP_N) {
+      this._settings.defaultTopN = DEFAULT_MONITOR_TOP_N;
       shouldResetUniverse = true;
     }
     if (shouldResetUniverse) this.universeBySymbol.clear();
-    saveMonitorSettings(cloneMonitorSettings(this.settings));
-    if (this.enabled) this.scheduleNext();
-    this.broadcast(`Settings updated (${this.settings.symbols.length} tickers, ${this.settings.intervalMinutes}m, ${describeUniverseMode(this.settings.universeMode)}).`);
+    saveMonitorSettings(cloneMonitorSettings(this._settings));
+    if (this.enabled) this.scheduler.schedule();
+    this.broadcast(`Settings updated (${this._settings.symbols.length} tickers, ${this._settings.intervalMinutes}m, ${describeUniverseMode(this._settings.universeMode)}).`);
   }
+
+  // ── Listeners ─────────────────────────────────────────────────────────────
+
   subscribe(listener) {
     this.statusListeners.add(listener);
     return () => {
@@ -80230,182 +81981,50 @@ class MonitorController {
       this.symbolUpdateListeners.delete(listener);
     };
   }
+
+  // ── Cycle entry points ────────────────────────────────────────────────────
+
   async start(runNow) {
     if (this.enabled) return;
     this.enabled = true;
-    this.settings.enabled = true;
-    saveMonitorSettings(cloneMonitorSettings(this.settings));
+    this._settings.enabled = true;
+    saveMonitorSettings(cloneMonitorSettings(this._settings));
     if (runNow) {
-      const elapsed = await this.minutesSinceLastCycle();
-      if (elapsed === null || elapsed >= this.settings.intervalMinutes) {
-        this.broadcast(`Monitor started (${this.settings.symbols.length} tickers, ${this.settings.intervalMinutes}m) — fetching now.`);
+      const elapsed = await getMinutesSinceLastCycle();
+      if (elapsed === null || elapsed >= this._settings.intervalMinutes) {
+        this.broadcast(`Monitor started (${this._settings.symbols.length} tickers, ${this._settings.intervalMinutes}m) — fetching now.`);
         void this.runCycle("startup");
       } else {
-        const remaining = Math.ceil(this.settings.intervalMinutes - elapsed);
-        this.broadcast(`Monitor started (${this.settings.symbols.length} tickers, ${this.settings.intervalMinutes}m) — last fetch ${elapsed.toFixed(0)}m ago, next in ~${remaining}m.`);
+        const remaining = Math.ceil(this._settings.intervalMinutes - elapsed);
+        this.broadcast(`Monitor started (${this._settings.symbols.length} tickers, ${this._settings.intervalMinutes}m) — last fetch ${elapsed.toFixed(0)}m ago, next in ~${remaining}m.`);
       }
     } else {
-      this.broadcast(`Monitor started (${this.settings.symbols.length} tickers, ${this.settings.intervalMinutes}m).`);
+      this.broadcast(`Monitor started (${this._settings.symbols.length} tickers, ${this._settings.intervalMinutes}m).`);
     }
-    this.scheduleNext();
+    this.scheduler.schedule();
   }
   stop() {
     this.enabled = false;
-    this.settings.enabled = false;
-    saveMonitorSettings(cloneMonitorSettings(this.settings));
-    this.clearTimer();
+    this._settings.enabled = false;
+    saveMonitorSettings(cloneMonitorSettings(this._settings));
+    this.scheduler.clear();
     this.broadcast("Monitor paused.");
   }
   async runCycle(reason = "scheduled") {
-    if (this.running) {
-      this.broadcast("Monitor sync already in progress.", "#c97100");
-      return;
-    }
-    // Skip automated cycles during market-closed hours (nights + weekends).
-    // Manual cycles are always allowed.
-    if (reason !== "manual" && isMarketClosedCT(Date.now())) {
-      this.broadcast("Monitor skipped — market closed.", "var(--ios-text-secondary)");
-      this.scheduleNext();
-      return;
-    }
-    this.running = true;
-    try {
-      if (!this.authToken) {
-        this.broadcast("Monitor waiting for auth token.", "#c97100");
-        return;
-      }
-      const symbols = Array.from(new Set(this.settings.symbols.map(s => s.trim().toUpperCase()).filter(s => s.length > 0)));
-      if (symbols.length === 0) {
-        this.broadcast("Monitor has no tickers configured.", "#c97100");
-        return;
-      }
-      const startedAt = new Date();
-      this.broadcast(`Monitor syncing (${reason})...`);
-      let updated = 0;
-      let failed = 0;
-      let keptTotal = 0;
-      const processSymbol = async symbol => {
-        try {
-          const response = await withTimeout(this.refreshSymbol(symbol), SYMBOL_REFRESH_TIMEOUT_MS, `refreshSymbol(${symbol})`);
-          if (response) {
-            updated += 1;
-            keptTotal += (await readOptionCaptures(symbol)).length;
-          } else {
-            failed += 1;
-          }
-        } catch (error) {
-          MonitorController_log.warn("monitor.cycle.error", {
-            symbol,
-            error: error?.message ?? String(error)
-          });
-          failed += 1;
-        }
-      };
-      const concurrency = this.settings.concurrency;
-      for (let i = 0; i < symbols.length; i += concurrency) {
-        await Promise.all(symbols.slice(i, i + concurrency).map(processSymbol));
-      }
-      await this.saveLastCycleTimestamp();
-      const hhmm = startedAt.toLocaleTimeString("en-US", {
-        timeZone: APP_TIMEZONE,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false
-      });
-      const elapsed = ((Date.now() - startedAt.getTime()) / 1000).toFixed(1);
-      const color = failed > 0 ? "#c97100" : "var(--ios-text-secondary)";
-      this.broadcast(`Monitor ${hhmm}: ${updated}/${symbols.length} updated, ${failed} failed, kept ${keptTotal} (${elapsed}s).`, color);
-    } catch (error) {
-      MonitorController_log.error("monitor.cycle.fail", {
-        reason,
-        error: error?.message ?? String(error)
-      });
-      this.broadcast(`Monitor sync failed (${reason}).`, "#c97100");
-    } finally {
-      this.running = false;
-    }
+    return runMonitorCycle(this, reason);
   }
-
-  /**
-   * Fetch one symbol and persist its snapshot to IndexedDB.
-   *
-   * The monitor_openings snapshot is always written on success.
-   * The full opening DB persist runs fire-and-forget in the background.
-   */
   async refreshSymbol(symbol) {
-    const normalizedSymbol = symbol.trim().toUpperCase();
-    if (!normalizedSymbol) return null;
-    if (!this.authToken) {
-      MonitorController_log.warn("monitor.refresh.noAuth", {
-        symbol: normalizedSymbol
-      });
-      return null;
-    }
-    const capturedAtUtc = new Date().toISOString();
-    try {
-      // ── 1. Network fetch + selection scope ────────────────────────────
-      const refreshContext = await this.loadRefreshContext(normalizedSymbol, capturedAtUtc);
-      if (!refreshContext || refreshContext.response.expirations.length === 0) {
-        MonitorController_log.warn("monitor.refresh.noExpirations", {
-          symbol: normalizedSymbol
-        });
-        return null;
-      }
-      const {
-        response,
-        selectionContext
-      } = refreshContext;
-      this.responseCache.set(normalizedSymbol, {
-        response,
-        capturedAt: capturedAtUtc
-      });
-
-      // ── 2. Build OptionCapture (async ETL via ComputeWorker) ─────────
-      const opening = await buildOptionCapture(normalizedSymbol, response, capturedAtUtc, selectionContext);
-
-      // ── 3. Write snapshot to IndexedDB monitor_openings store ─────────
-      let stored = false;
-      if (opening) {
-        try {
-          const now = new Date();
-          const existing = await readOptionCaptures(normalizedSymbol);
-          const compacted = mergeAndCompact(existing, opening, now);
-          await writeOptionCaptures(normalizedSymbol, compacted);
-          stored = true;
-        } catch (storageErr) {
-          MonitorController_log.warn("monitor.refresh.storageError", {
-            symbol: normalizedSymbol,
-            error: storageErr?.message ?? String(storageErr)
-          });
-        }
-      }
-
-      // ── 4. DB persist full opening — fire-and-forget ──────────────────
-      this.fireAndForgetDbPersist(normalizedSymbol, response, capturedAtUtc, selectionContext);
-
-      // ── 5. Broadcast for UI refresh ───────────────────────────────────
-      this.broadcastSymbolUpdate({
-        symbol: normalizedSymbol,
-        capturedAt: capturedAtUtc,
-        dataTimestamp: response.currentDateTime || capturedAtUtc,
-        localStored: stored,
-        dbPersisted: stored
-      });
-      return response;
-    } catch (error) {
-      MonitorController_log.warn("monitor.refresh.fail", {
-        symbol: normalizedSymbol,
-        error: error?.message ?? String(error)
-      });
-      return null;
-    }
+    return refreshSymbol(this, symbol);
   }
+
+  // ── Maintenance / purge ───────────────────────────────────────────────────
+
   async cleanData() {
     let before = 0;
     let after = 0;
     let touchedSymbols = 0;
     const now = new Date();
-    for (const symbol of this.settings.symbols) {
+    for (const symbol of this._settings.symbols) {
       const existing = await readOptionCaptures(symbol);
       if (existing.length === 0) continue;
       before += existing.length;
@@ -80421,7 +82040,7 @@ class MonitorController {
     };
   }
   async purgeAllData() {
-    const symbols = [...this.settings.symbols];
+    const symbols = [...this._settings.symbols];
     for (const symbol of symbols) {
       await this.purgeSymbol(symbol);
     }
@@ -80435,13 +82054,9 @@ class MonitorController {
   async purgeSymbol(symbol) {
     const sym = symbol.trim().toUpperCase();
     const db = await openAlexQuantDB();
-
-    // 1. Get all openingIds for this symbol from snapshot store
     const snapshotStore = new CaptureSnapshotStore(db);
     const snapshots = await snapshotStore.getBySymbol(sym);
     const openingIds = snapshots.map(s => s.openingId);
-
-    // 2. Delete child records by openingId
     const strikeStore = new CaptureStrikeStore(db);
     const aggregateStore = new CaptureStrikeAggregateStore(db);
     const labelStore = new CaptureLabelStore(db);
@@ -80451,14 +82066,10 @@ class MonitorController {
       await labelStore.deleteByOpeningId(id);
       await snapshotStore.delete(id);
     }));
-
-    // 3. Delete monitor & timestamp snapshots
     const monitorStore = new MonitorCaptureStore(db);
     await monitorStore.deleteBySymbol(sym);
     const tsStore = new TimestampCaptureStore(db);
     await tsStore.deleteBySymbol(sym);
-
-    // 4. Clear local cache
     this.responseCache.delete(sym);
     this.universeBySymbol.delete(sym);
     MonitorController_log.info("monitor.purge.symbol", {
@@ -80468,184 +82079,12 @@ class MonitorController {
   }
   destroy() {
     this.enabled = false;
-    this.clearTimer();
+    this.scheduler.clear();
     this.statusListeners.clear();
+    this.symbolUpdateListeners.clear();
     this.responseCache.clear();
     this.universeBySymbol.clear();
     this.dbWriteInProgress.clear();
-  }
-
-  // ---- private -----------------------------------------------------------
-
-  async loadRefreshContext(symbol, capturedAtUtc) {
-    const authToken = this.authToken;
-    if (!authToken) return null;
-    const mode = this.settings.universeMode;
-    const topN = this.getTopNForSymbol(symbol);
-    const ctDate = toCtDateKey(new Date(capturedAtUtc));
-    const loadFullAndBuildUniverse = async () => {
-      const full = await fetchOptionChains(symbol, authToken);
-      pruneLowOIExpirations(full);
-      if (full.expirations.length === 0) return null;
-      if (mode === "all") {
-        this.universeBySymbol.delete(symbol);
-        return {
-          response: full,
-          selectionContext: {
-            mode: "all"
-          }
-        };
-      }
-      const items = buildUniverseItems(full, mode, topN, capturedAtUtc);
-      if (items.length === 0) {
-        this.universeBySymbol.delete(symbol);
-        return {
-          response: full,
-          selectionContext: {
-            mode: "all"
-          }
-        };
-      }
-      const filtered = filterResponseByUniverse(full, items);
-      if (filtered.expirations.length === 0) {
-        this.universeBySymbol.delete(symbol);
-        return {
-          response: full,
-          selectionContext: {
-            mode: "all"
-          }
-        };
-      }
-      this.universeBySymbol.set(symbol, {
-        ctDate,
-        mode,
-        topN,
-        items
-      });
-      return {
-        response: filtered,
-        selectionContext: buildSelectionContext(mode, items)
-      };
-    };
-    if (mode === "all") {
-      return loadFullAndBuildUniverse();
-    }
-    const cached = this.universeBySymbol.get(symbol);
-    const shouldRebuild = !cached || cached.ctDate !== ctDate || cached.mode !== mode || cached.topN !== topN || cached.items.length === 0;
-    if (shouldRebuild) {
-      return loadFullAndBuildUniverse();
-    }
-    try {
-      const targeted = await fetchOptionChains(symbol, authToken, {
-        expirationDates: cached.items.map(item => item.requestDate)
-      });
-      if (targeted.expirations.length === 0) {
-        return loadFullAndBuildUniverse();
-      }
-      const filtered = filterResponseByUniverse(targeted, cached.items);
-      if (filtered.expirations.length === 0) {
-        return loadFullAndBuildUniverse();
-      }
-      return {
-        response: filtered,
-        selectionContext: buildSelectionContext(mode, cached.items)
-      };
-    } catch (err) {
-      MonitorController_log.warn("monitor.fetch.fallbackFull", {
-        symbol,
-        mode,
-        error: err?.message ?? String(err)
-      });
-      return loadFullAndBuildUniverse();
-    }
-  }
-
-  /**
-   * Persist to IndexedDB without blocking the caller.
-   * Skips if a write for the same symbol is already in progress (prevents the
-   * ConstraintError race on the unique [symbol, dataTimestamp] index).
-   */
-  fireAndForgetDbPersist(symbol, response, capturedAtUtc, selectionContext) {
-    if (this.dbWriteInProgress.has(symbol)) {
-      MonitorController_log.debug("monitor.persist.skippedBusy", {
-        symbol
-      });
-      return;
-    }
-    this.dbWriteInProgress.add(symbol);
-    void (async () => {
-      try {
-        const stores = await openCaptureStores();
-        const status = await persistCaptureToIndexedDb(symbol, response, capturedAtUtc, selectionContext, stores);
-        MonitorController_log.debug("monitor.persist.done", {
-          symbol,
-          status
-        });
-      } catch (error) {
-        MonitorController_log.warn("monitor.persist.fail", {
-          symbol,
-          error: error?.message ?? String(error)
-        });
-      } finally {
-        this.dbWriteInProgress.delete(symbol);
-      }
-    })();
-  }
-  async minutesSinceLastCycle() {
-    try {
-      const db = await openAlexQuantDB();
-      const kv = new KVStore(db);
-      const ts = await kv.get("monitor.lastCycleAt");
-      if (typeof ts !== "number" || ts <= 0) return null;
-      return (Date.now() - ts) / 60_000;
-    } catch {
-      return null;
-    }
-  }
-  async saveLastCycleTimestamp() {
-    try {
-      const db = await openAlexQuantDB();
-      const kv = new KVStore(db);
-      await kv.set("monitor.lastCycleAt", Date.now());
-    } catch {}
-  }
-  broadcast(text, color) {
-    for (const listener of this.statusListeners) {
-      try {
-        listener(text, color);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  broadcastSymbolUpdate(update) {
-    for (const listener of this.symbolUpdateListeners) {
-      try {
-        listener(update);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  clearTimer() {
-    if (this.timer != null) {
-      window.clearTimeout(this.timer);
-      this.timer = null;
-    }
-  }
-  scheduleNext() {
-    this.clearTimer();
-    if (!this.enabled) return;
-    const intervalMs = this.settings.intervalMinutes * 60 * 1000;
-    const now = Date.now();
-    const remainder = now % intervalMs;
-    const delay = (remainder === 0 ? intervalMs : intervalMs - remainder) + 250;
-    this.timer = window.setTimeout(async () => {
-      this.timer = null;
-      if (!this.enabled) return;
-      await this.runCycle("scheduled");
-      this.scheduleNext();
-    }, delay);
   }
 }
 ;// ./src/backend/pipeline/snapshot/AccountSnapshotRecorder.ts
@@ -81050,6 +82489,7 @@ const normalizeSettings = input => {
 
 
 
+
 // Wire AI provider resolver so NewsService never imports ai/ directly.
 newsService.setProviderResolver(getAIProviders);
 function syncRecorderSettings(recorder, settings, defaults) {
@@ -81271,8 +82711,12 @@ function syncRecorderSettings(recorder, settings, defaults) {
     addGlobalStyle();
     addAnimationStyles();
     // Initialise theme controller. Reads persisted preference (localStorage:
-    // alexquant.themeMode) when present; otherwise follows system preference.
-    applyColorTheme("auto");
+    // alexquant.themeMode) when present; otherwise falls back to dark.
+    applyColorTheme();
+    // Render-mode controller (Full / Eco) — idempotent; ensureAxUICss
+    // already calls this before bootstrapping liquid glass, but the
+    // explicit call here documents the boot order and keeps it visible.
+    initRenderMode();
     const layoutMode = initLayoutMode();
     log.debug("[Phase 1] CSS injected + color theme applied + layoutMode=" + layoutMode);
 
@@ -81293,6 +82737,18 @@ function syncRecorderSettings(recorder, settings, defaults) {
       hasCustomerId: !!initCtx.customerId,
       customerId: maskTail(initCtx.customerId, 6),
       cip: initCtx.cip ?? null
+    });
+
+    // Reconcile boot-critical UI prefs (theme / render mode) against the
+    // canonical KV values before the UI skeleton renders. localStorage was
+    // the synchronous fast-path at document-start; KV is the source of truth.
+    // Awaited so any cross-device divergence is resolved before paint —
+    // KV reads are sub-frame here and do not extend the critical path.
+    const kvStore = new KVStore(db);
+    await Promise.all([hydrateThemeFromKV(kvStore), hydrateRenderModeFromKV(kvStore)]).catch(err => {
+      log.warn("[Phase 1] UI pref hydrate failed (non-fatal)", {
+        error: err?.message ?? String(err)
+      });
     });
     log.info("[Phase 2+3] Storage hydration + UI skeleton (parallel)");
     const uiElements = ui_createMain({
@@ -81347,7 +82803,6 @@ function syncRecorderSettings(recorder, settings, defaults) {
     });
     log.info("[Phase 2] Storage hydration starting");
     try {
-      const kvStore = new KVStore(db);
       storage = storageOperator(ctx, kvStore);
       ctx.storage = storage;
       const tokenForStorage = initCtx.asn;
