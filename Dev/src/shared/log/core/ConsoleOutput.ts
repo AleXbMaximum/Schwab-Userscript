@@ -1,5 +1,6 @@
 import { LogFormatter } from "./LogFormatter";
 import { isLevelEnabled, normalizeLevel } from "./LogLevels";
+import { resolveNamespaceLevel } from "./resolveNamespaceLevel";
 
 class ConsoleOutput {
   private config: any;
@@ -21,8 +22,11 @@ class ConsoleOutput {
 
     if (!this.config.enabled) return false;
 
-    const nsLevel =
-      (this.namespaceLevels as any)[namespace] ?? this.config.defaultLevel;
+    const nsLevel = resolveNamespaceLevel(
+      namespace,
+      this.namespaceLevels,
+      this.config.defaultLevel,
+    );
     if (!isLevelEnabled(nsLevel, normalizedLevel)) return false;
 
     return true;
