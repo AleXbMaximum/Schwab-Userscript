@@ -6,7 +6,14 @@
   "scripts": {
     "build": "cross-env NODE_ENV=production webpack --mode production --config webpack.config.js",
     "dev": "cross-env NODE_ENV=development webpack --watch --mode development --config webpack.config.js",
-    "lint": "eslint \"./**/*.{js,mjs,cjs,ts,tsx}\" --max-warnings=0",
+    "lint": "npm run lint:eslint && npm run lint:checks",
+    "lint:eslint": "eslint \"./**/*.{js,mjs,cjs,ts,tsx}\" --max-warnings=0",
+    "lint:checks": "npm run lint:time && npm run lint:hygiene && npm run lint:boundaries",
+    "lint:time": "node scripts/check-time-rules.mjs",
+    "lint:time:baseline": "node scripts/check-time-rules.mjs --write-baseline",
+    "lint:hygiene": "node scripts/check-hygiene-rules.mjs",
+    "lint:boundaries": "node scripts/check-ui-boundaries.mjs",
+    "lint:boundaries:baseline": "node scripts/check-ui-boundaries.mjs --write-baseline",
     "test": "jest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "format": "prettier --write \"**/*.{js,ts,tsx,json,md,yml,yaml}\""
