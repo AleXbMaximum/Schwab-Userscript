@@ -1,13 +1,9 @@
 import { ui_createElement } from "../components/core/createElement";
 import { DS_TYPOGRAPHY } from "../components/core/theme";
-import type{ HoldingsViewCtx } from "shared/types/core";
+import type { HoldingsViewCtx } from "shared/types/core";
 import { RiskMetricsCalculator } from "backend/computation/risk/RiskMetricsCalculator";
 import type { BetaFactorScenarioInput } from "backend/computation/risk/RiskMetricsCalculator";
 import { logService } from "shared/log/core/LogService";
-import {
-  renderPortfolioSectionLayout,
-  type PortfolioSectionLayoutResult,
-} from "./components/layout/PortfolioSectionLayout";
 import { renderPortfolioHealthScore } from "./components/overview/PortfolioHealthScore";
 import { renderPortfolioStateVector } from "./components/overview/PortfolioStateVector";
 import { renderGreeksRiskPanel } from "./components/exposure/GreeksRiskPanel";
@@ -16,31 +12,24 @@ import { renderScenarioCardPanel } from "./components/scenarios/ScenarioCardPane
 import { renderPortfolioControlBar } from "./components/governance/PortfolioControlBar";
 import { renderRebalanceIdeasPanel } from "./components/governance/RebalanceIdeasPanel";
 import type { PortfolioControlState, PortfolioSectionId } from "./types";
-import type { TickerBetaBundle, ThreeFactorBundle } from "../../backend/computation/beta/types";
-import { computeWeightedBetaForBenchmarks } from "../../backend/computation/beta/betaEnrichment";
-import { computeLinkedTargets } from "../../backend/computation/rebalance/RebalanceCalculator";
-import { extractEtfUnderlyingKeysFromGroups } from "../../shared/utils/holdingsGroups";
+import type {
+  TickerBetaBundle,
+  ThreeFactorBundle,
+} from "../../backend/computation/beta/types";
 import { createPortfolioSettingsPanel } from "./setting_panel/settingsPanel";
 
-type ComponentRef = HTMLElement & {
-  cleanup?: () => void;
-  update?: (...args: any[]) => void;
-};
-
-type Slots = {
-  health: HTMLElement;
-  betaExposure: HTMLElement;
-  greeks: HTMLElement;
-  heatmap: HTMLElement;
-  rebalance: HTMLElement;
-};
-
-const ALL_SECTIONS: PortfolioSectionId[] = [
-  "overview",
-  "exposure",
-  "scenarios",
-  "governance",
-];
+import {
+  ALL_PORTFOLIO_SECTIONS,
+  createPortfolioLifecycle,
+  type ComponentRef,
+  type Slots,
+} from "./data/portfolioLifecycle";
+import {
+  buildBetaPayload,
+  buildRebalancePayload,
+  buildScenarioPayload,
+} from "./data/portfolioPayloads";
+import type { PortfolioSectionLayoutResult } from "./components/layout/PortfolioSectionLayout";
 
 export function riskManagement_renderPage(
   ctx: HoldingsViewCtx,
@@ -48,31 +37,7 @@ export function riskManagement_renderPage(
   const log = logService.namespace("render");
   const { settings } = ctx;
   const headerController = (ctx as any).headerController;
-  const resolveQuoteLastPrice = (
-    symbol: string,
-    quoteBySymbol: Record<string, any>,
-    byUnderlying?: Record<string, any>,
-  ): number | null => {
-    const normalized =
-      typeof symbol === "string" ? symbol.toUpperCase().trim() : "";
-    // 1) Try live quote data
-    const quoteItem =
-      quoteBySymbol[symbol] ??
-      (normalized ? quoteBySymbol[normalized] : undefined);
-    const raw =
-      quoteItem?.quote?.lastPrice ?? quoteItem?.regularQuote?.lastPrice;
-    const price = Number(raw);
-    if (Number.isFinite(price) && price > 0) return price;
-    // 2) Fallback to derived holdings underlying price
-    if (byUnderlying) {
-      const agg =
-        byUnderlying[symbol] ??
-        (normalized ? byUnderlying[normalized] : undefined);
-      const up = agg?.underlyingPrice;
-      if (typeof up === "number" && Number.isFinite(up) && up > 0) return up;
-    }
-    return null;
-  };
+
   const triggerPortfolioRecalculate = (): void => {
     const hc = headerController as any;
     if (hc?.triggerRebalanceRecalc) {
@@ -95,7 +60,7 @@ export function riskManagement_renderPage(
     scenarioHorizon: "short",
   };
 
-  let manualExpandedSections = new Set<PortfolioSectionId>([
+  const manualExpandedSections = new Set<PortfolioSectionId>([
     "overview",
     "exposure",
     "scenarios",
@@ -129,7 +94,6 @@ export function riskManagement_renderPage(
   pageHeader.appendChild(portfolioSettingsPanel.root);
   wrapper.appendChild(pageHeader);
 
-  // Placeholder for the section nav bar (extracted from sectionLayout, pinned at top)
   const navBarPlaceholder = ui_createElement("div", {
     styleString: "display: none;",
   });
@@ -147,6 +111,12 @@ export function riskManagement_renderPage(
   wrapper.appendChild(controlBarPlaceholder);
   wrapper.appendChild(navBarPlaceholder);
   wrapper.appendChild(contentArea);
+
+  const components: Record<string, ComponentRef> = {};
+  const sectionLayoutRef: { value: PortfolioSectionLayoutResult | null } = {
+    value: null,
+  };
+  const slotsRef: { value: Slots | null } = { value: null };
 
   const getStateVectorStickyHeight = (): number =>
     Math.max(
@@ -168,135 +138,42 @@ export function riskManagement_renderPage(
       ),
     );
 
-  /** Sync all sticky top offsets: stateVector → controlBar → navBar (top-down stacking). */
   const syncAllStickyTops = (): void => {
-    // State vector sticks at the very top
     const svEl = stateVectorPlaceholder.firstElementChild as HTMLElement | null;
     if (svEl) svEl.style.top = "0px";
 
     const svH = getStateVectorStickyHeight();
 
-    // Control bar sticks below the state vector
     const controlBar =
       (components["controlBar"] as HTMLElement | undefined) ??
       (controlBarPlaceholder.firstElementChild as HTMLElement | null);
     if (controlBar) controlBar.style.top = `${svH}px`;
 
-    // Nav bar sticks below the state vector + control bar
     const cbH = getControlBarStickyHeight();
     const navBarEl = navBarPlaceholder.firstElementChild as HTMLElement | null;
     if (navBarEl) navBarEl.style.top = `${svH + cbH}px`;
   };
 
+  const lifecycle = createPortfolioLifecycle(
+    {
+      components,
+      sectionLayout: sectionLayoutRef,
+      slots: slotsRef,
+      navBarPlaceholder,
+      stateVectorPlaceholder,
+      controlBarPlaceholder,
+      contentArea,
+    },
+    {
+      syncAllStickyTops,
+      getControlState: () => controlState,
+      manualExpandedSections,
+    },
+  );
+  const { cleanupComponent, cleanupAllComponents, updateOrCreate, ensureSectionLayout } =
+    lifecycle;
+
   const riskCalculator = new RiskMetricsCalculator();
-
-  let components: Record<string, ComponentRef> = {};
-  let sectionLayout: PortfolioSectionLayoutResult | null = null;
-  let slots: Slots | null = null;
-
-  const cleanupComponent = (key: string) => {
-    const comp = components[key];
-    if (!comp) return;
-    if (comp.cleanup) {
-      try {
-        comp.cleanup();
-      } catch (err) {
-        log.warn("component.cleanup.fail", {
-          key,
-          error: (err as Error)?.message,
-        });
-      }
-    }
-    delete components[key];
-  };
-
-  const cleanupAllComponents = () => {
-    Object.keys(components).forEach((key) => cleanupComponent(key));
-    sectionLayout = null;
-    slots = null;
-    navBarPlaceholder.innerHTML = "";
-    stateVectorPlaceholder.innerHTML = "";
-    controlBarPlaceholder.innerHTML = "";
-    contentArea.innerHTML = "";
-  };
-
-  const updateOrCreate = (
-    host: HTMLElement,
-    componentKey: string,
-    createFn: () => ComponentRef,
-    updateArgs?: any[],
-  ) => {
-    const existing = components[componentKey];
-
-    if (existing && existing.update && updateArgs) {
-      try {
-        existing.update(...updateArgs);
-        return;
-      } catch (err) {
-        log.warn("component.update.fail", {
-          key: componentKey,
-          error: (err as Error)?.message,
-        });
-        cleanupComponent(componentKey);
-      }
-    }
-
-    if (components[componentKey]) {
-      cleanupComponent(componentKey);
-    }
-
-    const next = createFn();
-    host.innerHTML = "";
-    host.appendChild(next);
-    components[componentKey] = next;
-  };
-
-  const ensureSectionLayout = () => {
-    if (sectionLayout && slots) {
-      syncAllStickyTops();
-      return;
-    }
-
-    if (sectionLayout) {
-      cleanupComponent("sectionLayout");
-      sectionLayout = null;
-      slots = null;
-    }
-
-    const layout = renderPortfolioSectionLayout(
-      (id: PortfolioSectionId, expanded: boolean) => {
-        if (controlState.focusMode !== "all") return;
-        if (expanded) manualExpandedSections.add(id);
-        else manualExpandedSections.delete(id);
-      },
-    );
-
-    contentArea.innerHTML = "";
-    contentArea.appendChild(layout);
-
-    // Extract the nav bar from the section layout and pin it at the top of the page
-    const navBarEl = layout.getNavBar();
-    navBarPlaceholder.innerHTML = "";
-    navBarPlaceholder.appendChild(navBarEl);
-    navBarPlaceholder.style.display = "block";
-    navBarEl.style.zIndex = "var(--z-sticky-nav, 100)";
-
-    syncAllStickyTops();
-
-    sectionLayout = layout;
-    components.sectionLayout = layout;
-
-    slots = {
-      health: layout.getCardSlot("overview", "healthScore", 1, "text"),
-      greeks: layout.getCardSlot("overview", "greeks", 1, "chart"),
-
-      betaExposure: layout.getCardSlot("exposure", "betaExposure", 3, "text", 1, true),
-
-      heatmap: layout.getCardSlot("scenarios", "heatmap", 3, "interactive"),
-
-      rebalance: layout.getCardSlot("governance", "rebalanceIdeas", 3, "text", 1, true),
-    };
-  };
 
   const makeChip = (text: string): HTMLElement => {
     return ui_createElement("span", {
@@ -308,7 +185,8 @@ export function riskManagement_renderPage(
   };
 
   const updateSectionChips = (riskMetrics: any) => {
-    if (!sectionLayout) return;
+    const layout = sectionLayoutRef.value;
+    if (!layout) return;
 
     const top1 = riskMetrics.topUnderlyingConcentrations[0]?.deltaPct ?? 0;
     const worst = Math.min(
@@ -333,45 +211,43 @@ export function riskManagement_renderPage(
       ],
     };
 
-    ALL_SECTIONS.forEach((sectionId) => {
-      const chips = sectionLayout!.getSectionInfoChips(sectionId);
+    ALL_PORTFOLIO_SECTIONS.forEach((sectionId) => {
+      const chips = layout.getSectionInfoChips(sectionId);
       chips.innerHTML = "";
       bySection[sectionId].forEach((text) => chips.appendChild(makeChip(text)));
     });
   };
 
   const applyFocusMode = (scroll: boolean) => {
-    if (!sectionLayout) return;
+    const layout = sectionLayoutRef.value;
+    if (!layout) return;
 
     if (controlState.focusMode === "all") {
-      ALL_SECTIONS.forEach((sectionId) => {
-        sectionLayout!.setExpanded(
-          sectionId,
-          manualExpandedSections.has(sectionId),
-        );
+      ALL_PORTFOLIO_SECTIONS.forEach((sectionId) => {
+        layout.setExpanded(sectionId, manualExpandedSections.has(sectionId));
       });
       return;
     }
 
     if (controlState.focusMode === "breaches") {
-      sectionLayout.setExpanded("overview", true);
-      sectionLayout.setExpanded("exposure", false);
-      sectionLayout.setExpanded("scenarios", false);
-      sectionLayout.setExpanded("governance", true);
+      layout.setExpanded("overview", true);
+      layout.setExpanded("exposure", false);
+      layout.setExpanded("scenarios", false);
+      layout.setExpanded("governance", true);
       if (scroll) {
-        sectionLayout.scrollToSection("governance");
-        sectionLayout.highlightCard("rebalanceIdeas");
+        layout.scrollToSection("governance");
+        layout.highlightCard("rebalanceIdeas");
       }
       return;
     }
 
-    sectionLayout.setExpanded("overview", true);
-    sectionLayout.setExpanded("exposure", false);
-    sectionLayout.setExpanded("scenarios", true);
-    sectionLayout.setExpanded("governance", false);
+    layout.setExpanded("overview", true);
+    layout.setExpanded("exposure", false);
+    layout.setExpanded("scenarios", true);
+    layout.setExpanded("governance", false);
     if (scroll) {
-      sectionLayout.scrollToSection("scenarios");
-      sectionLayout.highlightCard("stressPlaybook");
+      layout.scrollToSection("scenarios");
+      layout.highlightCard("stressPlaybook");
     }
   };
 
@@ -486,14 +362,16 @@ export function riskManagement_renderPage(
             },
             onExpandAll: () => {
               controlState = { ...controlState, focusMode: "all" };
-              manualExpandedSections = new Set(ALL_SECTIONS);
+              ALL_PORTFOLIO_SECTIONS.forEach((s) =>
+                manualExpandedSections.add(s),
+              );
               syncControlBarState();
               applyFocusMode(false);
               queueRender(true);
             },
             onCollapseAll: () => {
               controlState = { ...controlState, focusMode: "all" };
-              manualExpandedSections = new Set<PortfolioSectionId>();
+              manualExpandedSections.clear();
               syncControlBarState();
               applyFocusMode(false);
               queueRender(true);
@@ -505,7 +383,9 @@ export function riskManagement_renderPage(
 
       contentArea.style.display = "block";
       ensureSectionLayout();
-      if (!slots || !sectionLayout) return;
+      const slots = slotsRef.value;
+      const layout = sectionLayoutRef.value;
+      if (!slots || !layout) return;
 
       updateSectionChips(riskMetrics);
 
@@ -527,88 +407,13 @@ export function riskManagement_renderPage(
         [riskMetrics, derived],
       );
 
-      // Build multi-benchmark beta payload
-      const allBenchmarkBetas =
-        (headerController as any)?.getAllBenchmarkBetaData?.() ??
-        new Map<string, Map<string, TickerBetaBundle>>();
-      const byU = derived.byUnderlying || {};
-      const quoteBySymbol = (data.quotesBySymbol ?? {}) as Record<string, any>;
-      const netMV = Math.abs(derived.portfolioAgg?.netMarketValue ?? 0);
-      const totalAbsDelta = derived.portfolioAgg?.totalAbsDeltaNotionalDol ?? 0;
-      const portfolioWeightedBeta = computeWeightedBetaForBenchmarks(
-        byU,
-        allBenchmarkBetas,
-        netMV,
-        totalAbsDelta,
-      );
-      const hc = headerController as any;
-
-      // Compute target-mode delta notional from rebalance targets
-      const targetByUnderlying: Record<
-        string,
-        { deltaNotionalDol: number | null }
-      > = {};
-      const rebTargets = liveSettings.rebalanceTargets ?? {};
-      const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
-      const currentBm = headerController?.getCurrentBenchmark?.() || "$SPX";
-      const currentBmData = allBenchmarkBetas.get(currentBm);
-      for (const [key, entry] of Object.entries(rebTargets) as [
-        string,
-        any,
-      ][]) {
-        if (!entry?.anchor || entry?.value == null) continue;
-        const price = resolveQuoteLastPrice(key, quoteBySymbol, byU) ?? 0;
-        const beta = currentBmData?.get(key)?.short?.beta ?? 1;
-        const linked = computeLinkedTargets(entry, price, beta, acctVal);
-        targetByUnderlying[key] = { deltaNotionalDol: linked.deltaDollar };
-      }
-      // Holdings tickers with no target keep current exposure
-      for (const key in byU) {
-        if (!targetByUnderlying[key]) {
-          targetByUnderlying[key] = {
-            deltaNotionalDol: byU[key]?.deltaNotionalDol ?? null,
-          };
-        }
-      }
-
-      // Target-mode portfolio weighted beta
-      let tgtTotalAbsDelta = 0;
-      for (const uk in targetByUnderlying) {
-        tgtTotalAbsDelta += Math.abs(
-          targetByUnderlying[uk]?.deltaNotionalDol ?? 0,
-        );
-      }
-      const targetPortfolioWeightedBeta = computeWeightedBetaForBenchmarks(
-        targetByUnderlying,
-        allBenchmarkBetas,
-        netMV,
-        tgtTotalAbsDelta,
-      );
-
-      const betaPayload = {
-        allBenchmarkBetas,
-        portfolioWeightedBeta,
-        targetPortfolioWeightedBeta,
-        byUnderlying: derived.byUnderlying || {},
-        targetByUnderlying,
-        accountValue: acctVal,
-        rebalanceTargets: liveSettings.rebalanceTargets,
-        currentBenchmark: currentBm,
-        extraTickers: hc?.getExtraBetaTickers?.() ?? [],
-        betaCalcStatus: hc?.getBetaCalcStatus?.() ?? {
-          isFetching: false,
-          error: null,
-        },
-        onRecalculate: () => {
-          triggerPortfolioRecalculate();
-        },
-        onAddTicker: (symbol: string) => {
-          if (hc?.addExtraBetaTicker) hc.addExtraBetaTicker(symbol);
-        },
-        onRemoveTicker: (symbol: string) => {
-          if (hc?.removeExtraBetaTicker) hc.removeExtraBetaTicker(symbol);
-        },
-      };
+      const betaPayload = buildBetaPayload({
+        derived,
+        data,
+        liveSettings,
+        headerController,
+        triggerPortfolioRecalculate,
+      });
       updateOrCreate(
         slots.betaExposure,
         "betaExposure",
@@ -616,36 +421,29 @@ export function riskManagement_renderPage(
         [betaPayload],
       );
 
-      // Beta factor scenario cards
-      const scenarioCardPayload = {
+      const scenarioCardPayload = buildScenarioPayload({
         riskMetrics,
-        modelType: controlState.scenarioModelType,
-        horizon: controlState.scenarioHorizon,
-        byUnderlying: derived.byUnderlying || {},
-        threeFactorData:
-          latestThreeFactorData ??
-          (headerController as any)?.getThreeFactorData?.() ??
-          null,
-        allBenchmarkBetas:
-          allBenchmarkBetas.size > 0 ? allBenchmarkBetas : null,
-        onModelTypeChange: (type: "anchor" | "threeFactor") => {
+        controlState,
+        derived,
+        latestThreeFactorData,
+        headerController,
+        allBenchmarkBetas: betaPayload.allBenchmarkBetas,
+        onModelTypeChange: (type) => {
           controlState = { ...controlState, scenarioModelType: type };
           cleanupComponent("heatmap");
           queueRender(true);
         },
-        onHorizonChange: (
-          horizon: "ultraShort" | "short" | "medium" | "long",
-        ) => {
+        onHorizonChange: (horizon) => {
           controlState = { ...controlState, scenarioHorizon: horizon };
           cleanupComponent("heatmap");
           queueRender(true);
         },
-        onCustomScenarioChange: (input: BetaFactorScenarioInput | null) => {
+        onCustomScenarioChange: (input) => {
           customScenarioInput = input;
           cleanupComponent("heatmap");
           queueRender(true);
         },
-      };
+      });
       updateOrCreate(
         slots.heatmap,
         "heatmap",
@@ -653,50 +451,18 @@ export function riskManagement_renderPage(
         [scenarioCardPayload],
       );
 
-      const etfUnderlyingKeys = extractEtfUnderlyingKeysFromGroups(
-        holdings?.accounts?.[0]?.groupedPositions,
-      );
-
-      const rebalancePayload = {
+      const rebalancePayload = buildRebalancePayload({
         riskMetrics,
         derived,
-        limits: liveSettings.riskLimits,
-        riskAppetite: controlState.riskAppetite,
-        severityFilter: controlState.severityFilter,
-        targetAllocations: liveSettings.targetAllocations,
-        rebalanceTargets: liveSettings.rebalanceTargets,
-        rebalanceProfiles: liveSettings.rebalanceProfiles,
-        betaData: latestBetaData ?? undefined,
-        quoteBySymbol,
-        etfUnderlyingKeys,
-        extraBetaTickers: hc?.getExtraBetaTickers?.() ?? [],
-        showRiskIdeas: true,
-        showTradeSuggestions: true,
-        onRecalculate: () => {
-          triggerPortfolioRecalculate();
-        },
-        onUpdateTargetAllocations: (next: any) => {
-          ctx.onUpdateSettings({ targetAllocations: next } as any, {
-            rerender: false,
-          });
-        },
-        onUpdateRebalanceTargets: (next: any) => {
-          ctx.onUpdateSettings({ rebalanceTargets: next } as any, {
-            rerender: false,
-          });
-        },
-        onUpdateRebalanceProfiles: (next: any) => {
-          ctx.onUpdateSettings({ rebalanceProfiles: next } as any, {
-            rerender: false,
-          });
-        },
-        onAddTicker: (symbol: string) => {
-          if (hc?.addExtraBetaTicker) hc.addExtraBetaTicker(symbol);
-        },
-        onRemoveTicker: (symbol: string) => {
-          if (hc?.removeExtraBetaTicker) hc.removeExtraBetaTicker(symbol);
-        },
-      };
+        liveSettings,
+        controlState,
+        latestBetaData,
+        quoteBySymbol: (data.quotesBySymbol ?? {}) as Record<string, any>,
+        holdings,
+        headerController,
+        ctx: ctx as any,
+        triggerPortfolioRecalculate,
+      });
       updateOrCreate(
         slots.rebalance,
         "rebalance",
