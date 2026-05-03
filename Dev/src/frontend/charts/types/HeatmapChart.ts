@@ -1,10 +1,8 @@
-import { CHART_COLORS } from "../ChartTheme";
 import { isDarkTheme } from "frontend/components/core/axTheme/controller";
 import { withShadow } from "frontend/components/core/axTheme/renderMode/canvasShadow";
 import {
   formatCompactDollar,
   formatCurrencyLocale,
-  formatPct,
 } from "shared/utils/format/formatters";
 import { createTooltipHost } from "shared/utils/dom/tooltipHost";
 import type { HeatmapOptions, HeatmapChartHandle } from "./HeatmapTypes";
@@ -22,6 +20,12 @@ import {
   drawColorScale as drawColorScaleDecoration,
   drawSpotLine as drawSpotLineDecoration,
 } from "./heatmapDecorations";
+import {
+  positionHeatmapTooltip,
+  showCellTooltip,
+  showSummaryRowTooltipImpl,
+  hideHeatmapTooltip,
+} from "./heatmapTooltip";
 
 export function createHeatmapChart(opts: HeatmapOptions): HeatmapChartHandle {
   return new HeatmapChart(opts);
@@ -325,7 +329,8 @@ class HeatmapChart implements HeatmapChartHandle {
         () => {
           this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
           this.ctx.lineWidth = 2;
-          this.traceRoundRect(
+          traceRoundRect(
+            this.ctx,
             x + gap,
             y + gap,
             cw - gap * 2,
@@ -348,7 +353,8 @@ class HeatmapChart implements HeatmapChartHandle {
         () => {
           this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
           this.ctx.lineWidth = 2;
-          this.traceRoundRect(
+          traceRoundRect(
+            this.ctx,
             x + gap,
             summaryRowY + gap,
             cw - gap * 2,
@@ -420,21 +426,7 @@ class HeatmapChart implements HeatmapChartHandle {
   }
 
   private positionTooltip(clientX: number, clientY: number): void {
-    if (!this.tooltip) return;
-    const tooltipRect = this.tooltip.getBoundingClientRect();
-    let left = clientX + 10;
-    let top = clientY + 10;
-
-    if (left + tooltipRect.width > window.innerWidth) {
-      left = clientX - tooltipRect.width - 10;
-    }
-    if (top + tooltipRect.height > window.innerHeight) {
-      top = clientY - tooltipRect.height - 10;
-    }
-
-    this.tooltip.style.left = `${left}px`;
-    this.tooltip.style.top = `${top}px`;
-    this.tooltip.style.display = "block";
+    if (this.tooltip) positionHeatmapTooltip(this.tooltip, clientX, clientY);
   }
 
   private showTooltip(
@@ -442,29 +434,7 @@ class HeatmapChart implements HeatmapChartHandle {
     y: number,
     cell: { row: number; col: number },
   ): void {
-    if (!this.tooltip) return;
-
-    const { rows, columns, valueFormatter, tooltipFormatter } = this.options;
-    const value = this.options.data[cell.row][cell.col];
-
-    const rowLabel = rows[cell.row];
-    const colLabel = columns[cell.col];
-
-    if (tooltipFormatter) {
-      this.tooltip.innerHTML = tooltipFormatter(rowLabel, colLabel, value);
-    } else {
-      this.tooltip.innerHTML = `
-                <div style="font-weight: 600; margin-bottom: 4px;">${rowLabel} × ${colLabel}</div>
-                <div style="color: ${value >= 0 ? CHART_COLORS.success : CHART_COLORS.danger};">
-                    Expected P&L: ${valueFormatter(value)}
-                </div>
-                <div style="font-size: 11px; color: ${CHART_COLORS.textSecondary}; margin-top: 4px;">
-                    ${formatPct(this.maxValue > 0 ? value / this.maxValue : 0)} of max scenario
-                </div>
-            `;
-    }
-
-    this.positionTooltip(x, y);
+    showCellTooltip(this.tooltip, this.options, this.maxValue, x, y, cell);
   }
 
   private showSummaryRowTooltip(
@@ -472,19 +442,18 @@ class HeatmapChart implements HeatmapChartHandle {
     clientY: number,
     col: number,
   ): void {
-    if (!this.tooltip) return;
-    const value = this.options.summaryRow[col];
-    const timeLabel = this.options.columns[col];
-    this.tooltip.innerHTML =
-      `<div style="font-weight: 600; margin-bottom: 2px;">${timeLabel}</div>` +
-      `<div>\u03A3 GEX: ${this.formatCompactValue(value)}</div>`;
-    this.positionTooltip(clientX, clientY);
+    showSummaryRowTooltipImpl(
+      this.tooltip,
+      this.options,
+      (v) => formatCompactDollar(v, { sign: true }),
+      clientX,
+      clientY,
+      col,
+    );
   }
 
   private hideTooltip(): void {
-    if (this.tooltip) {
-      this.tooltip.style.display = "none";
-    }
+    hideHeatmapTooltip(this.tooltip);
   }
 
   private render(): void {
@@ -509,224 +478,37 @@ class HeatmapChart implements HeatmapChartHandle {
     });
   }
 
-  private formatCompactValue(value: number): string {
-    return formatCompactDollar(value, { sign: true });
-  }
-
-  private traceRoundRect(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    r: number,
-  ): void {
-    traceRoundRect(this.ctx, x, y, w, h, r);
-  }
-
   private drawColorScale(): void {
-    const { ctx } = this;
-    const { rows, cellHeight } = this.options;
-    const rowLabelWidth = this.rowLabelW;
-    const gridRight = rowLabelWidth + this.totalGridWidth;
-
-    const scaleWidth = Math.min(200, gridRight - rowLabelWidth);
-    const scaleHeight = 10;
-    const isTop = this.options.colorScalePosition === "top";
-
-    let scaleX: number;
-    let scaleY: number;
-    if (isTop) {
-      scaleX = rowLabelWidth;
-      scaleY = 6;
-    } else {
-      const hasSummaryRow = this.options.summaryRow.length > 0;
-      const summaryRowExtra = hasSummaryRow ? cellHeight + 8 : 0;
-      const gridBottom =
-        this.gridStartY + rows.length * cellHeight + summaryRowExtra;
-      scaleX = gridRight - scaleWidth;
-      scaleY = gridBottom + 10;
-    }
-
-    // Gradient bar
-    const gradient = ctx.createLinearGradient(
-      scaleX,
-      0,
-      scaleX + scaleWidth,
-      0,
-    );
-    gradient.addColorStop(0, CHART_COLORS.heatmapScale[0]);
-    gradient.addColorStop(0.25, CHART_COLORS.heatmapScale[1]);
-    gradient.addColorStop(0.5, CHART_COLORS.heatmapScale[2]);
-    gradient.addColorStop(0.75, CHART_COLORS.heatmapScale[3]);
-    gradient.addColorStop(1, CHART_COLORS.heatmapScale[4]);
-
-    ctx.fillStyle = gradient;
-    this.traceRoundRect(
-      scaleX,
-      scaleY,
-      scaleWidth,
-      scaleHeight,
-      scaleHeight / 2,
-    );
-    ctx.fill();
-
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-    ctx.lineWidth = 0.5;
-    this.traceRoundRect(
-      scaleX,
-      scaleY,
-      scaleWidth,
-      scaleHeight,
-      scaleHeight / 2,
-    );
-    ctx.stroke();
-
-    // Value labels
-    const rawMin = Number.isFinite(this.options.colorRangeMin)
-      ? this.options.colorRangeMin
-      : this.minValue;
-    const rawMax = Number.isFinite(this.options.colorRangeMax)
-      ? this.options.colorRangeMax
-      : this.maxValue;
-    const labelY = scaleY + scaleHeight + 12;
-
-    ctx.font = CHART_FONTS.labelSmall;
-    ctx.fillStyle = CHART_COLORS.textSecondary;
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(this.formatScaleLabel(rawMin), scaleX, labelY);
-
-    ctx.textAlign = "center";
-    ctx.fillText("0", scaleX + scaleWidth / 2, labelY);
-
-    ctx.textAlign = "right";
-    ctx.fillText(this.formatScaleLabel(rawMax), scaleX + scaleWidth, labelY);
-  }
-
-  private formatScaleLabel(value: number): string {
-    return formatScaleLabel(value);
+    drawColorScaleDecoration({
+      ctx: this.ctx,
+      options: this.options,
+      minValue: this.minValue,
+      maxValue: this.maxValue,
+      rowLabelWidth: this.rowLabelW,
+      totalGridWidth: this.totalGridWidth,
+      gridStartY: this.gridStartY,
+    });
   }
 
   private drawSpotLine(startX: number, startY: number): void {
-    const { ctx } = this;
-    const spots = this.options.spotPrices;
-    const colVals = this.options.columnNumericValues;
-    const rowVals = this.options.rowNumericValues;
-    const { rows, columns, cellWidth, cellHeight } = this.options;
-
-    if (spots.length === 0) return;
-
-    const pathPoints: { x: number; y: number }[] = [];
-
-    if (rowVals.length > 0) {
-      for (let col = 0; col < columns.length && col < spots.length; col++) {
-        const spot = spots[col];
-        if (!Number.isFinite(spot) || spot <= 0) continue;
-
-        const y = this.interpolateSpotY(spot, rowVals, startY, cellHeight);
-        if (y == null) continue;
-
-        pathPoints.push({ x: startX + this.colX(col) + this.colW(col) / 2, y });
-      }
-    } else if (colVals.length > 0) {
-      for (let row = 0; row < rows.length && row < spots.length; row++) {
-        const spot = spots[row];
-        if (!Number.isFinite(spot) || spot <= 0) continue;
-
-        const x = this.interpolateSpotX(spot, colVals, startX, cellWidth);
-        if (x == null) continue;
-
-        pathPoints.push({ x, y: startY + row * cellHeight + cellHeight / 2 });
-      }
-    } else {
-      return;
-    }
-
-    if (pathPoints.length < 2) return;
-
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-
-    // Pass 1: soft glow
-    withShadow(
-      ctx,
-      { color: "rgba(0, 122, 255, 0.45)", blur: 10 },
-      () => {
-        ctx.beginPath();
-        ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-        for (let i = 1; i < pathPoints.length; i++) {
-          ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-        }
-        ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
-        ctx.lineWidth = 6;
-        ctx.stroke();
-      },
-    );
-
-    // Pass 2: white outline
-    ctx.beginPath();
-    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-    for (let i = 1; i < pathPoints.length; i++) {
-      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-    }
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.lineWidth = 3.5;
-    ctx.stroke();
-
-    // Pass 3: main blue line
-    ctx.beginPath();
-    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-    for (let i = 1; i < pathPoints.length; i++) {
-      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-    }
-    ctx.strokeStyle = CHART_COLORS.info;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Dots with glow
-    for (const pt of pathPoints) {
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
-      withShadow(
-        ctx,
-        { color: "rgba(0, 122, 255, 0.5)", blur: 6 },
-        () => {
-          ctx.fillStyle = CHART_COLORS.info;
-          ctx.fill();
-        },
-      );
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
-
-  private interpolateSpotX(
-    value: number,
-    colValues: number[],
-    startX: number,
-    _cellWidth: number,
-  ): number | null {
-    return interpolateSpotX(
-      value,
-      colValues,
+    drawSpotLineDecoration({
+      ctx: this.ctx,
+      options: this.options,
       startX,
-      (col) => this.colX(col),
-      (col) => this.colW(col),
-    );
-  }
-
-  private interpolateSpotY(
-    value: number,
-    rowValues: number[],
-    startY: number,
-    cellHeight: number,
-  ): number | null {
-    return interpolateSpotY(value, rowValues, startY, cellHeight);
+      startY,
+      colX: (col) => this.colX(col),
+      colW: (col) => this.colW(col),
+      interpolateSpotX: (value, colValues, sx, _cw) =>
+        interpolateSpotX(
+          value,
+          colValues,
+          sx,
+          (col) => this.colX(col),
+          (col) => this.colW(col),
+        ),
+      interpolateSpotY: (value, rowValues, sy, ch) =>
+        interpolateSpotY(value, rowValues, sy, ch),
+    });
   }
 
   public update(
