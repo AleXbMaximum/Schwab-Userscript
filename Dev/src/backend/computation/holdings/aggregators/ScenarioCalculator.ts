@@ -1,10 +1,10 @@
-import type{ DerivedMetricsRow, PortfolioAgg } from "../../../shared/types/derived";
+import type{ DerivedMetricsRow, PortfolioAgg } from "../../../../shared/types/derived";
 import type {
   HoldingsIndex,
   HoldingsIndexEntry,
-} from "../../pipeline/ingestion/holdingsIndexTypes";
+} from "../../../pipeline/ingestion/holdingsIndexTypes";
 import type { UnderlyingAggMap } from "./UnderlyingAggregator";
-import { isOption } from "../../../shared/utils/holdingsKeys";
+import { isOption } from "../../../../shared/utils/domain/holdingsKeys";
 
 export class ScenarioCalculator {
   private isSummaryRow(meta: HoldingsIndexEntry): boolean {

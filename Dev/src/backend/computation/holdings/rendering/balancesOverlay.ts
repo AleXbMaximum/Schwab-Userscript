@@ -1,5 +1,5 @@
-import type { AccountOverviewMetrics } from "./accountOverviewMetrics";
-import type { BalancesSnapshot } from "../../core/network/schwab/balances";
+import type { AccountOverviewMetrics } from "../metrics/accountOverviewMetrics";
+import type { BalancesSnapshot } from "../../../core/network/schwab/endpoints/balances";
 
 /**
  * Overlay balances-API fields onto an AccountOverviewMetrics snapshot.

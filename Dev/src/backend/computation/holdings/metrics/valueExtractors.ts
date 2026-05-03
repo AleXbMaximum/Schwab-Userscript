@@ -3,7 +3,7 @@
 // These guard-and-extract functions are used by PortfolioAggregator,
 // UnderlyingAggregator, and hierarchyRowBuilders to avoid duplication.
 
-import { isFiniteNumber } from "../../../shared/utils/math/guards";
+import { isFiniteNumber } from "../../../../shared/utils/math/guards";
 
 /** Extract the underlying/last price from a holdings row. */
 export function extractPrice(row: any): number | null {

@@ -1,4 +1,4 @@
-import type{ HoldingsRow } from "../../../shared/types/holdings";
+import type{ HoldingsRow } from "../../../../shared/types/holdings";
 import type{
   DerivedState,
   HoldingsBlock,
@@ -7,17 +7,17 @@ import type{
   UnderlyingAggRow,
   UnderlyingKey,
   WarningState,
-} from "../../../shared/types/derived";
+} from "../../../../shared/types/derived";
 import {
   getHoldingsKey,
   getUnderlyingKey,
   getInstrumentKind,
   parseOptionContractMeta,
-} from "../../../shared/utils/holdingsKeys";
+} from "../../../../shared/utils/domain/holdingsKeys";
 import {
   extractPrice,
   extractQty,
-} from "./valueExtractors";
+} from "../metrics/valueExtractors";
 
 export type TickerBucket = {
   equityInfoRow: HoldingsRow | null;

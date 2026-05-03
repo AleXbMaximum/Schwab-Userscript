@@ -3,9 +3,9 @@ import type{
   DerivedState,
   GroupTotals,
   TickerBlock,
-} from "../../../shared/types/derived";
-import type{ HoldingsRow, HoldingsTotals } from "../../../shared/types/holdings";
-import { addFinite, isFiniteNumber } from "../../../shared/utils/math/guards";
+} from "../../../../shared/types/derived";
+import type{ HoldingsRow, HoldingsTotals } from "../../../../shared/types/holdings";
+import { addFinite, isFiniteNumber } from "../../../../shared/utils/math/guards";
 
 function extractVal(row: HoldingsRow, field: string): number | null {
   const cell = (row as any)?.[field];
