@@ -1,4 +1,4 @@
-import { getAuthToken, refreshAuthToken } from "./auth";
+import { getAuthToken, refreshAuthToken } from "../infra/auth";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("network");

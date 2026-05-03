@@ -4,11 +4,11 @@ import type {
   ChartDataMeta,
   ChartDataSource,
   ChartInterval,
-} from "shared/utils/chartDataTypes";
+} from "shared/types/chartData";
 import {
   fetchSchwabChart,
   type SchwabPeriod,
-} from "../schwab/symbol_quotes_history";
+} from "../schwab/endpoints/symbol_quotes_history";
 import { normalizeSchwabBars } from "../schwab/parsing/chartNormalizer";
 import { fetchYahooChart } from "../yahoo/chart";
 import type { YahooChartResult } from "../yahoo/chartTypes";

@@ -1,8 +1,8 @@
-import { generateUUID } from "shared/utils/uuid";
+import { generateUUID } from "shared/utils/data/uuid";
 import type{ QuotesResponse } from "shared/types/holdings";
-import { isOptionSymbol } from "shared/utils/holdingsKeys";
+import { isOptionSymbol } from "shared/utils/domain/holdingsKeys";
 import { computeWorkerPool } from "backend/computation/workers/ComputeWorkerPool";
-import { throw401, withTokenRefresh } from "./httpUtils";
+import { throw401, withTokenRefresh } from "../infra/httpUtils";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("network");

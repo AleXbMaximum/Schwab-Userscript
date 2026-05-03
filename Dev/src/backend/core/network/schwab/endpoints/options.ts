@@ -1,7 +1,7 @@
-import { generateUUID } from "shared/utils/uuid";
+import { generateUUID } from "shared/utils/data/uuid";
 import type{ OptionsChainsResponse } from "shared/types/options";
 import { computeWorkerPool } from "backend/computation/workers/ComputeWorkerPool";
-import { throw401, withTokenRefresh } from "./httpUtils";
+import { throw401, withTokenRefresh } from "../infra/httpUtils";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("network");

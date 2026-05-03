@@ -1,10 +1,10 @@
-import { generateUUID } from "shared/utils/uuid";
-import { resolveCustomerIdFromPage } from "./initContext";
+import { generateUUID } from "shared/utils/data/uuid";
+import { resolveCustomerIdFromPage } from "../infra/initContext";
 import type{ HoldingsResponse, HoldingsRow, HoldingsTotals } from "shared/types/holdings";
-import { throw401, withTokenRefresh } from "./httpUtils";
+import { throw401, withTokenRefresh } from "../infra/httpUtils";
 import { computeWorkerPool } from "backend/computation/workers/ComputeWorkerPool";
 import { logService } from "shared/log/core/LogService";
-import { getHoldingsKey } from "shared/utils/holdingsKeys";
+import { getHoldingsKey } from "shared/utils/domain/holdingsKeys";
 
 const log = logService.namespace("network");
 const holdFlow = logService.namespace("flow:hold");

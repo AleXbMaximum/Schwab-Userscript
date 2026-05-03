@@ -1,4 +1,4 @@
-import { generateUUID } from "shared/utils/uuid";
+import { generateUUID } from "shared/utils/data/uuid";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("auth");

@@ -4,32 +4,32 @@ import type{ HoldingsResponse, QuotesResponse } from "shared/types/holdings";
 import {
   fetchAccountInfo,
   fetchHoldings as fetchHoldingsApi,
-} from "./holdings";
-import { fetchQuotes as fetchQuotesApi } from "./quotes";
-import { getAuthToken } from "./auth";
+} from "./endpoints/holdings";
+import { fetchQuotes as fetchQuotesApi } from "./endpoints/quotes";
+import { getAuthToken } from "./infra/auth";
 import { streamer } from "./streamer";
 import {
   fetchIndicesHistory,
   type IndicesHistoryResponse,
   type IndicesHistoryRegion,
   type IndicesHistoryPeriod,
-} from "./indicesHistory";
+} from "./endpoints/indicesHistory";
 import {
   fetchCompanyMovers,
   type CompanyMover,
   type MoverRankingType,
-} from "./marketData";
+} from "./endpoints/marketData";
 import {
   fetchSchwabNewsHeadlines,
   fetchSchwabNewsStory,
   fetchSchwabNewsSearch,
   type SchwabNewsHeadline,
   type SchwabNewsSearchResult,
-} from "./news";
+} from "./endpoints/news";
 import {
   fetchCalendarEvents,
   fetchRatingChanges,
-} from "./calendar";
+} from "./endpoints/calendar";
 import type {
   CalendarEvent,
   CalendarEventType,

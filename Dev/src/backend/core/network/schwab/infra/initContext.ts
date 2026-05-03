@@ -1,4 +1,4 @@
-import { safeJsonParse } from "./httpUtils";
+import { safeJsonParse } from "../infra/httpUtils";
 
 type UnknownRecord = Record<string, unknown>;
 
