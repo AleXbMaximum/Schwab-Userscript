@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { DS_BUTTONS } from "frontend/components/core/theme";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { DS_BUTTONS } from "frontend/components/core/styles/theme";
 import { renderDatabaseInfoPanel } from "./monitoredTickers_infoPanel";
 
 export function showDatabaseInfoPopup(_anchor: HTMLElement): void {

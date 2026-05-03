@@ -5,7 +5,7 @@
  * Inline-styled port of AlexQuant's `composite/Toast/Toast.ts`.
  */
 
-import { ui_createElement } from "../core/createElement";
+import { ui_createElement } from "../core/builders/createElement";
 
 export type ToastSeverity = "info" | "ok" | "warn" | "error";
 

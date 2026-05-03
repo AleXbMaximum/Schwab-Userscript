@@ -1,4 +1,4 @@
-import { ui_createElement } from "frontend/components/core/createElement";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
 import { MONITOR_SYMBOLS } from "../monitor/monitorSettings";
 import type { DashboardSymbol } from "../types";
 

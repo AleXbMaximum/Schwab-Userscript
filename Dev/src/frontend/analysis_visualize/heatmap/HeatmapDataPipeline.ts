@@ -9,7 +9,7 @@ import type { ChartDataService } from "../../../backend/core/network/chart/Chart
 import type {
   ChartInterval,
   OHLCVBar,
-} from "../../../shared/utils/chartDataTypes";
+} from "../../../shared/types/chartData";
 
 export type HeatmapMode = "correlation" | "beta";
 export type WindowKey = "1D" | "1M" | "6M" | "2Y";

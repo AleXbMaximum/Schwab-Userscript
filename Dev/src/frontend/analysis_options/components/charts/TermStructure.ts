@@ -1,6 +1,6 @@
 import { createChartPanel } from "frontend/charts/chartPanel";
 import { niceLinearScale, CHART_FONTS } from "frontend/charts/ChartTheme";
-import { DS_COLORS } from "frontend/components/core/theme";
+import { DS_COLORS } from "frontend/components/core/styles/theme";
 import type { TermStructurePoint, EventFlag } from "backend/computation/options/types";
 
 // Event badge colors matching StateVector.ts

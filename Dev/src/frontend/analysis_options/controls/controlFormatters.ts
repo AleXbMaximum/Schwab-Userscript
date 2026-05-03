@@ -1,5 +1,5 @@
 import type{ OptionsExpiration } from "shared/types/options";
-import { formatCompactNumber } from "shared/utils/formatters";
+import { formatCompactNumber } from "shared/utils/format/formatters";
 
 const MONTH_MAP: Record<string, string> = {
   JAN: "01",

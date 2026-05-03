@@ -1,13 +1,13 @@
-import { ui_createElement } from "../components/core/createElement";
-import { DS_SPACING } from "../components/core/theme";
-import type { AccountOverviewMetrics } from "backend/computation/holdings/accountOverviewMetrics";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_SPACING } from "../components/core/styles/theme";
+import type { AccountOverviewMetrics } from "backend/computation/holdings/metrics/accountOverviewMetrics";
 import { openAlexQuantDB } from "backend/core/db/core/AlexQuantDB";
 import { KVStore } from "backend/core/db/core/KVStore";
 import type { DataPipelineCoordinator } from "../components/DataPipelineCoordinator";
-import type { BalancesSnapshot } from "../../backend/core/network/schwab/balances";
+import type { BalancesSnapshot } from "../../backend/core/network/schwab/endpoints/balances";
 import { newsService } from "backend/services/news/NewsService";
-import { onLayoutModeChange, getLayoutMode } from "../components/core/layoutMode";
-import { onShareModeChange } from "shared/utils/globalShareMode";
+import { onLayoutModeChange, getLayoutMode } from "../components/core/behaviors/layoutMode";
+import { onShareModeChange } from "shared/utils/domain/globalShareMode";
 import { createSnapshotNewsSection } from "./snapshotNewsSection";
 import { buildSnapshotMetricsDOM, patchSnapshotMetricsDOM } from "./metrics/metricsDOM";
 import {

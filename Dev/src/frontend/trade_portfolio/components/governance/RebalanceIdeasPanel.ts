@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_BUTTONS, DS_COMPONENTS, DS_TYPOGRAPHY, DS_COLORS } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_BUTTONS, DS_COMPONENTS, DS_TYPOGRAPHY, DS_COLORS } from "../../../components/core/styles/theme";
 import {
   extractModeCurrentValues,
   computeLinkedTargets,
@@ -44,7 +44,7 @@ import {
   getShareMode,
   getCustomMultiplier,
   onShareModeChange,
-} from "../../../../shared/utils/globalShareMode";
+} from "../../../../shared/utils/domain/globalShareMode";
 import {
   buildTradeSuggestions,
   renderTradeSuggestions,

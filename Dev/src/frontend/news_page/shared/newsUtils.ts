@@ -1,5 +1,5 @@
-import { ui_copyTextToClipboard } from "../../components/core/clipboard";
-import { injectStylesheet } from "../../components/core/ui_builders";
+import { ui_copyTextToClipboard } from "../../components/core/behaviors/clipboard";
+import { injectStylesheet } from "../../components/core/builders/ui_builders";
 
 // ── Copy with flash feedback ───────────────────────────────────────────────
 // Unified copy-to-clipboard with button flash, replacing 3 duplicate patterns.

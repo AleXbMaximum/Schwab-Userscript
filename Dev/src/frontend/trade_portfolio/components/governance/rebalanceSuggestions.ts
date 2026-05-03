@@ -1,12 +1,12 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COLORS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COLORS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import {
   extractModeCurrentValues,
   REBALANCE_MODES,
 } from "../../../../backend/computation/rebalance/RebalanceCalculator";
 import type{ RebalanceAnchorMode, RebalanceModeId } from "../../../../shared/types/core";
-import { formatCompactDollar } from "shared/utils/formatters";
-import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+import { formatCompactDollar } from "shared/utils/format/formatters";
+import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 import type { BetaHorizon } from "../../../../backend/computation/beta/types";
 import {
   type Payload,

@@ -10,7 +10,7 @@ import {
   ymdToRequestDate,
   compareYmd,
   type Ymd,
-} from "shared/utils/optionsExpiries";
+} from "shared/utils/domain/optionsExpiries";
 import type{ OptionsChainsResponse, OptionsExpiration } from "shared/types/options";
 import type { ExpirySelectionContext } from "backend/computation/options/monitor/etl/ExpiryMetricsETL";
 import {

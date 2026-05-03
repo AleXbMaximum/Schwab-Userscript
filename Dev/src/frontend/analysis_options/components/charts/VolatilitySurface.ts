@@ -1,6 +1,6 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
-import { createTooltipHost } from "shared/utils/tooltipHost";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
+import { createTooltipHost } from "shared/utils/dom/tooltipHost";
 import { traceRoundRect, setupCanvas } from "frontend/charts/ChartUtils";
 import { CHART_FONTS } from "frontend/charts/ChartTheme";
 import { withShadow } from "frontend/components/core/axTheme/renderMode/canvasShadow";

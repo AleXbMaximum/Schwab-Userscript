@@ -1,4 +1,4 @@
-import { ui_createElement } from "frontend/components/core/createElement";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
 import {
   DS_COLORS,
   DS_TYPOGRAPHY,
@@ -6,7 +6,7 @@ import {
   DS_RADIUS,
   DS_OPACITY,
   DS_COMPONENTS,
-} from "frontend/components/core/theme";
+} from "frontend/components/core/styles/theme";
 import { isDarkTheme } from "frontend/components/core/axTheme";
 import { CHART_FONTS } from "frontend/charts/ChartTheme";
 import type {

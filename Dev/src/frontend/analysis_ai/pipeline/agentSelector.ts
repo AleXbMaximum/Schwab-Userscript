@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import type { AnalystKey } from "./pipelineConfigPanel";
 
 // ── Constants ────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import type{ WarningCell } from "shared/types/derived";
 import {
   getHoldingsKey,
   getUnderlyingKey,
-} from "../../../../shared/utils/holdingsKeys";
+} from "../../../../shared/utils/domain/holdingsKeys";
 import type { TableUpdateContext } from "../types";
 
 export const getWarningCell = (

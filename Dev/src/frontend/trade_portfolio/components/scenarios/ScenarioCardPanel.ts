@@ -1,13 +1,13 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import {
   DS_COMPONENTS,
   DS_TYPOGRAPHY,
   DS_COLORS,
   ds_signColorRaw,
   ds_severityColors,
-} from "../../../components/core/theme";
-import { getLayoutMode } from "../../../components/core/layoutMode";
-import { ui_collapsible } from "../../../components/core/ui_builders";
+} from "../../../components/core/styles/theme";
+import { getLayoutMode } from "../../../components/core/behaviors/layoutMode";
+import { ui_collapsible } from "../../../components/core/builders/ui_builders";
 import type {
   RiskMetrics,
   BetaFactorScenarioResult,
@@ -20,8 +20,8 @@ import type {
   BetaHorizon,
 } from "../../../../backend/computation/beta/types";
 import type{ UnderlyingAggRow } from "../../../../shared/types/derived";
-import { formatCurrencyLocale as fmtCurrencyLocale } from "shared/utils/formatters";
-import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+import { formatCurrencyLocale as fmtCurrencyLocale } from "shared/utils/format/formatters";
+import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 import { createCustomScenarioBuilder } from "./CustomScenarioBuilder";
 import { createPositionDrillDown } from "./PositionDrillDown";
 import {
@@ -46,7 +46,7 @@ type PanelElement = HTMLElement & {
   update?: (payload: ScenarioCardPayload) => void;
 };
 
-import { formatPct } from "shared/utils/formatters";
+import { formatPct } from "shared/utils/format/formatters";
 const fmtPnl = (v: number): string =>
   isShareMasked() ? SHARE_MASKED_TEXT : fmtCurrencyLocale(shareScaleValue(v) as number, 0);
 const fmtPct = (v: number): string => formatPct(v, { showSign: true });

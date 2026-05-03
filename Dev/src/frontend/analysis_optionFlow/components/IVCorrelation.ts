@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_BUTTONS } from "frontend/components/core/theme";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_BUTTONS } from "frontend/components/core/styles/theme";
 import { getHeatmapColor } from "frontend/charts/ChartTheme";
 import { pearsonCorrelation } from "shared/utils/math/statistics";
 import type { OptionCapture } from "backend/core/db/capture/optionMonitorTypes";

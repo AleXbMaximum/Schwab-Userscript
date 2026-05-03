@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_TYPOGRAPHY } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_TYPOGRAPHY } from "../../components/core/styles/theme";
 import { LLMClient } from "../../../backend/core/network/llm/LLMClient";
 import type { LLMClientConfig } from "../../../backend/core/network/llm/LLMClient";
 import type { AIAnalysisRecord } from "../../../backend/services/ai/types";

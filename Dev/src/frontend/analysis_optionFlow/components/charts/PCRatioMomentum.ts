@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { createPillGroup } from "frontend/components/core/pillGroup";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { createPillGroup } from "frontend/components/core/builders/pillGroup";
 import { baseChartOptions, niceLinearScale, CHART_COLORS } from "frontend/charts/ChartTheme";
 import { createLegacyChartPanel, type ChartPanelResult } from "frontend/charts/chartPanel";
 import { createReferenceLinePlugin } from "frontend/charts/plugins/referenceLinePlugin";

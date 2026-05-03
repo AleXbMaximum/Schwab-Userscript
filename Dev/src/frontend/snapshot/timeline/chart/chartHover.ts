@@ -1,4 +1,4 @@
-import { DS_COLORS, ds_signColorRaw } from "../../../components/core/theme";
+import { DS_COLORS, ds_signColorRaw } from "../../../components/core/styles/theme";
 import { isDarkTheme } from "../../../components/core/axTheme/controller";
 import type { AccountHistoryPoint } from "../../../../backend/core/db/account/accountHistoryTypes";
 import { formatMetricValue, formatTimeLabel } from "../timelineFormatters";

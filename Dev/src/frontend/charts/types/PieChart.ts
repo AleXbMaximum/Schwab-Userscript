@@ -6,7 +6,7 @@ import {
   CHART_LEGEND_CONFIG,
 } from "../ChartTheme";
 import { validateChartData, truncateLabel } from "../ChartUtils";
-import { formatPct, formatNumberLocale } from "shared/utils/formatters";
+import { formatPct, formatNumberLocale } from "shared/utils/format/formatters";
 
 export interface PieChartOptions {
   labels: string[];

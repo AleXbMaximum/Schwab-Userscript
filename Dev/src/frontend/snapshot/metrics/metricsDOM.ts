@@ -1,6 +1,6 @@
-import { ui_createElement } from "../../components/core/createElement";
-import type { AccountOverviewMetrics } from "backend/computation/holdings/accountOverviewMetrics";
-import type { BalancesSnapshot } from "../../../backend/core/network/schwab/balances";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import type { AccountOverviewMetrics } from "backend/computation/holdings/metrics/accountOverviewMetrics";
+import type { BalancesSnapshot } from "../../../backend/core/network/schwab/endpoints/balances";
 import type { MetricEntry } from "./metricDefinitions";
 import {
   computePrimaryMetrics,

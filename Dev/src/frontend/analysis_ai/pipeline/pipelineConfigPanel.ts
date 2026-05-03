@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import type { AIProviderKind } from "shared/types/core";
 import type { AIConfigStore } from "../../../backend/services/ai/config/AIConfigStore";
 import type { AIConfigSnapshot } from "../../../backend/services/ai/config/types";

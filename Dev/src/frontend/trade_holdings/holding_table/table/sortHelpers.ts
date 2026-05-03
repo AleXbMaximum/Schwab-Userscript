@@ -1,4 +1,4 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import type { RowRenderData } from "../types";
 
 const parseDisplayForSort = (

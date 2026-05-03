@@ -1,5 +1,6 @@
 import type{ OptionsChain, OptionsExpiration, OptionsLeg } from "shared/types/options";
 import { weightedAverage } from "shared/utils/math/statistics";
+import { sumFinite } from "shared/utils/math/guards";
 import type {
   OptionsViewState,
   LocalWindowMode,
@@ -33,17 +34,6 @@ const legKeysToSum: ReadonlyArray<keyof OptionsLeg> = [
   "bidSize",
   "askSize",
 ] as const;
-
-function sumFinite(values: Array<number | null | undefined>): number | null {
-  let total = 0;
-  let found = false;
-  for (const v of values) {
-    if (v == null || !isFinite(v)) continue;
-    total += v;
-    found = true;
-  }
-  return found ? total : null;
-}
 
 function mergeLegs(
   legs: OptionsLeg[] | null,

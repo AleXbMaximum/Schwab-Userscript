@@ -6,8 +6,8 @@
  * previously copy-pasted across GexHeatmap.ts and OIHeatmap.ts.
  */
 
-import { ui_createElement } from "frontend/components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY } from "frontend/components/core/theme";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY } from "frontend/components/core/styles/theme";
 import { getHeatmapColor } from "frontend/charts/ChartTheme";
 import { clamp } from "shared/utils/math/numeric";
 import { RANGE_SLIDER_STEPS } from "./heatmapCanvas";

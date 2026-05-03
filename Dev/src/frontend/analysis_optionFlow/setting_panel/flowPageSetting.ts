@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { DS_COMPONENTS } from "frontend/components/core/theme";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { DS_COMPONENTS } from "frontend/components/core/styles/theme";
 import {
   createSettingsSectionCard,
   createSettingsToggleButton,

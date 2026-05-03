@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COLORS } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COLORS } from "../../components/core/styles/theme";
 import { getNewsItemSymbols } from "../../../backend/services/news/types";
 import type {
   UnifiedNewsItem,

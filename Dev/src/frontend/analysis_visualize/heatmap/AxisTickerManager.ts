@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 
 const AXIS_LABEL_STYLE =
   "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); color: var(--ax-fg-2);" +

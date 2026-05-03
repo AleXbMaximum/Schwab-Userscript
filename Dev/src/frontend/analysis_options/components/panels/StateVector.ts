@@ -1,10 +1,10 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COLORS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COLORS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import { formatTimestampCT } from "shared/utils/time";
 import {
   formatCompactDollar,
   formatPct as fmtPctShared,
-} from "shared/utils/formatters";
+} from "shared/utils/format/formatters";
 import type { StateVectorData, SummaryMetrics } from "backend/computation/options/types";
 import type { ActiveFilterState, StateVectorFilterCallbacks } from "../../types";
 

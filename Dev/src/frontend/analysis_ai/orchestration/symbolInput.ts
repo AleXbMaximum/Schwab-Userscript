@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COLORS } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COLORS } from "../../components/core/styles/theme";
 import { openCompanyDetailsPanel } from "../../components/companyDetailsCard/CompanyDetailsPanel";
 
 // Module-level pending symbol — set before navigating to this page

@@ -1,14 +1,14 @@
 import {
   BackendOrchestrator,
   type BackendOrchestratorOptions,
-} from "../../backend/pipeline/BackendOrchestrator";
+} from "../../backend/pipeline/orchestration/BackendOrchestrator";
 import { HeaderRenderer } from "./header/HeaderRenderer";
 import type{ HoldingsFrame } from "../../shared/types/derived";
 import { logService } from "shared/log/core/LogService";
-import { onShareModeChange } from "shared/utils/globalShareMode";
-import { computeAccountOverviewMetrics } from "../../backend/computation/holdings/accountOverviewMetrics";
-import type { AccountOverviewMetrics } from "../../backend/computation/holdings/accountOverviewMetrics";
-import { applyBalancesOverlay } from "../../backend/computation/holdings/balancesOverlay";
+import { onShareModeChange } from "shared/utils/domain/globalShareMode";
+import { computeAccountOverviewMetrics } from "../../backend/computation/holdings/metrics/accountOverviewMetrics";
+import type { AccountOverviewMetrics } from "../../backend/computation/holdings/metrics/accountOverviewMetrics";
+import { applyBalancesOverlay } from "../../backend/computation/holdings/rendering/balancesOverlay";
 
 const log = logService.namespace("pipeline");
 import type {
@@ -20,10 +20,10 @@ import type {
   AllBenchmarkBetaData,
 } from "../../backend/pipeline/beta/BetaService";
 import type { ChartDataService } from "../../backend/core/network/chart/ChartDataService";
-import type { BalancesSnapshot } from "../../backend/core/network/schwab/balances";
+import type { BalancesSnapshot } from "../../backend/core/network/schwab/endpoints/balances";
 import type { OrchestratorPhase } from "../../shared/utils/time";
 import type { SchedulerOverride } from "../../shared/types/core";
-import type { PhaseSourceKey } from "../../backend/pipeline/PhaseManager";
+import type { PhaseSourceKey } from "../../backend/pipeline/orchestration/PhaseManager";
 
 export class DataPipelineCoordinator {
   private backend: BackendOrchestrator;

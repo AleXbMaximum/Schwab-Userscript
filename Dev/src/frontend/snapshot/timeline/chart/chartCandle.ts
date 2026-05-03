@@ -1,5 +1,5 @@
 import type { CandleBucket } from "../data/candleAggregation";
-import { DS_COLORS } from "../../../components/core/theme";
+import { DS_COLORS } from "../../../components/core/styles/theme";
 
 const CANDLE_GREEN = DS_COLORS.raw.positive;
 const CANDLE_RED = DS_COLORS.raw.negative;

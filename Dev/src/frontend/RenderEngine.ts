@@ -6,7 +6,7 @@ import { aiAnalysis_renderPage } from "./analysis_ai/page";
 import { news_renderPage } from "./news_page/page";
 import { analysisVisualize_renderPage } from "./analysis_visualize/page";
 import { logService } from "../shared/log/core/LogService";
-import { getLayoutMode } from "./components/core/layoutMode";
+import { getLayoutMode } from "./components/core/behaviors/layoutMode";
 
 const log = logService.namespace("render");
 

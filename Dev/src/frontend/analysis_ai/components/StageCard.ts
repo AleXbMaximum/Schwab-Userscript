@@ -1,20 +1,20 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import {
   ui_collapsible,
   ui_statusDot,
   injectStylesheet,
-} from "../../components/core/ui_builders";
+} from "../../components/core/builders/ui_builders";
 import {
   DS_COLORS,
   DS_TYPOGRAPHY,
   DS_COMPONENTS,
-} from "../../components/core/theme";
+} from "../../components/core/styles/theme";
 import type {
   AIAgentRole,
   AIStageResult,
   AIStreamEvent,
 } from "../../../backend/services/ai/types";
-import { renderMarkdown } from "shared/utils/markdown";
+import { renderMarkdown } from "shared/utils/format/markdown";
 
 // ── Markdown CSS (injected once) ─────────────────────────────────────────────
 

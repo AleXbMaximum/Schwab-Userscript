@@ -5,12 +5,12 @@
  * this module captures the common scaffold while callers supply only the
  * data-specific config (title, description, series builder, labels).
  */
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY, ds_signColorRaw } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY, ds_signColorRaw } from "../../../components/core/styles/theme";
 import { chartManager } from "frontend/charts/ChartManager";
 import { createHorizontalBarConfig } from "frontend/charts/types/HorizontalBarChart";
-import { formatCurrencyLocale as fmtCurrencyLocale } from "shared/utils/formatters";
-import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+import { formatCurrencyLocale as fmtCurrencyLocale } from "shared/utils/format/formatters";
+import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 
 export interface BreakdownRow {
   label: string;

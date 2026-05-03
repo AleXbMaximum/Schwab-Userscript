@@ -3,7 +3,7 @@ import type { AccountHistoryPoint } from "../../../../backend/core/db/account/ac
 import type { TimeAxisMapping, SnapshotMetricDef, IndexOverlayLine, ChartRenderMode } from "../timelineTypes";
 import { getGapMode } from "../data/timeAxisMapping";
 import { downsampleLTTB } from "../data/downsample";
-import { DS_COLORS } from "../../../components/core/theme";
+import { DS_COLORS } from "../../../components/core/styles/theme";
 import { arrayMinMax, buildTrueGapOriginalIndices, buildLineSegments } from "../data/dataUtils";
 import { aggregateCandles, resolveCandleBucketMs } from "../data/candleAggregation";
 import { SNAPSHOT_CHART_PAD } from "./chartTypes";

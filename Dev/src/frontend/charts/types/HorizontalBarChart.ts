@@ -7,7 +7,7 @@ import {
   niceLinearScale,
 } from "../ChartTheme";
 import { validateChartData, truncateLabel } from "../ChartUtils";
-import { formatNumberLocale } from "shared/utils/formatters";
+import { formatNumberLocale } from "shared/utils/format/formatters";
 
 export interface HorizontalBarOptions {
   labels: string[];

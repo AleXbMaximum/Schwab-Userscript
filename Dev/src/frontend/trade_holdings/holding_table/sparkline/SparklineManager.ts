@@ -1,4 +1,4 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import type { ColumnWidthCalculator } from "../utils/ColumnWidthCalculator";
 import type { RowRenderData, TableUpdateContext } from "../types";
 import { IntradaySparklineStore } from "./IntradaySparklineStore";

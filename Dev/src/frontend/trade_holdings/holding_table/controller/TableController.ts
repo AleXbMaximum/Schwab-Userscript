@@ -1,8 +1,8 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import {
   DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER,
   normalizeHoldingsTableColumnOrder,
-} from "../../../../shared/holdingsTableColumns";
+} from "../../../../shared/types/holdingsTableColumns";
 import { BASE_INDEX_BY_ID } from "../table/columnMetadata";
 import type {
   RowRenderData,
@@ -20,7 +20,7 @@ import type { ChartDataService } from "../../../../backend/core/network/chart/Ch
 import {
   buildVirtualRows,
 } from "../table/buildVirtualRows";
-import { getShareMode } from "shared/utils/globalShareMode";
+import { getShareMode } from "shared/utils/domain/globalShareMode";
 import type { VirtualRowBuilderConfig } from "../table/types";
 import { SparklineManager } from "../sparkline/SparklineManager";
 

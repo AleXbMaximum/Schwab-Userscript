@@ -1,8 +1,8 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_BUTTONS } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_BUTTONS } from "../../components/core/styles/theme";
 import type { AIAnalysisRecord } from "../../../backend/services/ai/types";
 import { formatTimeAgo } from "shared/utils/time";
-import { ui_copyTextToClipboard } from "../../components/core/clipboard";
+import { ui_copyTextToClipboard } from "../../components/core/behaviors/clipboard";
 import {
   buildReport,
   buildTranscript,

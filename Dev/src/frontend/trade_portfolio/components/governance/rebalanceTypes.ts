@@ -12,7 +12,7 @@ import {
   extractModeCurrentValues,
   computeLinkedTargets,
 } from "../../../../backend/computation/rebalance/RebalanceCalculator";
-import { DS_COLORS, DS_COMPONENTS } from "../../../components/core/theme";
+import { DS_COLORS, DS_COMPONENTS } from "../../../components/core/styles/theme";
 import type { BetaHorizon } from "../../../../backend/computation/beta/types";
 
 // ── Types ──

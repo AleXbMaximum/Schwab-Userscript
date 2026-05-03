@@ -1,6 +1,6 @@
 import type { ChartConfiguration, Plugin } from "chart.js";
 import { CHART_COLORS, CHART_TOOLTIP_CONFIG } from "../ChartTheme";
-import { formatCurrencyLocale, formatPct } from "shared/utils/formatters";
+import { formatCurrencyLocale, formatPct } from "shared/utils/format/formatters";
 import { niceScale } from "shared/utils/math/scale";
 
 export interface BubbleChartPoint {

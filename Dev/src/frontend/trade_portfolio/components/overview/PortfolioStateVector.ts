@@ -1,12 +1,12 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { ds_signColorRaw, DS_COLORS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { ds_signColorRaw, DS_COLORS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import type { RiskMetrics } from "../../../../backend/computation/risk/RiskMetricsCalculator";
 import type{ PortfolioAgg } from "../../../../shared/types/derived";
 import {
   formatCurrencyLocale as fmtCurrencyLocale,
   formatPct as fmtPctShared,
-} from "shared/utils/formatters";
-import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+} from "shared/utils/format/formatters";
+import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 
 type PortfolioStateVectorPayload = {
   riskMetrics: RiskMetrics;

@@ -1,8 +1,8 @@
 import { createTableController } from "./holding_table/controller/TableController";
 import { injectTableStyles } from "./holding_table/render/tableStyles";
-import { ui_createElement } from "../components/core/createElement";
-import { DS_BUTTONS, DS_COMPONENTS, DS_SPACING, DS_TYPOGRAPHY } from "../components/core/theme";
-import { getLayoutMode } from "../components/core/layoutMode";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_BUTTONS, DS_COMPONENTS, DS_SPACING, DS_TYPOGRAPHY } from "../components/core/styles/theme";
+import { getLayoutMode } from "../components/core/behaviors/layoutMode";
 import type{ HoldingsViewCtx } from "shared/types/core";
 import { openAlexQuantDB } from "backend/core/db/core/AlexQuantDB";
 import { KVStore } from "backend/core/db/core/KVStore";
@@ -12,13 +12,13 @@ import { openCompanyDetailsPanel } from "../components/companyDetailsCard/Compan
 import {
   normalizeHoldingsTableViewModes,
   normalizeHoldingsTableActiveViewModeId,
-} from "../../shared/holdingsTableColumns";
-import { ui_copyTextToClipboard } from "../components/core/clipboard";
+} from "../../shared/types/holdingsTableColumns";
+import { ui_copyTextToClipboard } from "../components/core/behaviors/clipboard";
 import { openNewsPanel } from "../news_page/panel/NewsPanel";
 import { renderRebalanceIdeasPanel } from "../trade_portfolio/components/governance/RebalanceIdeasPanel";
 import { createMobileCardView } from "./holding_table/mobileCardView";
 import { IntradaySparklineStore } from "./holding_table/sparkline/IntradaySparklineStore";
-import { extractEtfUnderlyingKeysFromGroups } from "../../shared/utils/holdingsGroups";
+import { extractEtfUnderlyingKeysFromGroups } from "../../shared/utils/domain/holdingsGroups";
 import { createHoldingsSettingsPanel } from "./setting_panel/settingsPanel";
 import { resolveNonNegativeInterval } from "../components/core/settingsFramework";
 import { logService } from "../../shared/log/core/LogService";

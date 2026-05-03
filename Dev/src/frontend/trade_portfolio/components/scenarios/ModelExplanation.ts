@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { ds_severityColors } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { ds_severityColors } from "../../../components/core/styles/theme";
 import type {
   BetaFactorScenarioResult,
   ScenarioModelType,

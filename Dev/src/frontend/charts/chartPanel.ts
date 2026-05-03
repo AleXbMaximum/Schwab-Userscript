@@ -11,8 +11,8 @@
  * fills its grid slot. The canvas wrapper takes all remaining vertical space.
  */
 
-import { ui_createElement } from "../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../components/core/theme";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../components/core/styles/theme";
 import { chartManager } from "./ChartManager";
 
 // ── Types ───────────────────────────────────────────────────────────────────

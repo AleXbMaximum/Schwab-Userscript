@@ -1,5 +1,5 @@
-import { ui_createElement } from "../components/core/createElement";
-import { DS_TYPOGRAPHY } from "../components/core/theme";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_TYPOGRAPHY } from "../components/core/styles/theme";
 import type{ HoldingsViewCtx } from "shared/types/core";
 import type{ HierarchicalHoldings } from "shared/types/derived";
 import { logService } from "../../shared/log/core/LogService";

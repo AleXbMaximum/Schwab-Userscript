@@ -1,6 +1,6 @@
 // GEX-specific matrix selection and value formatting.
 
-import { formatCompactDollar } from "shared/utils/formatters";
+import { formatCompactDollar } from "shared/utils/format/formatters";
 import type { GexHeatmapData } from "../../types";
 
 export type GexType = "net" | "call" | "put";

@@ -1,8 +1,8 @@
 import { renderTotals, renderIndices } from "./headerWidgets";
 import type { IndexSparklineGetter } from "./headerWidgets";
-import type { AccountOverviewMetrics } from "backend/computation/holdings/accountOverviewMetrics";
+import type { AccountOverviewMetrics } from "backend/computation/holdings/metrics/accountOverviewMetrics";
 import type{ QuoteItem } from "../../../shared/types/holdings";
-import type { BalancesSnapshot } from "../../../backend/core/network/schwab/balances";
+import type { BalancesSnapshot } from "../../../backend/core/network/schwab/endpoints/balances";
 import { IntradaySparklineStore } from "../../trade_holdings/holding_table/sparkline/IntradaySparklineStore";
 import type { ChartDataService } from "../../../backend/core/network/chart/ChartDataService";
 import {
@@ -10,7 +10,7 @@ import {
   isShareMasked,
   shareScaleValue,
   getShareMode,
-} from "shared/utils/globalShareMode";
+} from "shared/utils/domain/globalShareMode";
 
 const INDEX_SYMBOLS = ["$SPX", "$COMPX", "$RUT", "$DJI"];
 

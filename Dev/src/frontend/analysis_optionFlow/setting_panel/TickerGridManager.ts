@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { DS_TYPOGRAPHY, DS_COLORS } from "frontend/components/core/theme";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { DS_TYPOGRAPHY, DS_COLORS } from "frontend/components/core/styles/theme";
 import type { MonitorController } from "../monitor/MonitorController";
 import type { OptionCapture } from "backend/core/db/capture/optionMonitorTypes";
 import { readOptionCaptures } from "../monitor/monitorCapture";

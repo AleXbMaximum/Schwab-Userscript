@@ -1,5 +1,5 @@
-import { ui_createElement } from "../components/core/createElement";
-import { DS_BUTTONS } from "../components/core/theme";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_BUTTONS } from "../components/core/styles/theme";
 import type { AIProviderKind, OpenAIPricingTier } from "shared/types/core";
 import { openAlexQuantDB } from "backend/core/db/core/AlexQuantDB";
 import { KVStore } from "backend/core/db/core/KVStore";

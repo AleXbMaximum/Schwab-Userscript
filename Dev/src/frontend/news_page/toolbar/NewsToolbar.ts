@@ -1,6 +1,6 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { createPillGroup } from "../../components/core/pillGroup";
-import { DS_COLORS } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { createPillGroup } from "../../components/core/builders/pillGroup";
+import { DS_COLORS } from "../../components/core/styles/theme";
 import type { NewsSourceType } from "../../../backend/services/news/types";
 import { NEWS_FILTER_PILLS } from "../shared/newsConstants";
 import { toolbarBtn } from "../components/toolbarButton";

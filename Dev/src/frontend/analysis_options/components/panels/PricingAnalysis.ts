@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { createChartPanel } from "frontend/charts/chartPanel";
 import { niceLinearScale } from "frontend/charts/ChartTheme";
 import type { PricingPoint } from "backend/computation/options/types";

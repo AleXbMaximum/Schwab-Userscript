@@ -1,8 +1,8 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { DS_COLORS } from "frontend/components/core/theme";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { DS_COLORS } from "frontend/components/core/styles/theme";
 import { logService } from "shared/log/core/LogService";
 import { getTodayDateCT, minutesToHHMM } from "shared/utils/time";
-import { ui_copyTextToClipboard } from "frontend/components/core/clipboard";
+import { ui_copyTextToClipboard } from "frontend/components/core/behaviors/clipboard";
 import { createDashboardStore } from "./store";
 import { loadAll, loadGexMatrix, loadOIMatrix } from "./data/queryEngine";
 import { loadMonitorHistory } from "./data/monitorHistory";

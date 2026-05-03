@@ -1,7 +1,7 @@
 import { createChartPanel } from "frontend/charts/chartPanel";
 import { niceLinearScale, niceStrikeTicks } from "frontend/charts/ChartTheme";
 import { OPTIONS_SEMANTIC_COLORS as C } from "frontend/charts/ChartTheme";
-import { DS_COLORS } from "frontend/components/core/theme";
+import { DS_COLORS } from "frontend/components/core/styles/theme";
 import type { IVSkewPoint } from "backend/computation/options/types";
 import { createSpotPlugin } from "../spotPricePlugin";
 import { createVerticalFocusStrikePlugin } from "../../focus/focusStrikeOverlayPlugin";
