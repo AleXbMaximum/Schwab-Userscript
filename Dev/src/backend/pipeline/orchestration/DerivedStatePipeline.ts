@@ -1,13 +1,13 @@
-import type{ DerivedState, HierarchicalHoldings, WarningState } from "../../shared/types/derived";
-import type{ HoldingsResponse } from "../../shared/types/holdings";
-import { computeDerivedMetrics } from "../computation/holdings/derivedMetrics";
-import type { HoldingsIndex } from "./ingestion/HoldingsIndexBuilder";
-import { UnderlyingAggregator } from "../computation/holdings/UnderlyingAggregator";
-import { PortfolioAggregator } from "../computation/holdings/PortfolioAggregator";
-import { ScenarioCalculator } from "../computation/holdings/ScenarioCalculator";
-import { HierarchyBuilder } from "../computation/holdings/HierarchyBuilder";
-import { normalizeNumbersDeepInPlace } from "../../shared/utils/numberNormalizer";
-import { logService } from "../../shared/log/core/LogService";
+import type{ DerivedState, HierarchicalHoldings, WarningState } from "../../../shared/types/derived";
+import type{ HoldingsResponse } from "../../../shared/types/holdings";
+import { computeDerivedMetrics } from "../../computation/holdings/metrics/derivedMetrics";
+import type { HoldingsIndex } from "../ingestion/HoldingsIndexBuilder";
+import { UnderlyingAggregator } from "../../computation/holdings/aggregators/UnderlyingAggregator";
+import { PortfolioAggregator } from "../../computation/holdings/aggregators/PortfolioAggregator";
+import { ScenarioCalculator } from "../../computation/holdings/aggregators/ScenarioCalculator";
+import { HierarchyBuilder } from "../../computation/holdings/aggregators/HierarchyBuilder";
+import { normalizeNumbersDeepInPlace } from "../../../shared/utils/format/numberNormalizer";
+import { logService } from "../../../shared/log/core/LogService";
 
 const log = logService.namespace("stats");
 

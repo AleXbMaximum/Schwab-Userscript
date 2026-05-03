@@ -1,4 +1,4 @@
-import type { Clock } from "../../shared/utils/Clock";
+import type { Clock } from "../../shared/utils/async/Clock";
 import type { Logger } from "../../shared/log/Logger";
 import type{ HoldingsFrame } from "../../shared/types/derived";
 

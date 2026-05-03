@@ -4,8 +4,16 @@
  * All parsed data is assembled into a BarronsDataBundle (see ai/types.ts).
  * See inline comments in each parser function for API -> internal field mappings.
  */
-import { gmGetWithHeaders } from "../yahoo/httpUtils";
 import { logService } from "shared/log/core/LogService";
+import { fetchBarronsJson, fetchBarronsHtml } from "./transport";
+import { buildBarronsUrls } from "./urls";
+import {
+  formattedValue,
+  metricValue,
+  extractNextData,
+  parseStatement,
+  extractNews,
+} from "./extractors";
 
 const log = logService.namespace("network");
 
@@ -16,206 +24,13 @@ import type {
   BarronsEstimate,
   BarronsEstimateTrend,
   BarronsFinancialRatios,
-  BarronsFinancialStatement,
   BarronsHolder,
   BarronsNewsStory,
   BarronsPeer,
   BarronsPerson,
   BarronsPriceTarget,
   BarronsRatingsTableRow,
-  BarronsStatementRow,
 } from "./types";
-
-// ── Barron's transport helpers ──────────────────────────────────────────────
-
-function fetchBarronsJson(
-  url: string,
-  symbol: string,
-  timeoutMs = 30_000,
-): Promise<any> {
-  return gmGetWithHeaders(
-    url,
-    {
-      Accept: "application/json, text/plain, */*",
-      "Accept-Language": "en,zh-CN;q=0.9,zh-TW;q=0.8,zh;q=0.7",
-      Referer: `https://www.barrons.com/market-data/stocks/${symbol}`,
-    },
-    timeoutMs,
-  ).then((text) => JSON.parse(text));
-}
-
-function fetchBarronsHtml(url: string, timeoutMs = 30_000): Promise<string> {
-  return gmGetWithHeaders(
-    url,
-    {
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en,zh-CN;q=0.9,zh-TW;q=0.8,zh;q=0.7",
-    },
-    timeoutMs,
-  );
-}
-
-// ── Parse helpers ───────────────────────────────────────────────────────────
-
-function formattedValue(o: any): string | null {
-  return o?.formatted ?? o?.value ?? null;
-}
-
-function metricValue(o: any): any {
-  return o?.value?.value ?? o?.value ?? null;
-}
-
-function extractNextData(html: string): any | null {
-  const marker = "__NEXT_DATA__";
-  const idx = html.indexOf(marker);
-  if (idx === -1) return null;
-  const jsonStart = html.indexOf(">", idx) + 1;
-  const jsonEnd = html.indexOf("</script>", jsonStart);
-  try {
-    return JSON.parse(html.slice(jsonStart, jsonEnd).trim());
-  } catch {
-    return null;
-  }
-}
-
-// ── Financial statement parser ──────────────────────────────────────────────
-
-function extractFinancialStatementCard(data: any): { sections: any[] } | null {
-  let arr = data;
-  if (arr && !Array.isArray(arr)) {
-    arr = arr.blocks ?? arr.data ?? arr.body ?? arr.results ?? arr.items;
-    if (!Array.isArray(arr)) {
-      if (
-        arr?.["$type"] === "MarketData.FinancialStatementCard" &&
-        arr.sections?.length
-      ) {
-        return {
-          sections: arr.sections.map((s: any) => ({
-            header: s.sectionHeader ?? "",
-            items: s.items ?? [],
-            columns: s.columns ?? [],
-            fiscalYear: s.fiscalYear ?? "",
-          })),
-        };
-      }
-      return null;
-    }
-  }
-  if (!Array.isArray(arr)) return null;
-  const card = arr.find(
-    (c: any) => c?.["$type"] === "MarketData.FinancialStatementCard",
-  );
-  if (!card?.sections?.length) return null;
-  return {
-    sections: card.sections.map((s: any) => ({
-      header: s.sectionHeader ?? "",
-      items: s.items ?? [],
-      columns: s.columns ?? [],
-      fiscalYear: s.fiscalYear ?? "",
-    })),
-  };
-}
-
-function parseStatement(apiData: any): BarronsFinancialStatement | null {
-  const extracted = extractFinancialStatementCard(apiData);
-  if (!extracted) return null;
-
-  const allRows: BarronsStatementRow[] = [];
-  let columns: string[] = [];
-  let fiscalYear = "";
-
-  for (const sec of extracted.sections) {
-    if (!columns.length) columns = sec.columns;
-    if (!fiscalYear) fiscalYear = sec.fiscalYear;
-
-    if (extracted.sections.length > 1 && sec.header) {
-      allRows.push({
-        name: `── ${sec.header} ──`,
-        values: [],
-        rawValues: [],
-        type: 3,
-        level: 0,
-        isSectionHeader: true,
-      });
-    }
-
-    function walk(items: any[], depth: number): void {
-      for (const item of items) {
-        allRows.push({
-          name: item.displayName, // API: items[].displayName
-          values: (item.values ?? []).map((v: any) => v?.formatted ?? "-"), // API: items[].values[].formatted
-          rawValues: (item.values ?? []).map((v: any) => v?.value ?? null), // API: items[].values[].value
-          type: item.type ?? 0,
-          level: item.level ?? depth,
-        });
-        if (item.items?.length) walk(item.items, depth + 1);
-      }
-    }
-    walk(sec.items, 0);
-  }
-
-  return { columns, fiscalYear, rows: allRows };
-}
-
-// ── News parser ─────────────────────────────────────────────────────────────
-
-function extractNews(apiData: any): BarronsNewsStory[] {
-  const stories = apiData?.blocks?.[0]?.blocks ?? [];
-  return stories
-    .filter((s: any) => s?.["$type"] === "News.StoryCard")
-    .map((s: any) => ({
-      headline: s.headline ?? "",
-      summary: s.summary ?? "",
-      byline: s.byline ?? "",
-      url: s.url ?? "",
-      timestamp: s.timestampUtc?.formatted ?? "",
-      timestampValue: s.timestampUtc?.value ?? "",
-      provider: s.provider ?? "",
-      label: s.label?.display ?? s.sectionLabel?.display ?? "",
-    }));
-}
-
-// ── URL builders ────────────────────────────────────────────────────────────
-
-function buildBarronsUrls(symbol: string) {
-  const base = `https://www.barrons.com/market-data/stocks/${symbol}`;
-  const finApiBase =
-    `https://www.barrons.com/market-data/api/proxy?` +
-    `https://quote-barrons.millstone.mktw.dowjones.io/api/quote/financials` +
-    `?chartingSymbol=stock///${symbol}&urlFragment=`;
-  const millstoneBase = `https://www.barrons.com/market-data/api/millstone?ticker=${symbol}&PAGE=`;
-  const profileFetchUrl = `https://quote-barrons.millstone.mktw.dowjones.io/api/quote/profile?chartingSymbol=stock///${symbol}`;
-  const ufcJson = encodeURIComponent(
-    JSON.stringify({
-      defaultLoginUrl: `https://www.barrons.com/client/login?target=${encodeURIComponent(`http://www.barrons.com/market-data/stocks/${symbol}/company-people`)}`,
-      pandaAPI: "https://follow-api.barrons.com",
-      ufcLoader: "https://www.barrons.com/asset/dj-ufc/loaders/barrons.js",
-      captchaSiteKey: "6LcmI7sUAAAAAF-vTKb3JIwIzz2CXCx8hJW0Ukis",
-    }),
-  );
-  const overviewPage = encodeURIComponent(
-    '{"renderTab":"","assetType":"stock","analyticsValue":"stockoverview"}',
-  );
-  const companyPage = encodeURIComponent(
-    '{"renderTab":"company-people","assetType":"stock","analyticsValue":"stockcompany"}',
-  );
-  const newsBase = `https://www.barrons.com/market-data/api/news?chartingSymbol=stock///${symbol}&pageNumber=0&count=40`;
-
-  return {
-    ratings: `${base}/research-ratings`,
-    overview: `${millstoneBase}${overviewPage}&ufc=%7B`,
-    companyPeople: `${millstoneBase}${companyPage}&ufc=${ufcJson}&fetchUrl=${encodeURIComponent(profileFetchUrl)}&countrycode=&iso=`,
-    finIncome: `${finApiBase}income/annual`,
-    finBalance: `${finApiBase}balance-sheet/annual`,
-    finCashFlow: `${finApiBase}cash-flow/annual`,
-    finIncomeQ: `${finApiBase}income/quarter`,
-    finBalanceQ: `${finApiBase}balance-sheet/quarter`,
-    finCashFlowQ: `${finApiBase}cash-flow/quarter`,
-    newsBarrons: `${newsBase}&channel=Barrons`,
-    newsDowJones: `${newsBase}&channel=BarronsDowJonesNetwork`,
-    newsPR: `${newsBase}&channel=BarronsPressReleases`,
-  };
-}
 
 // ── News-only fetch (lightweight, for the news page) ────────────────────────
 

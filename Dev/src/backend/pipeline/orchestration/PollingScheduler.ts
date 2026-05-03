@@ -1,5 +1,5 @@
-import type { Clock } from "../../shared/utils/Clock";
-import type { Logger } from "../../shared/log/Logger";
+import type { Clock } from "../../../shared/utils/async/Clock";
+import type { Logger } from "../../../shared/log/Logger";
 
 export interface SchedulerOptions {
   enableBackpressure?: boolean;

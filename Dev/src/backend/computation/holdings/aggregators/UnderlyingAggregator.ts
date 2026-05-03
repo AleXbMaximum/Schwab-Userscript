@@ -3,9 +3,9 @@ import type{
   PortfolioAgg,
   UnderlyingAggRow,
   UnderlyingKey,
-} from "../../../shared/types/derived";
-import type { HoldingsIndex } from "../../pipeline/ingestion/holdingsIndexTypes";
-import { isOption } from "../../../shared/utils/holdingsKeys";
+} from "../../../../shared/types/derived";
+import type { HoldingsIndex } from "../../../pipeline/ingestion/holdingsIndexTypes";
+import { isOption } from "../../../../shared/utils/domain/holdingsKeys";
 import { logService } from "shared/log/core/LogService";
 import {
   extractPrice,
@@ -13,7 +13,7 @@ import {
   extractGainLoss,
   extractCostBasis,
   extractMarketValue,
-} from "./valueExtractors";
+} from "../metrics/valueExtractors";
 
 const log = logService.namespace("holdings");
 

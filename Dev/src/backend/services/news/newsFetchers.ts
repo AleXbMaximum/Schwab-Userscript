@@ -1,6 +1,6 @@
 import type { UnifiedNewsItem } from "./types";
 import { generateNewsId } from "./types";
-import type { NewsItem } from "shared/marketDataTypes";
+import type { NewsItem } from "shared/types/marketData";
 import type { BarronsNewsStory } from "../../core/network/barrons/types";
 import {
   fetchYahooNews,
@@ -11,7 +11,7 @@ import { gmGetWithHeaders } from "../../core/network/yahoo/httpUtils";
 import {
   fetchSchwabNewsHeadlines,
   type SchwabNewsHeadline,
-} from "../../core/network/schwab/news";
+} from "../../core/network/schwab/endpoints/news";
 
 // ── Yahoo: per-symbol news ──────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
-import type { StateRepository } from "../../../shared/utils/StateRepository";
+import type { StateRepository } from "../../../shared/utils/state/StateRepository";
 import type { Logger } from "../../../shared/log/Logger";
-import type { Clock } from "../../../shared/utils/Clock";
+import type { Clock } from "../../../shared/utils/async/Clock";
 import type{ HoldingsResponse, HoldingsRow, QuotesResponse } from "../../../shared/types/holdings";
 import type { RawDataState } from "./DataIngestion";
 import type { StreamerUpdate } from "backend/core/network/types";
@@ -23,7 +23,7 @@ import type {
 } from "./HoldingsIndexBuilder";
 import type{ DerivedState } from "../../../shared/types/derived";
 import { logService } from "../../../shared/log/core/LogService";
-import { clearOptMetaCache } from "../../computation/holdings/derivedMetrics";
+import { clearOptMetaCache } from "../../computation/holdings/metrics/derivedMetrics";
 
 const streamerFlow = logService.namespace("flow:strm");
 

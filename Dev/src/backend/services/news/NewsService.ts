@@ -1,5 +1,9 @@
 import { openAlexQuantDB } from "../../core/db/core/AlexQuantDB";
 import { KVStore } from "../../core/db/core/KVStore";
+import {
+  DEFAULT_NEWS_REFRESH_INTERVALS,
+  type NewsRefreshIntervals,
+} from "../../../shared/settings/newsRefreshDefaults";
 import { NewsMemoryStore } from "./NewsMemoryStore";
 import {
   fetchYahooMacroNews,
@@ -8,13 +12,21 @@ import {
   fetchFinancialJuiceNews,
   fetchSchwabNews,
 } from "./newsFetchers";
-import {
-  getNewsItemSymbols,
-  normalizeNewsSymbolTags,
-  toEpochMs,
-  sortNewsItemsNewestFirst,
-} from "./types";
+import { sortNewsItemsNewestFirst } from "./types";
 import type { UnifiedNewsItem } from "./types";
+import {
+  areSymbolsEqual,
+  areItemsEqual,
+  normalizeNewsItemSymbols,
+  mergeDuplicateNewsItems,
+  normalizeSymbols,
+} from "./newsItemHelpers";
+import {
+  fetchPerSymbol,
+  resolveSourceItems,
+  normalizeIntervalMs,
+  formatInterval,
+} from "./newsFetchHelpers";
 import { summarizeNews } from "./NewsSummarizer";
 import type { SummarizeMode } from "./NewsSummarizer";
 import { tagNewsItems } from "./NewsTagging";
@@ -43,13 +55,7 @@ export type NewsSourceStateRow = {
   lastError: string | null;
 };
 
-export type NewsRefreshIntervals = {
-  yahooMacroMs: number;
-  yahooSymbolMs: number;
-  barronsMs: number;
-  financialJuiceMs: number;
-  schwabMs: number;
-};
+export type { NewsRefreshIntervals };
 
 const NEWS_FETCH_SOURCES: NewsFetchSource[] = [
   "yahooMacro",
@@ -73,17 +79,9 @@ const NEWS_SOURCE_LABELS: Record<NewsFetchSource, string> = {
   schwab: "Schwab",
 };
 
-const MIN_REFRESH_INTERVAL_MS = 1_000;
-const SYMBOL_SCOPED_FETCH_CONCURRENCY = 6;
 const LOG_SYMBOL_SAMPLE_LIMIT = 10;
 
-export const DEFAULT_NEWS_REFRESH_INTERVALS: NewsRefreshIntervals = {
-  yahooMacroMs: 120_000,
-  yahooSymbolMs: 120_000,
-  barronsMs: 180_000,
-  financialJuiceMs: 45_000,
-  schwabMs: 120_000,
-};
+export { DEFAULT_NEWS_REFRESH_INTERVALS };
 
 class NewsService {
   private items: UnifiedNewsItem[] = [];
@@ -141,7 +139,7 @@ class NewsService {
   }
 
   start(symbols: string[]): void {
-    this.symbols = this.normalizeSymbols(symbols);
+    this.symbols = normalizeSymbols(symbols);
     this.logger.info("News symbols initialized", {
       symbolCount: this.symbols.length,
       symbolSample: this.getSymbolSample(),
@@ -163,8 +161,8 @@ class NewsService {
   }
 
   updateSymbols(symbols: string[]): void {
-    const normalized = this.normalizeSymbols(symbols);
-    const changed = !this.areSymbolsEqual(this.symbols, normalized);
+    const normalized = normalizeSymbols(symbols);
+    const changed = !areSymbolsEqual(this.symbols, normalized);
     if (!changed) return;
 
     this.symbols = normalized;
@@ -212,11 +210,11 @@ class NewsService {
   getAutoRefreshLabel(): string {
     const i = this.refreshIntervals;
     return (
-      `Auto-refresh: FJ ${this.formatInterval(i.financialJuiceMs)}` +
-      ` · Yahoo Macro ${this.formatInterval(i.yahooMacroMs)}` +
-      ` · Yahoo Symbol ${this.formatInterval(i.yahooSymbolMs)}` +
-      ` · Barron's ${this.formatInterval(i.barronsMs)}` +
-      ` · Schwab ${this.formatInterval(i.schwabMs)}`
+      `Auto-refresh: FJ ${formatInterval(i.financialJuiceMs)}` +
+      ` · Yahoo Macro ${formatInterval(i.yahooMacroMs)}` +
+      ` · Yahoo Symbol ${formatInterval(i.yahooSymbolMs)}` +
+      ` · Barron's ${formatInterval(i.barronsMs)}` +
+      ` · Schwab ${formatInterval(i.schwabMs)}`
     );
   }
 
@@ -224,31 +222,31 @@ class NewsService {
     const next: NewsRefreshIntervals = { ...this.refreshIntervals };
 
     if (patch.yahooMacroMs !== undefined) {
-      next.yahooMacroMs = this.normalizeIntervalMs(
+      next.yahooMacroMs = normalizeIntervalMs(
         patch.yahooMacroMs,
         next.yahooMacroMs,
       );
     }
     if (patch.yahooSymbolMs !== undefined) {
-      next.yahooSymbolMs = this.normalizeIntervalMs(
+      next.yahooSymbolMs = normalizeIntervalMs(
         patch.yahooSymbolMs,
         next.yahooSymbolMs,
       );
     }
     if (patch.barronsMs !== undefined) {
-      next.barronsMs = this.normalizeIntervalMs(
+      next.barronsMs = normalizeIntervalMs(
         patch.barronsMs,
         next.barronsMs,
       );
     }
     if (patch.financialJuiceMs !== undefined) {
-      next.financialJuiceMs = this.normalizeIntervalMs(
+      next.financialJuiceMs = normalizeIntervalMs(
         patch.financialJuiceMs,
         next.financialJuiceMs,
       );
     }
     if (patch.schwabMs !== undefined) {
-      next.schwabMs = this.normalizeIntervalMs(patch.schwabMs, next.schwabMs);
+      next.schwabMs = normalizeIntervalMs(patch.schwabMs, next.schwabMs);
     }
 
     const changed =
@@ -360,7 +358,7 @@ class NewsService {
 
           const previous = this.sourceItems[source];
           const next = this.resolveSourceItems(source, result.value);
-          if (!this.areItemsEqual(previous, next)) {
+          if (!areItemsEqual(previous, next)) {
             this.sourceItems[source] = next;
             hasCacheChange = true;
           }
@@ -463,61 +461,22 @@ class NewsService {
     }));
   }
 
-  private async fetchPerSymbol(
+  private fetchPerSymbol(
     fetcher: (symbol: string) => Promise<UnifiedNewsItem[]>,
   ): Promise<UnifiedNewsItem[]> {
-    const targetSymbols = this.symbols;
-    if (targetSymbols.length === 0) return [];
-
-    const merged: UnifiedNewsItem[] = [];
-    const workerCount = Math.min(
-      SYMBOL_SCOPED_FETCH_CONCURRENCY,
-      targetSymbols.length,
-    );
-    let nextIndex = 0;
-
-    const worker = async (): Promise<void> => {
-      while (nextIndex < targetSymbols.length) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-        const symbol = targetSymbols[currentIndex];
-        try {
-          const items = await fetcher(symbol);
-          merged.push(...items);
-        } catch {
-          // Fail-soft per symbol: keep processing remaining symbols.
-        }
-      }
-    };
-
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
-
-    return merged;
+    return fetchPerSymbol(this.symbols, fetcher);
   }
 
   private resolveSourceItems(
     source: NewsFetchSource,
     fetched: UnifiedNewsItem[],
   ): UnifiedNewsItem[] {
-    // Keep previous symbol-scoped batch on transient empty pulls.
-    if (
-      (source === "yahooSymbol" || source === "barrons") &&
-      this.symbols.length > 0 &&
-      fetched.length === 0 &&
-      this.sourceItems[source].length > 0
-    ) {
-      return this.sourceItems[source];
-    }
-
-    // Keep previous global-source batch on transient empty pull.
-    if (
-      (source === "financialJuice" || source === "schwab") &&
-      fetched.length === 0 &&
-      this.sourceItems[source].length > 0
-    ) {
-      return this.sourceItems[source];
-    }
-    return fetched;
+    return resolveSourceItems(
+      source,
+      fetched,
+      this.sourceItems[source],
+      this.symbols.length > 0,
+    );
   }
 
   private async rebuildFromSources(): Promise<void> {
@@ -531,13 +490,13 @@ class NewsService {
 
     const dedupedById = new Map<string, UnifiedNewsItem>();
     for (const rawItem of raw) {
-      const item = this.normalizeNewsItemSymbols(rawItem);
+      const item = normalizeNewsItemSymbols(rawItem);
       const existing = dedupedById.get(item.id);
       if (!existing) {
         dedupedById.set(item.id, item);
         continue;
       }
-      dedupedById.set(item.id, this.mergeDuplicateNewsItems(existing, item));
+      dedupedById.set(item.id, mergeDuplicateNewsItems(existing, item));
     }
     const sorted = this.sortNewestFirst(Array.from(dedupedById.values()));
 
@@ -595,145 +554,10 @@ class NewsService {
     return sortNewsItemsNewestFirst(items);
   }
 
-  private normalizeIntervalMs(raw: unknown, fallback: number): number {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) return fallback;
-    if (n === 0) return 0;
-    return Math.max(MIN_REFRESH_INTERVAL_MS, Math.round(n));
-  }
-
-  private formatInterval(ms: number): string {
-    if (ms <= 0) return "Off";
-    const totalSeconds = Math.max(1, Math.round(ms / 1000));
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    if (totalSeconds % 60 === 0) return `${totalSeconds / 60}m`;
-    return `${(totalSeconds / 60).toFixed(1)}m`;
-  }
 
   private getSymbolSample(limit = LOG_SYMBOL_SAMPLE_LIMIT): string[] {
     if (limit <= 0) return [];
     return this.symbols.slice(0, limit);
-  }
-
-  private areSymbolsEqual(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i] !== b[i]) return false;
-    }
-    return true;
-  }
-
-  private areItemsEqual(a: UnifiedNewsItem[], b: UnifiedNewsItem[]): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id) return false;
-      if (a[i].publishedAt !== b[i].publishedAt) return false;
-      if (a[i].title !== b[i].title) return false;
-      if (a[i].summary !== b[i].summary) return false;
-      if (a[i].source !== b[i].source) return false;
-      if (a[i].sourceType !== b[i].sourceType) return false;
-      if (a[i].symbol !== b[i].symbol) return false;
-      if (!this.areSymbolTagsEqual(a[i], b[i])) return false;
-      if ((a[i].url ?? null) !== (b[i].url ?? null)) return false;
-      if (!!a[i].isHeadline !== !!b[i].isHeadline) return false;
-    }
-    return true;
-  }
-
-  private areSymbolTagsEqual(a: UnifiedNewsItem, b: UnifiedNewsItem): boolean {
-    const aSymbols = getNewsItemSymbols(a);
-    const bSymbols = getNewsItemSymbols(b);
-    if (aSymbols.length !== bSymbols.length) return false;
-    for (let i = 0; i < aSymbols.length; i++) {
-      if (aSymbols[i] !== bSymbols[i]) return false;
-    }
-    return true;
-  }
-
-  private normalizeNewsItemSymbols(item: UnifiedNewsItem): UnifiedNewsItem {
-    const symbolTags = normalizeNewsSymbolTags(item.symbolTags, item.symbol);
-    const primary = symbolTags[0] ?? null;
-    if (
-      item.symbol === primary &&
-      this.areSymbolArraysEqual(item.symbolTags, symbolTags)
-    ) {
-      return item;
-    }
-    return {
-      ...item,
-      symbol: primary,
-      symbolTags,
-    };
-  }
-
-  private mergeDuplicateNewsItems(
-    existing: UnifiedNewsItem,
-    incoming: UnifiedNewsItem,
-  ): UnifiedNewsItem {
-    const mergedSymbols = normalizeNewsSymbolTags([
-      ...getNewsItemSymbols(existing),
-      ...getNewsItemSymbols(incoming),
-    ]);
-
-    const existingTs = toEpochMs(existing.publishedAt);
-    const incomingTs = toEpochMs(incoming.publishedAt);
-    const primary = incomingTs > existingTs ? incoming : existing;
-    const secondary = primary === existing ? incoming : existing;
-
-    return {
-      ...primary,
-      summary: primary.summary || secondary.summary,
-      url: primary.url ?? secondary.url,
-      symbol: mergedSymbols[0] ?? null,
-      symbolTags: mergedSymbols,
-      isHeadline: !!primary.isHeadline || !!secondary.isHeadline,
-    };
-  }
-
-  private areSymbolArraysEqual(
-    a: readonly string[] | null | undefined,
-    b: readonly string[] | null | undefined,
-  ): boolean {
-    const left = a ?? [];
-    const right = b ?? [];
-    if (left.length !== right.length) return false;
-    for (let i = 0; i < left.length; i++) {
-      if (left[i] !== right[i]) return false;
-    }
-    return true;
-  }
-
-  private normalizeSymbols(symbols: string[]): string[] {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const raw of symbols) {
-      const normalized = this.normalizeSymbol(raw);
-      if (!normalized || seen.has(normalized)) continue;
-      seen.add(normalized);
-      out.push(normalized);
-    }
-    // Stable order so noisy upstream ordering doesn't trigger needless refresh churn.
-    return out.sort((a, b) => a.localeCompare(b));
-  }
-
-  private normalizeSymbol(raw: string): string | null {
-    const base = String(raw ?? "")
-      .trim()
-      .toUpperCase();
-    if (!base) return null;
-
-    // Option display symbols often look like "NVDA 03/20/2026 155.00 P".
-    let candidate = base.split(/\s+/)[0] ?? "";
-
-    // OCC compact options: AAPL250117C00225000 -> AAPL
-    const occMatch = candidate.match(/^([A-Z]{1,6})\d{6}[CP]\d{8}$/);
-    if (occMatch) candidate = occMatch[1];
-
-    candidate = candidate.replace(/\//g, ".").replace(/[^A-Z0-9.$-]/g, "");
-
-    if (!candidate || candidate.startsWith("$")) return null;
-    if (!/^[A-Z0-9][A-Z0-9.-]{0,9}$/.test(candidate)) return null;
-    return candidate;
   }
 
   // ── AI orchestration ──────────────────────────────────────────────

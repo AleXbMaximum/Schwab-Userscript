@@ -1,8 +1,8 @@
-import { computeAccountOverviewMetrics } from "../../computation/holdings/accountOverviewMetrics";
-import type { AccountOverviewMetrics } from "../../computation/holdings/accountOverviewMetrics";
-import { applyBalancesOverlay } from "../../computation/holdings/balancesOverlay";
+import { computeAccountOverviewMetrics } from "../../computation/holdings/metrics/accountOverviewMetrics";
+import type { AccountOverviewMetrics } from "../../computation/holdings/metrics/accountOverviewMetrics";
+import { applyBalancesOverlay } from "../../computation/holdings/rendering/balancesOverlay";
 import { isMarketClosedCT } from "../../../shared/utils/time";
-import type { BalancesSnapshot } from "../../core/network/schwab/balances";
+import type { BalancesSnapshot } from "../../core/network/schwab/endpoints/balances";
 import type { AccountHistoryPoint } from "../../core/db/account/accountHistoryTypes";
 import { toNumber, buildPoint } from "./historyPoint";
 import { loadHistory } from "./historyPersistence";

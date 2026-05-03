@@ -1,5 +1,5 @@
 import type { AccountHistoryPoint } from "../../core/db/account/accountHistoryTypes";
-import type { AccountOverviewMetrics } from "../../computation/holdings/accountOverviewMetrics";
+import type { AccountOverviewMetrics } from "../../computation/holdings/metrics/accountOverviewMetrics";
 
 export function toNumber(value: unknown): number {
   const num = typeof value === "number" ? value : Number(value);

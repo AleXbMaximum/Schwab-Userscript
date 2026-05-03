@@ -1,9 +1,9 @@
 import type {
   StateRepository,
   VersionedState,
-} from "../../shared/utils/StateRepository";
+} from "../../shared/utils/state/StateRepository";
 import type { Logger } from "../../shared/log/Logger";
-import type { Clock } from "../../shared/utils/Clock";
+import type { Clock } from "../../shared/utils/async/Clock";
 
 export class InMemoryStateRepository<
   RawState,

@@ -1,17 +1,17 @@
-import type{ HoldingsGroup, HoldingsResponse } from "../../../shared/types/holdings";
+import type{ HoldingsGroup, HoldingsResponse } from "../../../../shared/types/holdings";
 import type{
   AssetClassBlock,
   DerivedState,
   HierarchicalHoldings,
   UnderlyingKey,
   WarningState,
-} from "../../../shared/types/derived";
-import type { HoldingsIndex } from "../../pipeline/ingestion/holdingsIndexTypes";
+} from "../../../../shared/types/derived";
+import type { HoldingsIndex } from "../../../pipeline/ingestion/holdingsIndexTypes";
 import {
   buildTickerBlock,
   processRow,
   type TickerBucket,
-} from "./hierarchyRowBuilders";
+} from "../rendering/hierarchyRowBuilders";
 import {
   computeGrandTotal,
   computeGroupTotals,
