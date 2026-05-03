@@ -1,36 +1,36 @@
-import { ui_createElement } from "../components/core/createElement";
-import { DS_COLORS } from "../components/core/theme";
-import { fetchOptionChains } from "../../backend/core/network/schwab/options";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_COLORS } from "../components/core/styles/theme";
+import { fetchOptionChains } from "../../backend/core/network/schwab/endpoints/options";
 import { logService } from "../../shared/log/core/LogService";
-import { pruneLowOIExpirations } from "shared/utils/optionsChains";
+import { pruneLowOIExpirations } from "shared/utils/domain/optionsChains";
 import type{ OptionsChainsResponse } from "shared/types/options";
-import type { MonitorController } from "../analysis_optionFlow/monitor/MonitorController";
-import { DEFAULT_MONITOR_SETTINGS } from "../analysis_optionFlow/monitor/monitorSettings";
 import { openAlexQuantDB } from "../../backend/core/db/core/AlexQuantDB";
 import { KVStore } from "../../backend/core/db/core/KVStore";
-import { ui_copyTextToClipboard } from "../components/core/clipboard";
+import { ui_copyTextToClipboard } from "../components/core/behaviors/clipboard";
 import type { StatusDotState, ResizableComponentRef } from "./types";
 import type {
   SavedViewState,
   OptionsSavedView,
-  TimestampSavedView,
 } from "./savedView/savedViewTypes";
 import {
-  normalizeScopeMode,
   decodeSavedView,
   compactChainsForCopy,
   summarizeExpirationForCopy,
-  formatTimeLabel,
 } from "./savedView/savedViewSerializer";
-import {
-  readTimestampSavedViews,
-  writeTimestampSavedViews,
-} from "./savedView/savedViewRepository";
 import { createOptionsStore, type OptionsStore } from "./store/OptionsViewStore";
 import { projectSavedViewState } from "./store/selectors";
 import { clearFocusedStrike } from "./focus/focusStrike";
 import { chartManager } from "frontend/charts/ChartManager";
 import { orchestrateCharts } from "./chartOrchestrator";
+import {
+  applySavedViewState as applySavedViewStateHelper,
+  setCopyOutBtnAppearance,
+  renderTickerSelect as renderTickerSelectHelper,
+} from "./pageHelpers";
+import {
+  handleSaveTimestamp,
+  handleLoadTimestamp,
+} from "./pageTimestampActions";
 
 const log = logService.namespace("options");
 
@@ -85,55 +85,8 @@ export function options_renderPage(
   let pendingSavedView: OptionsSavedView | null = null;
   let copyOutResetTimer: number | null = null;
 
-  const getTickerList = (): string[] => {
-    const mc = (ctx as any)?.monitorController as MonitorController | undefined;
-    const monitored = mc?.getSymbols?.() ?? [];
-    const source =
-      monitored.length > 0 ? monitored : DEFAULT_MONITOR_SETTINGS.symbols;
-    const unique: string[] = [];
-    const seen = new Set<string>();
-    for (const raw of source) {
-      const symbol = String(raw ?? "")
-        .trim()
-        .toUpperCase();
-      if (!symbol || seen.has(symbol)) continue;
-      seen.add(symbol);
-      unique.push(symbol);
-    }
-    return unique;
-  };
-
-  const renderTickerSelect = (symbolOverride?: string): void => {
-    const list = getTickerList();
-    const current = (symbolOverride ?? symbolInput.value).trim().toUpperCase();
-    tickerSelect.innerHTML = "";
-
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Ticker List";
-    placeholder.selected = !current;
-    tickerSelect.appendChild(placeholder);
-
-    let matched = false;
-    for (const ticker of list) {
-      const opt = document.createElement("option");
-      opt.value = ticker;
-      opt.textContent = ticker;
-      if (ticker === current) {
-        opt.selected = true;
-        matched = true;
-      }
-      tickerSelect.appendChild(opt);
-    }
-
-    if (current && !matched) {
-      const customOpt = document.createElement("option");
-      customOpt.value = current;
-      customOpt.textContent = `${current} (Manual)`;
-      customOpt.selected = true;
-      tickerSelect.appendChild(customOpt);
-    }
-  };
+  const renderTickerSelect = (symbolOverride?: string): void =>
+    renderTickerSelectHelper(tickerSelect, symbolInput, ctx, symbolOverride);
 
   const buttonStyle =
     "padding: 7px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-lg); cursor: pointer;" +
@@ -175,57 +128,7 @@ export function options_renderPage(
   const applySavedViewState = (
     view: SavedViewState,
     response: OptionsChainsResponse,
-  ): void => {
-    const safeExpIdx = Math.max(
-      0,
-      Math.min(response.expirations.length - 1, view.selectedExpirationIdx),
-    );
-    const safeCustom = view.customExpirationIdxs
-      .filter((i) => i >= 0 && i < response.expirations.length)
-      .sort((a, b) => a - b);
-    store.setState({
-      selectedExpirationIdx: safeExpIdx,
-      selectedStrikeCount: view.selectedStrikeCount,
-      customExpirationIdxs: safeCustom,
-      scopeMode: normalizeScopeMode((view as any).scopeMode),
-      greeksBasis: view.greeksBasis,
-      gammaSource: (view as any).gammaSource ?? "schwab",
-      liquidityThreshold: view.liquidityThreshold,
-      localWindowMode: view.localWindowMode,
-      localWindowPct: view.localWindowPct ?? 10,
-      localWindowDeltaRange: view.localWindowDeltaRange ?? [0.25, 0.75],
-      strikeMode: view.strikeMode ?? "count",
-      strikeDollarWidth: view.strikeDollarWidth ?? 50,
-      liquidityPreset: view.liquidityPreset ?? "normal",
-      liquidityAdvanced: view.liquidityAdvanced ?? {
-        spreadPct: 0.25,
-        minVol: 0,
-        minOI: 0,
-        excludeStale: false,
-      },
-      expectedMoveMode: view.expectedMoveMode ?? "straddle",
-      ivMetric: view.ivMetric ?? "iv",
-      ivSlice: view.ivSlice ?? "atm",
-    });
-  };
-
-  const setCopyOutBtnAppearance = (
-    btn: HTMLButtonElement,
-    state: "default" | "success" | "error",
-  ): void => {
-    if (state === "success") {
-      btn.style.borderColor = "#169c35";
-      btn.style.color = "#0c7a28";
-      return;
-    }
-    if (state === "error") {
-      btn.style.borderColor = DS_COLORS.negative;
-      btn.style.color = DS_COLORS.negative;
-      return;
-    }
-    btn.style.borderColor = "var(--ios-border)";
-    btn.style.color = "var(--ios-text-primary)";
-  };
+  ): void => applySavedViewStateHelper(store, view, response);
 
   const buildCopyOutText = (): string => {
     const state = store.getState();
@@ -284,115 +187,12 @@ export function options_renderPage(
   const saveTimestampBtn = ui_createElement("button", {
     text: "Save Timestamp",
     styleString: buttonStyle,
-    events: {
-      click: async () => {
-        const state = store.getState();
-        if (!state.response) {
-          statusLabel.textContent = "Load data first before saving timestamp.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-
-        const symbol = (state.response.underlying.symbol || getCurrentSymbol())
-          .trim()
-          .toUpperCase();
-        if (!symbol) {
-          statusLabel.textContent =
-            "Missing symbol; cannot save timestamp view.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-
-        const savedView: TimestampSavedView = {
-          version: 1,
-          symbol,
-          savedAt: new Date().toISOString(),
-          dataTimestamp:
-            state.response.currentDateTime ||
-            state.timestamp ||
-            new Date().toISOString(),
-          response: state.response,
-          view: buildSavedViewState(),
-        };
-
-        try {
-          const existing = await readTimestampSavedViews(symbol);
-          const merged = [
-            savedView,
-            ...existing.filter(
-              (s) => s.dataTimestamp !== savedView.dataTimestamp,
-            ),
-          ];
-          await writeTimestampSavedViews(symbol, merged);
-          statusLabel.textContent = `Saved timestamp ${formatTimeLabel(savedView.dataTimestamp)} (${symbol}).`;
-          statusLabel.style.color = "var(--ios-text-secondary)";
-        } catch (err) {
-          statusLabel.textContent = `Save timestamp failed: ${(err as Error)?.message ?? "unknown error"}`;
-          statusLabel.style.color = DS_COLORS.negative;
-        }
-      },
-    },
-  });
+  }) as HTMLButtonElement;
 
   const loadTimestampBtn = ui_createElement("button", {
     text: "Load Timestamp",
     styleString: buttonStyle,
-    events: {
-      click: async () => {
-        const symbol = getCurrentSymbol();
-        if (!symbol) {
-          statusLabel.textContent = "Enter/load a symbol first.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-
-        const savedViews = await readTimestampSavedViews(symbol);
-        if (savedViews.length === 0) {
-          statusLabel.textContent = `No saved timestamps for ${symbol}.`;
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-
-        const maxChoices = Math.min(12, savedViews.length);
-        const options = savedViews
-          .slice(0, maxChoices)
-          .map(
-            (s, i) =>
-              `${i + 1}. data=${formatTimeLabel(s.dataTimestamp)} | saved=${formatTimeLabel(s.savedAt)}`,
-          )
-          .join("\n");
-        const choice = window.prompt(
-          `Load saved timestamp for ${symbol}:\n${options}\nEnter 1-${maxChoices}`,
-          "1",
-        );
-        if (choice == null) return;
-        const index = Number(choice) - 1;
-        if (!Number.isInteger(index) || index < 0 || index >= maxChoices) {
-          statusLabel.textContent = "Invalid timestamp selection.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-
-        const selected = savedViews[index];
-        try {
-          clearFocusedStrike();
-          symbolInput.value = symbol;
-          renderTickerSelect(symbol);
-          store.setState({
-            response: selected.response,
-            timestamp: selected.dataTimestamp || new Date().toISOString(),
-          });
-          applySavedViewState(selected.view, selected.response);
-          renderCharts();
-          statusLabel.textContent = `Loaded timestamp ${formatTimeLabel(selected.dataTimestamp)} (${symbol}).`;
-          statusLabel.style.color = "var(--ios-text-secondary)";
-        } catch (err) {
-          statusLabel.textContent = `Load timestamp failed: ${(err as Error)?.message ?? "unknown error"}`;
-          statusLabel.style.color = DS_COLORS.negative;
-        }
-      },
-    },
-  });
+  }) as HTMLButtonElement;
 
   inputBar.appendChild(tickerSelect);
   inputBar.appendChild(symbolInput);
@@ -695,6 +495,30 @@ export function options_renderPage(
         setCopyOutBtnAppearance(copyOutBtn, "default");
       }, 1800);
     })();
+  });
+  saveTimestampBtn.addEventListener("click", () => {
+    void handleSaveTimestamp({
+      store,
+      statusLabel,
+      symbolInput,
+      getCurrentSymbol,
+      buildSavedViewState,
+      renderTickerSelect,
+      applySavedViewState,
+      renderCharts,
+    });
+  });
+  loadTimestampBtn.addEventListener("click", () => {
+    void handleLoadTimestamp({
+      store,
+      statusLabel,
+      symbolInput,
+      getCurrentSymbol,
+      buildSavedViewState,
+      renderTickerSelect,
+      applySavedViewState,
+      renderCharts,
+    });
   });
   symbolInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") void loadSymbol();

@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import type { GreeksBasis, GexGammaSource } from "backend/computation/options/types";
 import type {
   ScopeMode,
@@ -18,52 +18,30 @@ import {
   LOCAL_WINDOW_OPTIONS,
   STRIKE_COUNT_BASE,
   STRIKE_WIDTH_BASE,
-  LIQUIDITY_SPREAD_BASE,
-  LIQUIDITY_MIN_VOL_BASE,
-  LIQUIDITY_MIN_OI_BASE,
   SCOPE_LABELS,
   LIQUIDITY_LABELS,
   BASIS_LABELS,
   GAMMA_SOURCE_LABELS,
 } from "./controlPresets";
 
-const barStyle =
-  "display: flex; flex-direction: column; gap: 4px; padding: 4px 8px;" +
-  " border-bottom: 1px solid var(--ax-border-subtle);" +
-  " background: var(--ax-glass-2-bg);" +
-  " font-family: var(--ax-font-body);";
-
-const controlsRowStyle =
-  "display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;" +
-  " overflow-x: auto; overflow-y: hidden;";
-
-const groupStyle =
-  "display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap;";
-
-const groupLabelStyle =
-  "font-size: 11px; font-weight: 600; color: var(--ios-text-secondary);" +
-  " letter-spacing: 0.2px; white-space: nowrap;";
-
-const selectBaseStyle =
-  "padding: 3px 6px; border: 1px solid var(--ax-border); border-radius: var(--ax-radius-md);" +
-  " font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); color: var(--ax-fg);" +
-  " background: var(--ax-bg-input); font-family: var(--ax-font-body);" +
-  " min-height: 24px; outline: none;";
-
-const selectSmallStyle = selectBaseStyle + " min-width: 94px;";
-const selectWideStyle = selectBaseStyle + " min-width: 228px;";
-const selectMultiStyle =
-  selectBaseStyle + " min-width: 228px; min-height: 82px; font-weight: 500;";
-
-const subRowStyle =
-  "display: flex; align-items: center; gap: 6px; margin-left: 4px; flex-wrap: wrap;";
-
-const subLabelStyle =
-  "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary);";
-
-const infoTagStyle =
-  "font-size: 9px; font-weight: 600; color: #D78100; background: rgba(215, 129, 0, 0.1);" +
-  " padding: 1px 5px; border-radius: 4px; white-space: nowrap;";
+import {
+  barStyle,
+  controlsRowStyle,
+  groupStyle,
+  groupLabelStyle,
+  selectSmallStyle,
+  selectWideStyle,
+  selectMultiStyle,
+  subRowStyle,
+  subLabelStyle,
+  infoTagStyle,
+} from "./optionsControlStyles";
+import {
+  createOption,
+  numericOptionSet,
+  localChoiceValue,
+} from "./optionsControlHelpers";
+import { renderLiquidityAdvancedRow } from "./optionsLiquidityAdvanced";
 
 export type ViewControlsCallbacks = {
   onExpirationChange: (idx: number, customIdxs?: number[]) => void;
@@ -106,33 +84,6 @@ export type ViewControlsState = {
   liquidityPreset: LiquidityPreset;
   liquidityAdvanced: LiquidityAdvanced;
 };
-
-function createOption(
-  value: string,
-  label: string,
-  selected = false,
-): HTMLOptionElement {
-  const opt = document.createElement("option");
-  opt.value = value;
-  opt.textContent = label;
-  if (selected) opt.selected = true;
-  return opt;
-}
-
-function numericOptionSet(base: readonly number[], current: number): number[] {
-  if (base.includes(current)) return [...base];
-  return [...base, current].sort((a, b) => a - b);
-}
-
-function localChoiceValue(
-  mode: LocalWindowMode,
-  pct: number,
-  delta: [number, number],
-): string {
-  if (mode === "all") return "all";
-  if (mode === "pct") return `pct:${pct}`;
-  return `delta:${delta[0]}-${delta[1]}`;
-}
 
 export function renderScopeLock(
   stateSlice: ViewControlsState,
@@ -537,93 +488,18 @@ export function renderScopeLock(
     renderLiqAdvanced();
   });
 
-  const renderLiqAdvanced = () => {
-    liqAdvancedRow.innerHTML = "";
-    if (st.liquidityPreset !== "advanced") return;
-
-    const addNumberSelect = (
-      title: string,
-      baseValues: readonly number[],
-      current: number,
-      onChange: (next: number) => void,
-      formatter: (n: number) => string = (n) => String(n),
-    ) => {
-      liqAdvancedRow.appendChild(
-        ui_createElement("span", {
-          text: `${title}:`,
-          styleString: subLabelStyle,
-        }),
-      );
-      const select = ui_createElement("select", {
-        styleString: selectSmallStyle + " min-width: 88px;",
-      }) as HTMLSelectElement;
-      const values = numericOptionSet(baseValues, current);
-      values.forEach((v) =>
-        select.appendChild(
-          createOption(String(v), formatter(v), v === current),
-        ),
-      );
-      select.addEventListener("change", (e: Event) => {
-        const v = Number((e.target as HTMLSelectElement).value);
-        if (!Number.isFinite(v)) return;
-        onChange(v);
-      });
-      liqAdvancedRow.appendChild(select);
-    };
-
-    addNumberSelect(
-      "Spread",
-      LIQUIDITY_SPREAD_BASE,
-      st.liquidityAdvanced.spreadPct,
-      (next) => {
-        st.liquidityAdvanced = { ...st.liquidityAdvanced, spreadPct: next };
-        callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
+  const renderLiqAdvanced = () =>
+    renderLiquidityAdvancedRow(
+      liqAdvancedRow,
+      st.liquidityPreset,
+      {
+        getAdvanced: () => st.liquidityAdvanced,
+        setAdvanced: (next) => {
+          st.liquidityAdvanced = next;
+        },
       },
-      (n) => `<${n}%`,
+      (next) => callbacks.onLiquidityChange("advanced", next),
     );
-
-    addNumberSelect(
-      "MinVol",
-      LIQUIDITY_MIN_VOL_BASE,
-      st.liquidityAdvanced.minVol,
-      (next) => {
-        st.liquidityAdvanced = { ...st.liquidityAdvanced, minVol: next };
-        callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-      },
-    );
-
-    addNumberSelect(
-      "MinOI",
-      LIQUIDITY_MIN_OI_BASE,
-      st.liquidityAdvanced.minOI,
-      (next) => {
-        st.liquidityAdvanced = { ...st.liquidityAdvanced, minOI: next };
-        callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-      },
-    );
-
-    liqAdvancedRow.appendChild(
-      ui_createElement("span", {
-        text: "Stale:",
-        styleString: subLabelStyle,
-      }),
-    );
-    const staleSelect = ui_createElement("select", {
-      styleString: selectSmallStyle + " min-width: 110px;",
-    }) as HTMLSelectElement;
-    staleSelect.appendChild(
-      createOption("include", "Include", !st.liquidityAdvanced.excludeStale),
-    );
-    staleSelect.appendChild(
-      createOption("exclude", "Exclude", st.liquidityAdvanced.excludeStale),
-    );
-    staleSelect.addEventListener("change", (e: Event) => {
-      const exclude = (e.target as HTMLSelectElement).value === "exclude";
-      st.liquidityAdvanced = { ...st.liquidityAdvanced, excludeStale: exclude };
-      callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-    });
-    liqAdvancedRow.appendChild(staleSelect);
-  };
 
   const renderBasisSelect = () => {
     basisSelect.innerHTML = "";
