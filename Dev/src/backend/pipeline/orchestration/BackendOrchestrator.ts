@@ -1,5 +1,5 @@
 import type{ HoldingsResponse } from "../../../shared/types/holdings";
-import type{ DerivedState, HoldingsFrame } from "../../../shared/types/derived";
+import type{ ChangeToken, DerivedState, HoldingsFrame } from "../../../shared/types/derived";
 import type{ StreamerLike } from "../../../shared/types/streamer";
 import type { Logger } from "../../../shared/log/Logger";
 import { logService } from "../../../shared/log/core/LogService";
@@ -22,6 +22,8 @@ import { OvernightBridge } from "../bridges/OvernightBridge";
 import { NewsLifecycleCoordinator } from "../../services/news/NewsLifecycleCoordinator";
 
 import { BetaService } from "../beta/BetaService";
+import type { AllBenchmarkBetaData } from "../beta/betaHorizons";
+import type { ThreeFactorBundle } from "../../computation/beta/types";
 import {
   chartDataService,
   type ChartDataService,
@@ -30,18 +32,21 @@ import {
   fetchHoldings,
   fetchDualHoldings,
 } from "../../core/network/schwab/endpoints/holdings";
+import { fetchQuotes } from "../../core/network/schwab/endpoints/quotes";
+import { fetchBalances } from "../../core/network/schwab/endpoints/balances";
 import { PhaseManager, type PhaseSourceKey } from "./PhaseManager";
 import type { OrchestratorPhase } from "../../../shared/utils/time";
 import type { SchedulerOverride } from "../../../shared/types/core";
+import { INDEX_SYMBOLS_ARRAY } from "../indexSymbols";
 
 import {
   type BackendOrchestratorOptions,
   type BackendContext,
   type StorageLike,
   DEFAULT_BETA_RECALC_INTERVAL_MS,
+  normalizeSymbolsUnique,
 } from "./backendOrchestratorTypes";
 import { SourceOverrideManager } from "./sourceOverrideManager";
-import { setupPolling as runSetupPolling } from "./pollingOrchestrator";
 import { routeSettingsUpdate } from "./settingsRouter";
 
 export type {
