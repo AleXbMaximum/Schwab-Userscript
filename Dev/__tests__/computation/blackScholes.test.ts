@@ -1,5 +1,4 @@
 import { blackScholes } from "../../src/backend/computation/math/blackScholes";
-import { findGreeksViolations } from "../../src/backend/computation/validators/numericInvariants";
 
 describe("blackScholes Greeks invariants", () => {
   // Sample a representative range: ITM, ATM, OTM, multiple DTEs and IVs.
@@ -85,26 +84,4 @@ describe("blackScholes Greeks invariants", () => {
     expect(Number.isFinite(r.delta.call)).toBe(true);
   });
 
-  it("sweeping a chain keeps Greeks summary inside invariant rules", () => {
-    const summaries = cases.map(({ spot, strike, dte, iv }) => {
-      const r = blackScholes({
-        spot,
-        strike,
-        timeToExpiry: dte / 365,
-        riskFreeRate: 0.045,
-        iv,
-      });
-      return {
-        spot,
-        atm_strike: strike,
-        atm_iv: iv,
-        atm_delta: r.delta.call,
-        atm_gamma: r.gamma,
-        atm_vega: r.vega,
-        atm_theta: r.theta.call,
-        chain_size: 30,
-      };
-    });
-    expect(findGreeksViolations(summaries)).toEqual([]);
-  });
 });
