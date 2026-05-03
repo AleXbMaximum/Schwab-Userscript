@@ -34,10 +34,9 @@ export {
   getRenderMode,
   isEco,
   onRenderModeChanged,
-  withShadow,
   type AxRenderMode,
-  type ShadowOpts,
-} from "./renderMode";
+} from "./renderMode/controller";
+export { withShadow, type ShadowOpts } from "./renderMode/canvasShadow";
 export {
   AX_CHART_COLORS_LIGHT,
   AX_CHART_COLORS_DARK,
