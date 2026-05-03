@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { createChartPanel } from "frontend/charts/chartPanel";
 import {
   OPTIONS_SEMANTIC_COLORS as C,
@@ -13,7 +13,7 @@ import {
   subscribeFocusedLevels,
   setFocusedStrike,
 } from "../../focus/focusStrike";
-import { formatCompactDollar } from "shared/utils/formatters";
+import { formatCompactDollar } from "shared/utils/format/formatters";
 
 const fmtVal = (v: number): string =>
   formatCompactDollar(v, { sign: true, unicodeMinus: true });

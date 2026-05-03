@@ -12,7 +12,7 @@
 //   - DS_COLORS.raw — getter that returns raw hex/rgb for canvas / Chart.js
 //     callbacks where CSS vars aren't available. Re-evaluates on each access.
 
-import { getAxRawColors } from "./axTokens/colors";
+import { getAxRawColors } from "../axTokens/colors";
 
 // ============================================================
 // SECTION SHELL — Tier-2 liquid-glass panel surface

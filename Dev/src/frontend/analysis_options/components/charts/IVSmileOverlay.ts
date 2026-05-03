@@ -1,6 +1,6 @@
 import { createChartPanel } from "frontend/charts/chartPanel";
 import { niceLinearScale, niceStrikeTicks } from "frontend/charts/ChartTheme";
-import { DS_COLORS } from "../../../components/core/theme";
+import { DS_COLORS } from "../../../components/core/styles/theme";
 import type { IVSmileLine } from "backend/computation/options/types";
 import { createVerticalFocusStrikePlugin } from "../../focus/focusStrikeOverlayPlugin";
 import { getFocusedLevels, subscribeFocusedLevels } from "../../focus/focusStrike";

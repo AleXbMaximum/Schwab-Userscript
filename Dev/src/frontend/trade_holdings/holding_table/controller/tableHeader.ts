@@ -1,4 +1,4 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import {
   BASE_COL_LABELS,
   BASE_INDEX_BY_ID,

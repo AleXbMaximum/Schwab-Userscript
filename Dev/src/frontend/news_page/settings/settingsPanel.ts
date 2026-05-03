@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COMPONENTS } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COMPONENTS } from "../../components/core/styles/theme";
 import {
   createSettingsPopoverScaffold,
   createSettingsPopoverController,

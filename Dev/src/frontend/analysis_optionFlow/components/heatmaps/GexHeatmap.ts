@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { createPillGroup } from "frontend/components/core/pillGroup";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { createPillGroup } from "frontend/components/core/builders/pillGroup";
 import { createGexHeatmap } from "frontend/charts/types/HeatmapFactory";
 import type { HeatmapChartHandle } from "frontend/charts/types/HeatmapTypes";
 import { clamp } from "shared/utils/math/numeric";

@@ -9,7 +9,7 @@
  *   Esc / outside-click / blur close by default; scroll repositions.
  */
 
-import { ui_createElement } from "../core/createElement";
+import { ui_createElement } from "../core/builders/createElement";
 import { cx } from "./cx";
 
 export type PopoverPlacement = "bottom" | "top" | "left" | "right";

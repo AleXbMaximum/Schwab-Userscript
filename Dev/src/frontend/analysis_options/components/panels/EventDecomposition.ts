@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import {
   DS_COLORS,
   DS_COMPONENTS,
@@ -6,8 +6,8 @@ import {
   DS_SPACING,
   DS_TYPOGRAPHY,
   ds_severityColors,
-} from "../../../components/core/theme";
-import { formatPct } from "shared/utils/formatters";
+} from "../../../components/core/styles/theme";
+import { formatPct } from "shared/utils/format/formatters";
 import type { TermStructurePoint } from "backend/computation/options/types";
 
 type Inversion = {

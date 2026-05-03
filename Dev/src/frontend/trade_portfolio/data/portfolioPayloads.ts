@@ -16,7 +16,7 @@ import type {
 } from "../../../backend/computation/beta/types";
 import { computeWeightedBetaForBenchmarks } from "../../../backend/computation/beta/betaEnrichment";
 import { computeLinkedTargets } from "../../../backend/computation/rebalance/RebalanceCalculator";
-import { extractEtfUnderlyingKeysFromGroups } from "../../../shared/utils/holdingsGroups";
+import { extractEtfUnderlyingKeysFromGroups } from "../../../shared/utils/domain/holdingsGroups";
 
 // ── Quote price resolution ──────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COMPONENTS, DS_BUTTONS, DS_TYPOGRAPHY } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_BUTTONS, DS_TYPOGRAPHY } from "../../components/core/styles/theme";
 import {
   createSettingsSectionCard,
   createSettingsActionButton,
@@ -11,7 +11,7 @@ import type{
   OpenAIPricingTier,
   OpenAIServiceTier,
 } from "shared/types/core";
-import { generateUUID } from "shared/utils/uuid";
+import { generateUUID } from "shared/utils/data/uuid";
 import type { AIConfigSnapshot } from "../../../backend/services/ai/config/types";
 import type { AIConfigStore } from "../../../backend/services/ai/config/AIConfigStore";
 

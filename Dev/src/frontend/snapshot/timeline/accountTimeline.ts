@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import type { AccountHistoryPoint } from "../../../backend/core/db/account/accountHistoryTypes";
 import { loadHistoryForRange } from "../../../backend/pipeline/snapshot/historyPersistence";
 import type {

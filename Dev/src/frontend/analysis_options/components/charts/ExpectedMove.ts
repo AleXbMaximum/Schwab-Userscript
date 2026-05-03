@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COLORS, DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COLORS, DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import {
   OPTIONS_SEMANTIC_COLORS as SC,
   CHART_COLORS,

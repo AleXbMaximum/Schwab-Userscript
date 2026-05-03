@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COMPONENTS } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COMPONENTS } from "../../components/core/styles/theme";
 import { createSettingsSectionCard, appendSettingsMatrixRow } from "../../components/core/settingsFramework";
 import type{ AIProviderKind } from "shared/types/core";
 import type { AIConfigSnapshot } from "../../../backend/services/ai/config/types";

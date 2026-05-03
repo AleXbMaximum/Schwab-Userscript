@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import { OPTIONS_SEMANTIC_COLORS as C } from "frontend/charts/ChartTheme";
 import { ladderValue } from "frontend/charts/ChartUtils";
 import type { OptionsWallData, KeyLevelsLadderData } from "backend/computation/options/types";
@@ -8,7 +8,7 @@ import {
   isLevelActive,
   subscribeFocusedLevels,
 } from "../../focus/focusStrike";
-import { formatStrike } from "shared/utils/formatters";
+import { formatStrike } from "shared/utils/format/formatters";
 
 type LevelDef = {
   id: "putWall" | "callWall" | "maxPain" | "flip" | "spot" | "forward" | "minIV";

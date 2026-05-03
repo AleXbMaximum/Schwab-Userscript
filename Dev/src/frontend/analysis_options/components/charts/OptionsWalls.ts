@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import {
   OPTIONS_SEMANTIC_COLORS as C,
   CHART_COLORS,
@@ -14,7 +14,7 @@ import {
   subscribeFocusedLevels,
   type FocusedLevel,
 } from "../../focus/focusStrike";
-import { formatStrike } from "shared/utils/formatters";
+import { formatStrike } from "shared/utils/format/formatters";
 
 export function renderOptionsWalls(
   wallData: OptionsWallData,

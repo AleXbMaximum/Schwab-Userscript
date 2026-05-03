@@ -1,17 +1,17 @@
-import { ui_createElement } from "../core/createElement";
-import { ds_signColorRaw } from "../core/theme";
+import { ui_createElement } from "../core/builders/createElement";
+import { ds_signColorRaw } from "../core/styles/theme";
 import {
   formatPct,
   formatCurrencyLocale as fmtCurrencyLocale,
   formatSignedCurrencyLocale,
-} from "shared/utils/formatters";
-import type { AccountOverviewMetrics } from "backend/computation/holdings/accountOverviewMetrics";
+} from "shared/utils/format/formatters";
+import type { AccountOverviewMetrics } from "backend/computation/holdings/metrics/accountOverviewMetrics";
 import {
   drawIntradaySparkline,
   createHiDpiSparklineCanvas,
 } from "../../trade_holdings/holding_table/sparkline/SparklineRenderer";
 import type { IntradaySparklineData } from "../../trade_holdings/holding_table/sparkline/IntradaySparklineStore";
-import { SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+import { SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 
 export function renderTotals(
   overview: AccountOverviewMetrics,

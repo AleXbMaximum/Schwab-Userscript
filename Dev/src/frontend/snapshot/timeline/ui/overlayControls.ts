@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { INDEX_OVERLAY_OPTIONS } from "../timelineConstants";
 import { summarizeOverlaySelection } from "../data/overlayBuilder";
 import {
@@ -6,7 +6,7 @@ import {
   DS_SPACING,
   DS_RADIUS,
   DS_LINE_HEIGHT,
-} from "../../../components/core/theme";
+} from "../../../components/core/styles/theme";
 
 const PILL_STYLE =
   `padding: ${DS_SPACING.sm} ${DS_SPACING.md};` +

@@ -1,16 +1,16 @@
-import { ds_signColorRaw, DS_COLORS } from "../../components/core/theme";
-import type { AccountOverviewMetrics } from "backend/computation/holdings/accountOverviewMetrics";
+import { ds_signColorRaw, DS_COLORS } from "../../components/core/styles/theme";
+import type { AccountOverviewMetrics } from "backend/computation/holdings/metrics/accountOverviewMetrics";
 import {
   formatPct,
   formatCurrencyLocale as fmtCurrencyLocale,
   formatSignedCurrencyLocale,
-} from "shared/utils/formatters";
+} from "shared/utils/format/formatters";
 import {
   isShareMasked,
   shareScaleValue,
   SHARE_MASKED_TEXT,
-} from "shared/utils/globalShareMode";
-import type { BalancesSnapshot } from "../../../backend/core/network/schwab/balances";
+} from "shared/utils/domain/globalShareMode";
+import type { BalancesSnapshot } from "../../../backend/core/network/schwab/endpoints/balances";
 
 /** Format a portfolio value with share-mode masking/scaling. */
 function fmtPV(v: number | null | undefined, decimals = 0): string {

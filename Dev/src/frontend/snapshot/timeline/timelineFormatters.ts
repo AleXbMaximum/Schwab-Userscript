@@ -1,10 +1,10 @@
 import {
   formatPct,
   formatSignedCurrencyLocale,
-} from "shared/utils/formatters";
+} from "shared/utils/format/formatters";
 import type { SnapshotMetricDef } from "./timelineTypes";
 import { APP_TIMEZONE } from "../../../shared/utils/time";
-import { isShareMasked, SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+import { isShareMasked, SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 
 export const signedCurrency = (v: number, decimals = 0): string =>
   formatSignedCurrencyLocale(v, { decimals });

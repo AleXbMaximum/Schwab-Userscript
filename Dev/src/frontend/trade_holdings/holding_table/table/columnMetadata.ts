@@ -1,5 +1,5 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
-import { HOLDINGS_TABLE_COLUMNS } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
+import { HOLDINGS_TABLE_COLUMNS } from "../../../../shared/types/holdingsTableColumns";
 
 const BASE_COLUMNS = HOLDINGS_TABLE_COLUMNS;
 export const BASE_COL_LABELS = BASE_COLUMNS.map((c) => c.label);

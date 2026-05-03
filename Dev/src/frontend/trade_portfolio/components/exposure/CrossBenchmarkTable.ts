@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { BETA_BENCHMARKS } from "../../../../backend/computation/beta/types";
 import {
   type TableEntry,

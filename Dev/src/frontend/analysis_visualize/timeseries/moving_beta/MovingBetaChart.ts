@@ -1,10 +1,10 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import {
   DS_COMPONENTS,
   DS_TYPOGRAPHY,
   DS_BUTTONS,
-} from "../../../components/core/theme";
-import { createPillGroup } from "../../../components/core/pillGroup";
+} from "../../../components/core/styles/theme";
+import { createPillGroup } from "../../../components/core/builders/pillGroup";
 import { chartManager } from "frontend/charts/ChartManager";
 import {
   CHART_COLORS,

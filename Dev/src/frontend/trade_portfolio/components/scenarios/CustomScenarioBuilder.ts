@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import type { BetaFactorScenarioInput } from "../../../../backend/computation/risk/RiskMetricsCalculator";
 import { computeLinkedBenchmarkMoves } from "../../../../backend/computation/beta/linkedBenchmark";
 import type { ScenarioCardPayload } from "./ScenarioCardPanel";

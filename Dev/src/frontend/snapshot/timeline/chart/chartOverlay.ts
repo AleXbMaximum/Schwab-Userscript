@@ -1,4 +1,4 @@
-import { ds_signColorRaw } from "../../../components/core/theme";
+import { ds_signColorRaw } from "../../../components/core/styles/theme";
 import type { AccountHistoryPoint } from "../../../../backend/core/db/account/accountHistoryTypes";
 import type { SnapshotMetricDef, IndexOverlayLine } from "../timelineTypes";
 import { computeSMA } from "../data/dataUtils";

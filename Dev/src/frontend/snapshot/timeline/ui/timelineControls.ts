@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { SNAPSHOT_METRICS, TIME_RANGES } from "../timelineConstants";
 import { SMA_OPTIONS } from "../timelinePrefs";
 import {
@@ -11,7 +11,7 @@ import {
   DS_SPACING,
   DS_RADIUS,
   DS_LINE_HEIGHT,
-} from "../../../components/core/theme";
+} from "../../../components/core/styles/theme";
 
 // ── Shared pill token ──────────────────────────────────────────────
 const PILL_BASE =

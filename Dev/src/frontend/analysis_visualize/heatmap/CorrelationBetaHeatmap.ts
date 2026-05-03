@@ -1,12 +1,12 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_COLORS } from "../../components/core/theme";
-import { createPillGroup } from "../../components/core/pillGroup";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_COLORS } from "../../components/core/styles/theme";
+import { createPillGroup } from "../../components/core/builders/pillGroup";
 import { CHART_COLORS } from "frontend/charts/ChartTheme";
 import { createCorrelationHeatmap } from "frontend/charts/types/HeatmapFactory";
 import type { HeatmapChartHandle } from "frontend/charts/types/HeatmapTypes";
 import type { BetaHorizon } from "../../../backend/computation/beta/types";
 import type { ChartDataService } from "../../../backend/core/network/chart/ChartDataService";
-import type { OHLCVBar } from "../../../shared/utils/chartDataTypes";
+import type { OHLCVBar } from "../../../shared/types/chartData";
 import {
   createAxisTickerManager,
   type AxisTickerState,

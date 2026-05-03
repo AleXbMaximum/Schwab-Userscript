@@ -1,4 +1,4 @@
-import { formatSignedCurrencyLocale } from "shared/utils/formatters";
+import { formatSignedCurrencyLocale } from "shared/utils/format/formatters";
 
 export const formatOptionSymbol = (symbol: string): string => {
   const match = symbol.match(/^.+?\s+(\d{2})\/(\d{2})\/(\d{4})\s+(.+)$/);

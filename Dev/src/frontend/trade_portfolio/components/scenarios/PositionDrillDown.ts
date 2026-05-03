@@ -1,8 +1,8 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, ds_signColorRaw } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, ds_signColorRaw } from "../../../components/core/styles/theme";
 import type { BetaFactorPositionPnl } from "../../../../backend/computation/risk/RiskMetricsCalculator";
-import { formatCurrencyLocale as fmtCurrencyLocale } from "shared/utils/formatters";
-import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/globalShareMode";
+import { formatCurrencyLocale as fmtCurrencyLocale } from "shared/utils/format/formatters";
+import { isShareMasked, shareScaleValue, SHARE_MASKED_TEXT } from "shared/utils/domain/globalShareMode";
 
 const fmtPnl = (v: number): string =>
   isShareMasked() ? SHARE_MASKED_TEXT : fmtCurrencyLocale(shareScaleValue(v) as number, 0);

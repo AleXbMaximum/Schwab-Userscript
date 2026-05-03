@@ -1,5 +1,5 @@
 import type{ HoldingsViewCtx } from "shared/types/core";
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import {
   createSettingsPopoverScaffold,
   createSettingsPopoverController,

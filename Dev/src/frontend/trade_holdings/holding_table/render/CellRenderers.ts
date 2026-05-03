@@ -1,10 +1,10 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import {
   SIGN_COLOR_COLUMNS,
   INVERT_FOR_SHORT_COLUMNS,
   INVERT_FOR_SHORT_SUMMARY_COLUMNS,
 } from "../table/columnMetadata";
-import { DS_COLORS } from "../../../components/core/theme";
+import { DS_COLORS } from "../../../components/core/styles/theme";
 import { createHiDpiSparklineCanvas } from "../sparkline/SparklineRenderer";
 import type { AssetBadges } from "../types";
 

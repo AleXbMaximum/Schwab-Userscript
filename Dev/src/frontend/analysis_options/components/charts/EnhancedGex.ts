@@ -1,9 +1,9 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { createChartPanel } from "frontend/charts/chartPanel";
 import { niceLinearScale, niceStrikeTicks } from "frontend/charts/ChartTheme";
 import { OPTIONS_SEMANTIC_COLORS as C } from "frontend/charts/ChartTheme";
 import { formatTimestampCT } from "shared/utils/time";
-import { formatCompactDollar, formatStrike } from "shared/utils/formatters";
+import { formatCompactDollar, formatStrike } from "shared/utils/format/formatters";
 import type { GexAnalytics, GreeksBasis, KeyLevelsLadderData } from "backend/computation/options/types";
 import { ladderValue } from "frontend/charts/ChartUtils";
 import { createSpotPlugin } from "../spotPricePlugin";

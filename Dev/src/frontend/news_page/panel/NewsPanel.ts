@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { createPillGroup } from "../../components/core/pillGroup";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { createPillGroup } from "../../components/core/builders/pillGroup";
 import { newsService } from "backend/services/news/NewsService";
 import {
   getNewsItemSymbols,

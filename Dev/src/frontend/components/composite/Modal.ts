@@ -9,7 +9,7 @@
  * straight inline styles wired to existing Schwaber CSS variables.
  */
 
-import { ui_createElement } from "../core/createElement";
+import { ui_createElement } from "../core/builders/createElement";
 import { cx } from "./cx";
 
 export type ModalSize = "sm" | "md" | "lg";

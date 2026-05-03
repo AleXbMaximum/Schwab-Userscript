@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { createPillGroup } from "frontend/components/core/pillGroup";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { createPillGroup } from "frontend/components/core/builders/pillGroup";
 import { baseChartOptions, TIME_X_AXIS, yAxis, niceLinearScale } from "frontend/charts/ChartTheme";
 import { createLegacyChartPanel, type ChartPanelResult } from "frontend/charts/chartPanel";
 import { OPTIONS_SEMANTIC_COLORS } from "frontend/charts/ChartTheme";

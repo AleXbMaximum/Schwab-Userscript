@@ -2,8 +2,8 @@ import {
   createSectionLayout,
   type GenericSectionLayoutResult,
   type SectionConfig,
-} from "../../components/core/sectionLayout";
-import { DS_COLORS } from "../../components/core/theme";
+} from "../../components/core/builders/sectionLayout";
+import { DS_COLORS } from "../../components/core/styles/theme";
 import type { SectionId } from "../types";
 
 export type SectionLayoutResult = GenericSectionLayoutResult<SectionId>;

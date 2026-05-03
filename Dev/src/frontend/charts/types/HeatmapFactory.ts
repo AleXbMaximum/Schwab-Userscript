@@ -1,5 +1,5 @@
 import { CHART_COLORS } from "../ChartTheme";
-import { formatCurrencyLocale } from "shared/utils/formatters";
+import { formatCurrencyLocale } from "shared/utils/format/formatters";
 import type { HeatmapChartHandle } from "./HeatmapTypes";
 import { createHeatmapChart } from "./HeatmapChart";
 

@@ -1,10 +1,10 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
-import { createPillGroup } from "../../../components/core/pillGroup";
-import { createTooltipHost } from "shared/utils/tooltipHost";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
+import { createPillGroup } from "../../../components/core/builders/pillGroup";
+import { createTooltipHost } from "shared/utils/dom/tooltipHost";
 import { traceRoundRect, setupCanvas } from "frontend/charts/ChartUtils";
 import { CHART_FONTS } from "frontend/charts/ChartTheme";
-import { formatCompactNumber } from "shared/utils/formatters";
+import { formatCompactNumber } from "shared/utils/format/formatters";
 import type { ActivitySurfaceData } from "backend/computation/options/types";
 import { createRenderFrame } from "../renderFrameController";
 import { getFocusedLevels, subscribeFocusedLevels } from "../../focus/focusStrike";

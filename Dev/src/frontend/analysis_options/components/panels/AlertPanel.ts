@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../../components/core/createElement";
+import { ui_createElement } from "../../../components/core/builders/createElement";
 import { attachLiquidGlassRim } from "../../../components/core/axTheme/liquidGlass";
 import type { AlertItem, SectionId } from "../../types";
 

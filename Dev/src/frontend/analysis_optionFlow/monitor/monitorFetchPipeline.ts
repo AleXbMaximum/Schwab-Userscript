@@ -5,9 +5,9 @@
  * so the controller stays focused on lifecycle and listeners.
  */
 
-import { fetchOptionChains } from "../../../backend/core/network/schwab/options";
+import { fetchOptionChains } from "../../../backend/core/network/schwab/endpoints/options";
 import { logService } from "../../../shared/log/core/LogService";
-import { pruneLowOIExpirations } from "shared/utils/optionsChains";
+import { pruneLowOIExpirations } from "shared/utils/domain/optionsChains";
 import type { OptionsChainsResponse } from "shared/types/options";
 import type { ExpirySelectionContext } from "backend/computation/options/monitor/etl/ExpiryMetricsETL";
 

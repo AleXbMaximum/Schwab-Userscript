@@ -1,4 +1,4 @@
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 
 export function toolbarBtn(label: string, icon: string): HTMLButtonElement {
   const btn = ui_createElement("button", {

@@ -1,6 +1,5 @@
 import type{ DerivedMetricsRow, WarningCell } from "shared/types/derived";
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
-import { isOption } from "../../../../shared/utils/holdingsKeys";
+import { isOption } from "../../../../shared/utils/domain/holdingsKeys";
 import { toFiniteNumberOrNull as asNumberOrNull } from "../../../../backend/core/network/schwab/parsing/numberParsers";
 import {
   formatOptionSymbol,
@@ -8,30 +7,24 @@ import {
   formatPlainOrDash,
   formatQty,
   normalizeSingleLine,
-} from "../../formatters";
-import { formatPct } from "shared/utils/formatters";
-import {
-  isShareMasked,
-  shareScaleValue,
-  SHARE_MASKED_TEXT,
-} from "shared/utils/globalShareMode";
+} from "./cellFormatters";
+import { formatPct } from "shared/utils/format/formatters";
 import { getVal } from "../utils/valueAccess";
 import {
   DASH,
-  OPTION_ONLY_COLUMNS,
-  SUMMARY_ONLY_COLUMNS,
-  SUMMARY_SUPPRESS_COLUMNS,
   formatGreek,
   formatIntOrDash,
   formatNumOrDash,
   formatPctOrDash,
 } from "./shared";
-
-/** Display-level aliases for verbose Schwab labels. */
-const DISPLAY_SYMBOL_ALIASES: Record<string, string> = {
-  "Futures Positions Market Value": "FMktV",
-  "Futures Cash": "FCash",
-};
+import {
+  DISPLAY_SYMBOL_ALIASES,
+  computeMarginReqDisplay,
+  extractSummaryTotals,
+  makeColumnGates,
+  makeShareModeHelpers,
+} from "./holdingsRowContext";
+import { formatSensitivityCells } from "./holdingsRowSensitivityCells";
 
 export function formatHoldingsRowDisplayValues(
   d: any,
@@ -85,74 +78,29 @@ export function formatHoldingsRowDisplayValues(
   const derivedAny = derived as any;
   const isSummaryRow = !!(d as any)?.__isUnderlyingSummary;
 
-  const marginReqDisplay = (() => {
-    const masked = isShareMasked();
-    if (isSummaryRow) {
-      const aggMargin =
-        derivedAny?.totalMarginReqDol ?? derivedAny?.marginReqDol;
-      if (aggMargin == null) return DASH;
-      if (masked) return SHARE_MASKED_TEXT;
-      return formatCurrency(shareScaleValue(aggMargin), { decimals: 2 });
-    }
-    if (derivedAny?.marginReqDol != null) {
-      if (masked) return SHARE_MASKED_TEXT;
-      return formatCurrency(shareScaleValue(derivedAny.marginReqDol), {
-        decimals: 2,
-      });
-    }
-    const rawMarginVal =
-      getVal(d, "marginReq.val") ?? getVal(d, "marginRequirement.val");
-    if (rawMarginVal != null && typeof rawMarginVal === "number") {
-      if (masked) return SHARE_MASKED_TEXT;
-      return formatCurrency(shareScaleValue(rawMarginVal), { decimals: 2 });
-    }
-    return DASH;
-  })();
+  const marginReqDisplay = computeMarginReqDisplay(d, derivedAny, isSummaryRow);
 
   const peRatio = getVal(d, "peRatio.val");
   const divYield = getVal(d, "dividendYield.val") ?? getVal(d, "divYield.val");
   const openInterestDisplay = formatIntOrDash(getVal(d, "openInterest.val"));
 
-  const summaryDelta = isSummaryRow
-    ? (derivedAny?.totalDeltaShares ?? derivedAny?.deltaShares)
-    : null;
-  const summaryGamma = isSummaryRow
-    ? (derivedAny?.totalGammaByUnderlying ?? derivedAny?.totalGammaSharesPerDol)
-    : null;
-  const summaryTheta = isSummaryRow
-    ? (derivedAny?.totalThetaByUnderlying ?? derivedAny?.totalThetaPerDay)
-    : null;
-  const summaryVega = isSummaryRow
-    ? (derivedAny?.totalVegaByUnderlying ?? derivedAny?.totalVegaPerVolPoint)
-    : null;
-  const summaryRho = isSummaryRow
-    ? (derivedAny?.totalRhoByUnderlying ?? derivedAny?.totalRhoPer1pctRate)
-    : null;
-  const summaryMarketValue = isSummaryRow ? derivedAny?.totalMarketValue : null;
-  const summaryCostBasis = isSummaryRow ? derivedAny?.totalCostBasis : null;
+  const totals = extractSummaryTotals(derivedAny, isSummaryRow);
+  const summaryDelta = totals.delta;
+  const summaryGamma = totals.gamma;
+  const summaryTheta = totals.theta;
+  const summaryVega = totals.vega;
+  const summaryRho = totals.rho;
+  const summaryMarketValue = totals.marketValue;
+  const summaryCostBasis = totals.costBasis;
 
-  const summaryOnly = (colId: HoldingsTableColumnId, value: string): string =>
-    !isSummaryRow && SUMMARY_ONLY_COLUMNS.has(colId) ? DASH : value;
-
-  const suppressOnSummary = (
-    colId: HoldingsTableColumnId,
-    value: string,
-  ): string =>
-    isSummaryRow && SUMMARY_SUPPRESS_COLUMNS.has(colId) ? DASH : value;
-
-  const optionOnly = (colId: HoldingsTableColumnId, value: string): string =>
-    !isSummaryRow && !isOptionRow && OPTION_ONLY_COLUMNS.has(colId)
-      ? DASH
-      : value;
+  const { summaryOnly, suppressOnSummary, optionOnly } = makeColumnGates(
+    isSummaryRow,
+    isOptionRow,
+  );
 
   const s = skip;
 
-  // Share mode helpers for position-value columns (not stock prices).
-  // pv() masks output in dollarOff mode; sv() scales numbers in 10x/custom.
-  const _masked = isShareMasked();
-  const pv = (formatted: string): string =>
-    _masked ? SHARE_MASKED_TEXT : formatted;
-  const sv = shareScaleValue;
+  const { pv, sv } = makeShareModeHelpers();
 
   return [
     /* 0  */ s?.(0) ? DASH : displaySymbol,
@@ -321,166 +269,19 @@ export function formatHoldingsRowDisplayValues(
           decimals: 2,
           showSign: true,
         }),
-    /* 42 */ s?.(42)
-      ? DASH
-      : pv(
-          formatNumOrDash(
-            sv(
-              isSummaryRow
-                ? (derivedAny?.totalDeltaShares ?? derivedAny?.deltaShares)
-                : derivedAny?.deltaShares,
-            ),
-            { decimals: 4, showSign: true },
-          ),
-        ),
-    /* 43 */ s?.(43)
-      ? DASH
-      : optionOnly(
-          "gammaSharesPerDol",
-          pv(
-            formatNumOrDash(
-              sv(isSummaryRow ? summaryGamma : derivedAny?.gammaSharesPerDol),
-              { decimals: 4, showSign: true },
-            ),
-          ),
-        ),
-    /* 44 */ s?.(44)
-      ? DASH
-      : optionOnly(
-          "absGammaSharesPerDol",
-          pv(
-            formatNumOrDash(sv(derivedAny?.absGammaSharesPerDol), {
-              decimals: 4,
-            }),
-          ),
-        ),
-    /* 45 */ s?.(45)
-      ? DASH
-      : optionOnly(
-          "thetaPerDay",
-          pv(
-            formatNumOrDash(
-              sv(isSummaryRow ? summaryTheta : derivedAny?.thetaPerDay),
-              { decimals: 4, showSign: true },
-            ),
-          ),
-        ),
-    /* 46 */ s?.(46)
-      ? DASH
-      : optionOnly(
-          "vegaPerVolPoint",
-          pv(
-            formatNumOrDash(
-              sv(isSummaryRow ? summaryVega : derivedAny?.vegaPerVolPoint),
-              { decimals: 4, showSign: true },
-            ),
-          ),
-        ),
-    /* 47 */ s?.(47)
-      ? DASH
-      : optionOnly(
-          "absVegaPerVolPoint",
-          pv(
-            formatNumOrDash(sv(derivedAny?.absVegaPerVolPoint), {
-              decimals: 4,
-            }),
-          ),
-        ),
-    /* 48 */ s?.(48)
-      ? DASH
-      : optionOnly(
-          "rhoPer1pctRate",
-          pv(
-            formatNumOrDash(
-              sv(isSummaryRow ? summaryRho : derivedAny?.rhoPer1pctRate),
-              { decimals: 4, showSign: true },
-            ),
-          ),
-        ),
-    /* 49 */ s?.(49)
-      ? DASH
-      : suppressOnSummary(
-          "marginUsageRatioPct",
-          formatPctOrDash(derivedAny?.marginUsageRatioPct, {
-            decimals: 2,
-            showSign: true,
-          }),
-        ),
-    /* 50 */ s?.(50)
-      ? DASH
-      : formatNumOrDash(derivedAny?.deltaSharesPerMargin, {
-          decimals: 4,
-          showSign: true,
-        }),
-    /* 51 */ s?.(51)
-      ? DASH
-      : formatNumOrDash(derivedAny?.deltaNotionalPerMargin, {
-          decimals: 4,
-          showSign: true,
-        }),
-    /* 52 */ s?.(52)
-      ? DASH
-      : optionOnly(
-          "thetaPerMargin",
-          formatNumOrDash(derivedAny?.thetaPerMargin, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
-    /* 53 */ s?.(53)
-      ? DASH
-      : optionOnly(
-          "vegaPerMargin",
-          formatNumOrDash(derivedAny?.vegaPerMargin, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
-    /* 54 */ s?.(54)
-      ? DASH
-      : optionOnly(
-          "thetaOnMargin",
-          formatNumOrDash(derivedAny?.thetaOnMargin, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
-    /* 55 */ s?.(55)
-      ? DASH
-      : optionOnly(
-          "vegaOnMargin",
-          formatNumOrDash(derivedAny?.vegaOnMargin, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
-    /* 56 */ s?.(56)
-      ? DASH
-      : optionOnly(
-          "gammaOnMargin",
-          formatNumOrDash(derivedAny?.gammaOnMargin, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
-    /* 57 */ s?.(57)
-      ? DASH
-      : optionOnly(
-          "carryPerVega",
-          formatNumOrDash(derivedAny?.carryPerVega, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
-    /* 58 */ s?.(58)
-      ? DASH
-      : optionOnly(
-          "carryPerGamma",
-          formatNumOrDash(derivedAny?.carryPerGamma, {
-            decimals: 4,
-            showSign: true,
-          }),
-        ),
+    ...formatSensitivityCells({
+      s,
+      derivedAny,
+      isSummaryRow,
+      summaryGamma,
+      summaryTheta,
+      summaryVega,
+      summaryRho,
+      pv,
+      sv,
+      optionOnly,
+      suppressOnSummary,
+    }),
     /* 59 */ s?.(59)
       ? DASH
       : summaryOnly(

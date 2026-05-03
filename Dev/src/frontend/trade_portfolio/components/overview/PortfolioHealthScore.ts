@@ -1,5 +1,5 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_COLORS } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_COLORS } from "../../../components/core/styles/theme";
 import type { RiskMetrics } from "../../../../backend/computation/risk/RiskMetricsCalculator";
 import type{ PortfolioAgg } from "../../../../shared/types/derived";
 

@@ -1,7 +1,7 @@
 import type { LinkedTargetValues } from "../../../../backend/computation/rebalance/RebalanceCalculator";
 import { REBALANCE_MODES } from "../../../../backend/computation/rebalance/RebalanceCalculator";
 import type{ RebalanceAnchorMode, RebalanceModeId } from "../../../../shared/types/core";
-import { DS_COLORS } from "../../../components/core/theme";
+import { DS_COLORS } from "../../../components/core/styles/theme";
 import {
   CURRENT_MODES,
   TARGET_MODES,

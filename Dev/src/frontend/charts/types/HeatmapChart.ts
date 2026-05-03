@@ -1,14 +1,27 @@
-import { CHART_COLORS, CHART_FONTS, getHeatmapColor } from "../ChartTheme";
+import { CHART_COLORS } from "../ChartTheme";
 import { isDarkTheme } from "frontend/components/core/axTheme/controller";
 import { withShadow } from "frontend/components/core/axTheme/renderMode/canvasShadow";
-import { clamp, normalize } from "shared/utils/math/numeric";
 import {
   formatCompactDollar,
   formatCurrencyLocale,
   formatPct,
-} from "shared/utils/formatters";
-import { createTooltipHost } from "shared/utils/tooltipHost";
+} from "shared/utils/format/formatters";
+import { createTooltipHost } from "shared/utils/dom/tooltipHost";
 import type { HeatmapOptions, HeatmapChartHandle } from "./HeatmapTypes";
+import {
+  interpolateSpotX,
+  interpolateSpotY,
+  traceRoundRect,
+} from "./heatmapInterpolation";
+import {
+  renderHeatmap,
+  HEATMAP_CELL_GAP,
+  HEATMAP_CELL_RADIUS,
+} from "./heatmapRenderer";
+import {
+  drawColorScale as drawColorScaleDecoration,
+  drawSpotLine as drawSpotLineDecoration,
+} from "./heatmapDecorations";
 
 export function createHeatmapChart(opts: HeatmapOptions): HeatmapChartHandle {
   return new HeatmapChart(opts);
@@ -39,8 +52,6 @@ class HeatmapChart implements HeatmapChartHandle {
   public get colHeaderHeight(): number {
     return this.options.rotateColumnLabels ? 90 : 50;
   }
-  private static readonly CELL_GAP = 1;
-  private static readonly CELL_RADIUS = 2;
   // Theme-aware grid background — getter so each draw resolves the current theme.
   private get gridBg(): string {
     return isDarkTheme() ? "rgba(255, 255, 255, 0.035)" : "rgba(0, 0, 0, 0.035)";
@@ -300,8 +311,8 @@ class HeatmapChart implements HeatmapChartHandle {
     const { cellHeight } = this.options;
     const startX = this.rowLabelW;
     const startY = this.gridStartY;
-    const gap = HeatmapChart.CELL_GAP;
-    const rad = HeatmapChart.CELL_RADIUS;
+    const gap = HEATMAP_CELL_GAP;
+    const rad = HEATMAP_CELL_RADIUS;
 
     if (this.hoveredCell) {
       const { row, col } = this.hoveredCell;
@@ -477,325 +488,25 @@ class HeatmapChart implements HeatmapChartHandle {
   }
 
   private render(): void {
-    const { ctx } = this;
-    const {
-      rows,
-      columns,
-      data,
-      cellWidth,
-      cellHeight,
-      showValues,
-      valueFormatter,
-    } = this.options;
-
-    const dpr = window.devicePixelRatio || 1;
-    const canvasW = this.canvas.width / dpr;
-    const canvasH = this.canvas.height / dpr;
-
-    ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    ctx.clearRect(0, 0, canvasW, canvasH);
-
-    const rowLabelWidth = this.rowLabelW;
-
-    const startX = rowLabelWidth;
-    const startY = this.gridStartY;
-
-    const gap = HeatmapChart.CELL_GAP;
-    const rad = HeatmapChart.CELL_RADIUS;
-
-    // Grid background so cell gaps are visible
-    const gridW = this.totalGridWidth;
-    const gridH = rows.length * cellHeight;
-    ctx.fillStyle = this.gridBg;
-    this.traceRoundRect(startX, startY, gridW, gridH, 4);
-    ctx.fill();
-
-    // Column header labels
-    ctx.fillStyle = CHART_COLORS.textSecondary;
-    ctx.font = CHART_FONTS.heatmapLight;
-    if (this.options.rotateColumnLabels) {
-      // textAlign 'left' + rotate(-π/4): text starts at grid edge, extends upward-right
-      for (let col = 0; col < columns.length; col++) {
-        const centerX = startX + this.colX(col) + this.colW(col) / 2;
-        ctx.save();
-        ctx.translate(centerX, startY - 6);
-        ctx.rotate(-Math.PI / 4);
-        ctx.textAlign = "left";
-        ctx.textBaseline = "bottom";
-        ctx.fillText(columns[col], 0, 0);
-        ctx.restore();
-      }
-    } else {
-      // Horizontal with adaptive spacing for variable widths
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      const minLabelSpacing = 60;
-      let lastLabelX = -Infinity;
-      for (let col = 0; col < columns.length; col++) {
-        const centerX = startX + this.colX(col) + this.colW(col) / 2;
-        if (
-          centerX - lastLabelX < minLabelSpacing &&
-          col !== 0 &&
-          col !== columns.length - 1
-        )
-          continue;
-        ctx.fillText(columns[col], centerX, startY - 6);
-        lastLabelX = centerX;
-      }
-    }
-
-    for (let row = 0; row < rows.length; row++) {
-      for (let col = 0; col < columns.length; col++) {
-        const value = data[row][col];
-        const cw = this.colW(col);
-        const x = startX + this.colX(col);
-        const y = startY + row * cellHeight;
-
-        const normalizedValue = this.normalizeValue(value);
-        const color = getHeatmapColor(normalizedValue);
-
-        ctx.fillStyle = color;
-        this.traceRoundRect(
-          x + gap,
-          y + gap,
-          cw - gap * 2,
-          cellHeight - gap * 2,
-          rad,
-        );
-        ctx.fill();
-
-        if (showValues) {
-          ctx.fillStyle = this.getTextColor(normalizedValue);
-          ctx.font = CHART_FONTS.heatmap;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          const displayValue =
-            Math.abs(value) > 1000
-              ? this.formatCompactValue(value)
-              : valueFormatter(value);
-          ctx.fillText(displayValue, x + cw / 2, y + cellHeight / 2);
-        }
-      }
-    }
-
-    const hCol = this.options.highlightCol;
-    if (hCol >= 0 && hCol < columns.length) {
-      const hcw = this.colW(hCol);
-      const hx = startX + this.colX(hCol) + hcw / 2;
-      ctx.save();
-      // Subtle column highlight strip
-      ctx.fillStyle = "rgba(0, 122, 255, 0.06)";
-      ctx.fillRect(
-        startX + this.colX(hCol),
-        startY,
-        hcw,
-        rows.length * cellHeight,
-      );
-      ctx.setLineDash([6, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(0, 122, 255, 0.5)";
-      ctx.beginPath();
-      ctx.moveTo(hx, startY);
-      ctx.lineTo(hx, startY + rows.length * cellHeight);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      // Label pill
-      ctx.fillStyle = CHART_COLORS.info;
-      ctx.font = CHART_FONTS.axisBold;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillText(this.options.highlightColLabel, hx, startY - 20);
-      ctx.beginPath();
-      ctx.moveTo(hx - 4, startY - 18);
-      ctx.lineTo(hx + 4, startY - 18);
-      ctx.lineTo(hx, startY - 12);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-
-    const hRow = this.options.highlightRow;
-    if (hRow >= 0 && hRow < rows.length) {
-      const hy = startY + hRow * cellHeight + cellHeight / 2;
-      ctx.save();
-      // Subtle row highlight strip
-      ctx.fillStyle = "rgba(0, 122, 255, 0.06)";
-      ctx.fillRect(
-        startX,
-        startY + hRow * cellHeight,
-        this.totalGridWidth,
-        cellHeight,
-      );
-      ctx.setLineDash([6, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(0, 122, 255, 0.5)";
-      ctx.beginPath();
-      ctx.moveTo(startX, hy);
-      ctx.lineTo(startX + this.totalGridWidth, hy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-    }
-
-    const summaryRowData = this.options.summaryRow;
-    if (summaryRowData.length > 0) {
-      const rowGap = 8;
-      const summaryRowY = startY + rows.length * cellHeight + rowGap;
-
-      let rowAbsMax = 0;
-      for (const v of summaryRowData) {
-        if (Number.isFinite(v)) rowAbsMax = Math.max(rowAbsMax, Math.abs(v));
-      }
-
-      for (
-        let col = 0;
-        col < columns.length && col < summaryRowData.length;
-        col++
-      ) {
-        const value = summaryRowData[col];
-        const cw = this.colW(col);
-        const x = startX + this.colX(col);
-        const norm = rowAbsMax > 0 ? clamp(value / rowAbsMax, -1, 1) : 0;
-        const color = getHeatmapColor(norm);
-
-        ctx.fillStyle = color;
-        this.traceRoundRect(
-          x + gap,
-          summaryRowY + gap,
-          cw - gap * 2,
-          cellHeight - gap * 2,
-          rad,
-        );
-        ctx.fill();
-
-        if (this.options.summaryRowShowValues) {
-          ctx.fillStyle = this.getTextColor(norm);
-          ctx.font = CHART_FONTS.axisSemibold;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(
-            this.formatCompactValue(value),
-            x + cw / 2,
-            summaryRowY + cellHeight / 2,
-          );
-        }
-      }
-    }
-
-    const summary = this.options.summaryColumn;
-    if (summary.length > 0 && this.options.drawSummaryColumn) {
-      const gapWidth = 8;
-      const summaryX = startX + this.totalGridWidth + gapWidth;
-
-      ctx.fillStyle = CHART_COLORS.textSecondary;
-      ctx.font = CHART_FONTS.heatmap;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillText(
-        this.options.summaryColumnLabel,
-        summaryX + cellWidth / 2,
-        startY - 6,
-      );
-
-      let sumAbsMax = 0;
-      for (const v of summary) {
-        if (Number.isFinite(v)) sumAbsMax = Math.max(sumAbsMax, Math.abs(v));
-      }
-
-      for (let row = 0; row < rows.length && row < summary.length; row++) {
-        const value = summary[row];
-        const x = summaryX;
-        const y = startY + row * cellHeight;
-        const norm = sumAbsMax > 0 ? clamp(value / sumAbsMax, -1, 1) : 0;
-        const color = getHeatmapColor(norm);
-
-        ctx.fillStyle = color;
-        this.traceRoundRect(
-          x + gap,
-          y + gap,
-          cellWidth - gap * 2,
-          cellHeight - gap * 2,
-          rad,
-        );
-        ctx.fill();
-
-        ctx.fillStyle = this.getTextColor(norm);
-        ctx.font = CHART_FONTS.heatmap;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const displayValue =
-          Math.abs(value) > 1000
-            ? this.formatCompactValue(value)
-            : this.options.valueFormatter(value);
-        ctx.fillText(displayValue, x + cellWidth / 2, y + cellHeight / 2);
-      }
-    }
-
-    this.drawSpotLine(startX, startY);
-
-    if (this.options.drawRowLabels) {
-      ctx.fillStyle = CHART_COLORS.textPrimary;
-      ctx.font = CHART_FONTS.rowLabel;
-      ctx.textAlign = "right";
-      ctx.textBaseline = "middle";
-      for (let row = 0; row < rows.length; row++) {
-        const y = startY + row * cellHeight + cellHeight / 2;
-        ctx.fillText(rows[row], startX - 10, y);
-      }
-    }
-
-    if (this.options.showColorScale) {
-      this.drawColorScale();
-    }
-
-    // Cache the base image for fast hover-only redraws
-    this.baseImageData = ctx.getImageData(
-      0,
-      0,
-      this.canvas.width,
-      this.canvas.height,
-    );
-
-    ctx.restore();
-
-    // Draw initial hover highlight if present
-    this.renderHoverOnly();
-  }
-
-  private normalizeValue(value: number): number {
-    if (this.options.colorScale === "diverging") {
-      if (!Number.isFinite(value)) return 0;
-
-      const rawMin = Number.isFinite(this.options.colorRangeMin)
-        ? this.options.colorRangeMin
-        : this.minValue;
-      const rawMax = Number.isFinite(this.options.colorRangeMax)
-        ? this.options.colorRangeMax
-        : this.maxValue;
-      const minBound = Math.min(rawMin, 0);
-      const maxBound = Math.max(rawMax, 0);
-
-      if (value >= 0) {
-        const positiveDenom =
-          maxBound > 0 ? maxBound : Math.max(Math.abs(this.maxValue), 1);
-        return clamp(value / positiveDenom, 0, 1);
-      }
-
-      const negativeDenom =
-        minBound < 0
-          ? Math.abs(minBound)
-          : Math.max(Math.abs(this.minValue), 1);
-      return clamp(value / negativeDenom, -1, 0);
-    } else {
-      return normalize(value, this.minValue, this.maxValue);
-    }
-  }
-
-  private getTextColor(normalizedValue: number): string {
-    const brightness = Math.abs(normalizedValue);
-    return brightness > 0.5 ? "#fff" : "#000";
+    renderHeatmap({
+      canvas: this.canvas,
+      ctx: this.ctx,
+      options: this.options,
+      minValue: this.minValue,
+      maxValue: this.maxValue,
+      totalGridWidth: this.totalGridWidth,
+      gridStartY: this.gridStartY,
+      rowLabelWidth: this.rowLabelW,
+      colX: (col) => this.colX(col),
+      colW: (col) => this.colW(col),
+      gridBg: this.gridBg,
+      setBaseImageData: (data) => {
+        this.baseImageData = data;
+      },
+      renderHoverOnly: () => this.renderHoverOnly(),
+      drawSpotLine: (sx, sy) => this.drawSpotLine(sx, sy),
+      drawColorScale: () => this.drawColorScale(),
+    });
   }
 
   private formatCompactValue(value: number): string {
@@ -809,22 +520,7 @@ class HeatmapChart implements HeatmapChartHandle {
     h: number,
     r: number,
   ): void {
-    const { ctx } = this;
-    ctx.beginPath();
-    if (r <= 0 || w < 2 * r || h < 2 * r) {
-      ctx.rect(x, y, w, h);
-    } else {
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + w - r, y);
-      ctx.arcTo(x + w, y, x + w, y + r, r);
-      ctx.lineTo(x + w, y + h - r);
-      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-      ctx.lineTo(x + r, y + h);
-      ctx.arcTo(x, y + h, x, y + h - r, r);
-      ctx.lineTo(x, y + r);
-      ctx.arcTo(x, y, x + r, y, r);
-    }
-    ctx.closePath();
+    traceRoundRect(this.ctx, x, y, w, h, r);
   }
 
   private drawColorScale(): void {
@@ -909,9 +605,7 @@ class HeatmapChart implements HeatmapChartHandle {
   }
 
   private formatScaleLabel(value: number): string {
-    if (!Number.isFinite(value)) return "";
-    if (Number.isInteger(value)) return String(value);
-    return Math.abs(value) < 10 ? value.toFixed(2) : value.toFixed(1);
+    return formatScaleLabel(value);
   }
 
   private drawSpotLine(startX: number, startY: number): void {
@@ -1017,21 +711,13 @@ class HeatmapChart implements HeatmapChartHandle {
     startX: number,
     _cellWidth: number,
   ): number | null {
-    if (colValues.length === 0) return null;
-    if (value <= colValues[0]) return startX + this.colW(0) / 2;
-    if (value >= colValues[colValues.length - 1]) {
-      const last = colValues.length - 1;
-      return startX + this.colX(last) + this.colW(last) / 2;
-    }
-    for (let i = 0; i < colValues.length - 1; i++) {
-      if (value >= colValues[i] && value <= colValues[i + 1]) {
-        const frac = (value - colValues[i]) / (colValues[i + 1] - colValues[i]);
-        const x1 = startX + this.colX(i) + this.colW(i) / 2;
-        const x2 = startX + this.colX(i + 1) + this.colW(i + 1) / 2;
-        return x1 + frac * (x2 - x1);
-      }
-    }
-    return null;
+    return interpolateSpotX(
+      value,
+      colValues,
+      startX,
+      (col) => this.colX(col),
+      (col) => this.colW(col),
+    );
   }
 
   private interpolateSpotY(
@@ -1040,34 +726,7 @@ class HeatmapChart implements HeatmapChartHandle {
     startY: number,
     cellHeight: number,
   ): number | null {
-    if (rowValues.length === 0) return null;
-
-    const first = rowValues[0];
-    const last = rowValues[rowValues.length - 1];
-    const lo = Math.min(first, last);
-    const hi = Math.max(first, last);
-    const ascending = first <= last;
-
-    if (value <= lo) {
-      const idx = ascending ? 0 : rowValues.length - 1;
-      return startY + idx * cellHeight + cellHeight / 2;
-    }
-    if (value >= hi) {
-      const idx = ascending ? rowValues.length - 1 : 0;
-      return startY + idx * cellHeight + cellHeight / 2;
-    }
-
-    for (let i = 0; i < rowValues.length - 1; i++) {
-      const v0 = rowValues[i];
-      const v1 = rowValues[i + 1];
-      if (value >= Math.min(v0, v1) && value <= Math.max(v0, v1)) {
-        const frac = (value - v0) / (v1 - v0);
-        const y1 = startY + i * cellHeight + cellHeight / 2;
-        const y2 = startY + (i + 1) * cellHeight + cellHeight / 2;
-        return y1 + frac * (y2 - y1);
-      }
-    }
-    return null;
+    return interpolateSpotY(value, rowValues, startY, cellHeight);
   }
 
   public update(

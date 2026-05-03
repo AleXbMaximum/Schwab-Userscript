@@ -1,4 +1,4 @@
-import { DS_COLORS } from "../../../components/core/theme";
+import { DS_COLORS } from "../../../components/core/styles/theme";
 import type { TimeAxisMapping } from "../timelineTypes";
 import type { NiceScaleResult } from "../../../../shared/utils/math/scale";
 import { formatMetricValue, formatTimeLabel } from "../timelineFormatters";

@@ -1,6 +1,6 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import { toFiniteNumberOrNull as asNumberOrNull } from "../../../../backend/core/network/schwab/parsing/numberParsers";
-import { formatNum, formatPct } from "shared/utils/formatters";
+import { formatNum, formatPct } from "shared/utils/format/formatters";
 
 export const SUMMARY_ONLY_COLUMNS = new Set<HoldingsTableColumnId>([
   "carryToStress",

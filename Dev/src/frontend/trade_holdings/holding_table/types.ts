@@ -5,7 +5,7 @@ import type{
   WarningState,
 } from "shared/types/derived";
 import type{ QuoteItem } from "shared/types/holdings";
-import type { HoldingsTableColumnId } from "shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "shared/types/holdingsTableColumns";
 
 export type SortState = {
   colId: HoldingsTableColumnId | null;

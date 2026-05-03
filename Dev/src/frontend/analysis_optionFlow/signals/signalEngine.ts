@@ -7,7 +7,7 @@ import type { SignalResult, SignalSeverity } from "./types";
 import { buildCaptureFrames } from "../components/chartData";
 import { OPTIONS_SEMANTIC_COLORS } from "frontend/charts/ChartTheme";
 import { percentileRank } from "shared/utils/math/statistics";
-import { formatPct } from "shared/utils/formatters";
+import { formatPct } from "shared/utils/format/formatters";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("compute");

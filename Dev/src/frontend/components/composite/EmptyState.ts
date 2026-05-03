@@ -5,7 +5,7 @@
  * Inline-styled port of AlexQuant's `composite/EmptyState/EmptyState.ts`.
  */
 
-import { ui_createElement } from "../core/createElement";
+import { ui_createElement } from "../core/builders/createElement";
 import { cx } from "./cx";
 
 export type EmptyStateVariant = "empty" | "error" | "loading";

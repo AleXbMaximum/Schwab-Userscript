@@ -11,7 +11,7 @@
  * and set their own wrapper padding.
  */
 
-import { ui_createElement } from "../core/createElement";
+import { ui_createElement } from "../core/builders/createElement";
 
 export type PageShellOptions = {
   /** Horizontal padding applied to every zone. Default `20`. */

@@ -13,7 +13,7 @@
  * driven by Schwaber's `newsService.getSourceHealth()` instead of Rust IPC.
  */
 
-import { ui_createElement } from "../../components/core/createElement";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import { newsService } from "../../../backend/services/news/NewsService";
 import type {
   NewsFetchSource,

@@ -1,11 +1,11 @@
-import { ui_createElement } from "../../components/core/createElement";
-import { DS_COLORS, DS_TYPOGRAPHY } from "../../components/core/theme";
+import { ui_createElement } from "../../components/core/builders/createElement";
+import { DS_COLORS, DS_TYPOGRAPHY } from "../../components/core/styles/theme";
 import type {
   AIFinalDecision,
   MarketDataBundle,
 } from "../../../backend/services/ai/types";
 import { formatTimeAgo } from "shared/utils/time";
-import { renderMarkdown } from "shared/utils/markdown";
+import { renderMarkdown } from "shared/utils/format/markdown";
 
 export function renderDecisionSummary(
   decision: AIFinalDecision,

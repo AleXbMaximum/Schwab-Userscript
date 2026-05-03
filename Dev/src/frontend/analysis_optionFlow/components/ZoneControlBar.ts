@@ -1,5 +1,5 @@
-import { ui_createElement } from "frontend/components/core/createElement";
-import { injectStylesheet } from "frontend/components/core/ui_builders";
+import { ui_createElement } from "frontend/components/core/builders/createElement";
+import { injectStylesheet } from "frontend/components/core/builders/ui_builders";
 import { getTodayDateCT, getDateOffsetCT, minutesToHHMM } from "shared/utils/time";
 import {
   CAPTURE_WINDOW_MIN,

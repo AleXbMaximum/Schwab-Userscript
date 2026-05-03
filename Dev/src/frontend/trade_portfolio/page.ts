@@ -1,5 +1,5 @@
-import { ui_createElement } from "../components/core/createElement";
-import { DS_TYPOGRAPHY } from "../components/core/theme";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_TYPOGRAPHY } from "../components/core/styles/theme";
 import type { HoldingsViewCtx } from "shared/types/core";
 import { RiskMetricsCalculator } from "backend/computation/risk/RiskMetricsCalculator";
 import type { BetaFactorScenarioInput } from "backend/computation/risk/RiskMetricsCalculator";

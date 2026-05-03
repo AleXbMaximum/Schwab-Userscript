@@ -2,7 +2,7 @@ import type{ HoldingsRow } from "shared/types/holdings";
 import {
   getHoldingsKey,
   getUnderlyingKey,
-} from "../../../../shared/utils/holdingsKeys";
+} from "../../../../shared/utils/domain/holdingsKeys";
 import type { TableUpdateContext } from "../types";
 
 const mapUnderlyingAggToDerived = (agg: any, opts?: { rowType?: string }) => {

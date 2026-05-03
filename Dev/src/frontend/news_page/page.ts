@@ -1,5 +1,5 @@
-import { ui_createElement } from "../components/core/createElement";
-import { DS_COLORS, DS_TYPOGRAPHY, DS_COMPONENTS } from "../components/core/theme";
+import { ui_createElement } from "../components/core/builders/createElement";
+import { DS_COLORS, DS_TYPOGRAPHY, DS_COMPONENTS } from "../components/core/styles/theme";
 import { newsService } from "backend/services/news/NewsService";
 import {
   getNewsItemSymbols,

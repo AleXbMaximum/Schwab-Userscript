@@ -1,6 +1,6 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_BUTTONS } from "../../../components/core/theme";
-import { createPillGroup } from "../../../components/core/pillGroup";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_COMPONENTS, DS_TYPOGRAPHY, DS_BUTTONS } from "../../../components/core/styles/theme";
+import { createPillGroup } from "../../../components/core/builders/pillGroup";
 import { chartManager } from "frontend/charts/ChartManager";
 import {
   CHART_COLORS,
@@ -11,8 +11,8 @@ import {
   TIME_X_AXIS,
 } from "frontend/charts/ChartTheme";
 import type { ChartDataService } from "../../../../backend/core/network/chart/ChartDataService";
-import type { ChartInterval } from "../../../../shared/utils/chartDataTypes";
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { ChartInterval } from "../../../../shared/types/chartData";
+import type { OHLCVBar } from "shared/types/chartData";
 
 export type DualTickerOverlayResult = HTMLElement & {
   cleanup?: () => void;

@@ -1,14 +1,14 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import {
   formatCurrency,
   formatSignedCurrencyFull,
-} from "../../formatters";
-import { formatPct } from "shared/utils/formatters";
+} from "./cellFormatters";
+import { formatPct } from "shared/utils/format/formatters";
 import {
   isShareMasked,
   shareScaleValue,
   SHARE_MASKED_TEXT,
-} from "shared/utils/globalShareMode";
+} from "shared/utils/domain/globalShareMode";
 import { formatNumOrDash, formatPctOrDash } from "./shared";
 
 export function formatGroupTotalsDisplayValues(

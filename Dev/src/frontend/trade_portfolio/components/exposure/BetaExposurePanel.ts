@@ -1,12 +1,12 @@
-import { ui_createElement } from "../../../components/core/createElement";
-import { DS_BUTTONS, DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/theme";
+import { ui_createElement } from "../../../components/core/builders/createElement";
+import { DS_BUTTONS, DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import { BETA_BENCHMARKS } from "../../../../backend/computation/beta/types";
 import { logService } from "../../../../shared/log/core/LogService";
 import {
   getShareMode,
   getCustomMultiplier,
   onShareModeChange,
-} from "../../../../shared/utils/globalShareMode";
+} from "../../../../shared/utils/domain/globalShareMode";
 
 import {
   type BetaPanelPayload,

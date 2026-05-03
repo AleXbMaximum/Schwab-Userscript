@@ -1,8 +1,8 @@
 import type { HoldingsViewCtx, SchedulerOverride } from "shared/types/core";
 import type { OrchestratorPhase } from "shared/utils/time";
-import type { PhaseSourceKey } from "backend/pipeline/PhaseManager";
-import { getPhaseSourceDefault } from "backend/pipeline/PhaseManager";
-import { ui_createElement } from "../../components/core/createElement";
+import type { PhaseSourceKey } from "backend/pipeline/orchestration/PhaseManager";
+import { getPhaseSourceDefault } from "backend/pipeline/orchestration/PhaseManager";
+import { ui_createElement } from "../../components/core/builders/createElement";
 import {
   createSettingsPopoverScaffold,
   createSettingsPopoverController,
@@ -26,7 +26,7 @@ import {
   resolveNonNegativeInterval,
   type PhaseStripController,
 } from "../../components/core/settingsFramework";
-import { ui_copyTextToClipboard } from "../../components/core/clipboard";
+import { ui_copyTextToClipboard } from "../../components/core/behaviors/clipboard";
 import { exportAllHistory, importAllHistory } from "backend/pipeline/snapshot/historyPersistence";
 
 type SparklineStoreLike = {

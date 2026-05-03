@@ -1,4 +1,4 @@
-import type { HoldingsTableColumnId } from "../../../../shared/holdingsTableColumns";
+import type { HoldingsTableColumnId } from "../../../../shared/types/holdingsTableColumns";
 import { NUMERIC_FLASH_COLUMNS } from "../table/columnMetadata";
 import { generateCellKey } from "./RowKeyGenerator";
 
