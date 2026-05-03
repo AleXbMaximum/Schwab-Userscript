@@ -5,7 +5,7 @@
  */
 
 import { ui_createElement } from "./createElement";
-import { DS_COMPONENTS } from "./theme";
+import { DS_COMPONENTS } from "../styles/theme";
 
 export interface CollapsibleOptions {
   headerChildren: (HTMLElement | null)[];

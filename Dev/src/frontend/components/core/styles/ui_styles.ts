@@ -4,8 +4,8 @@
 // which now bootstrap the unified theme stylesheet and apply the chosen
 // light / dark mode.
 
-import { ensureAxUICss } from "./axTheme/runtime";
-import { initTheme, setTheme, type AxThemeMode } from "./axTheme/controller";
+import { ensureAxUICss } from "../axTheme/runtime";
+import { initTheme, setTheme, type AxThemeMode } from "../axTheme/controller";
 
 /** Inject all CSS — vars + reset + utilities + presets + animations + shell. */
 export function addGlobalStyle(): void {

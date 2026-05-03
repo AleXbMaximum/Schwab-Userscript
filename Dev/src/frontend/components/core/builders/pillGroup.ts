@@ -1,5 +1,5 @@
 import { ui_createElement } from "./createElement";
-import { DS_COLORS } from "./theme";
+import { DS_COLORS } from "../styles/theme";
 
 export interface PillOption<T> {
   label: string;
