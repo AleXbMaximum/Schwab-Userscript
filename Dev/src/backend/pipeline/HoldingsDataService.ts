@@ -1,7 +1,7 @@
 import type { NetworkDataSource, StreamerUpdate } from "../core/network/types";
-import type { StateRepository } from "../../shared/utils/StateRepository";
+import type { StateRepository } from "../../shared/utils/state/StateRepository";
 import type { Logger } from "../../shared/log/Logger";
-import type { Clock } from "../../shared/utils/Clock";
+import type { Clock } from "../../shared/utils/async/Clock";
 
 import type{ HoldingsResponse, QuotesResponse } from "../../shared/types/holdings";
 import type{ ChangeToken, DerivedState, HoldingsFrame } from "../../shared/types/derived";
@@ -12,11 +12,11 @@ import type {
 import type { OvernightPriceUpdate } from "../core/network/yahoo/overnightStreamer";
 
 import { HoldingsIndexBuilder } from "./ingestion/HoldingsIndexBuilder";
-import { DerivedStatePipeline } from "./DerivedStatePipeline";
+import { DerivedStatePipeline } from "./orchestration/DerivedStatePipeline";
 import type { HoldingsIndex } from "./ingestion/HoldingsIndexBuilder";
 import { IngestionCoordinator } from "./ingestion/IngestionCoordinator";
 import { HoldingsFrameEmitter } from "./HoldingsFrameEmitter";
-import { evaluateWarningsFromJson } from "../computation/holdings/warningsEngine";
+import { evaluateWarningsFromJson } from "../computation/holdings/rendering/warningsEngine";
 
 export interface HoldingsDataServiceOptions {
   refreshIntervalMs?: number;

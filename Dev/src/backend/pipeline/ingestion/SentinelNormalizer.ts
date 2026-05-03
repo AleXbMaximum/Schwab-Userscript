@@ -1,7 +1,7 @@
 import type{ HoldingsResponse, HoldingsRow } from "../../../shared/types/holdings";
 import type{ HoldingsKey } from "../../../shared/types/derived";
 import type { HoldingsIndexEntry } from "./HoldingsIndexBuilder";
-import { getHoldingsKey } from "../../../shared/utils/holdingsKeys";
+import { getHoldingsKey } from "../../../shared/utils/domain/holdingsKeys";
 import { MARKET_DATA_FIELDS } from "./FieldMergePolicy";
 
 export function normalizeHoldings(

@@ -3,7 +3,7 @@ import {
   getHoldingsKey,
   getStreamingKey,
   getUnderlyingKey,
-} from "../../../shared/utils/holdingsKeys";
+} from "../../../shared/utils/domain/holdingsKeys";
 import type {
   HoldingsIndex,
   HoldingsIndexEntry,
