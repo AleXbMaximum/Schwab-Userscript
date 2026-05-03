@@ -19,7 +19,7 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	"use strict";
 
-;// ./src/shared/utils/uuid.ts
+;// ./src/shared/utils/data/uuid.ts
 function generateUUID() {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
     const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15;
@@ -758,7 +758,7 @@ const LOG_CONFIG = {
     }
   }
 };
-;// ./src/shared/utils/deepClone.ts
+;// ./src/shared/utils/data/deepClone.ts
 const isPlainObject = value => value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
 const cloneRegExp = value => {
   if (!(value instanceof RegExp)) return null;
@@ -1052,7 +1052,7 @@ class LogService {
   }
 }
 const logService = new LogService();
-;// ./src/backend/core/network/schwab/auth.ts
+;// ./src/backend/core/network/schwab/infra/auth.ts
 
 
 const log = logService.namespace("auth");
@@ -1295,7 +1295,7 @@ async function fetchMarkitToken(options) {
 function getMarkitToken() {
   return _markitToken;
 }
-;// ./src/backend/core/network/schwab/httpUtils.ts
+;// ./src/backend/core/network/schwab/infra/httpUtils.ts
 
 
 const httpUtils_log = logService.namespace("network");
@@ -1343,7 +1343,7 @@ function withTokenRefresh(doRequest, token) {
     throw err;
   });
 }
-;// ./src/backend/core/network/schwab/initContext.ts
+;// ./src/backend/core/network/schwab/infra/initContext.ts
 
 function getTemplateJson(id) {
   const el = document.getElementById(id);
@@ -1440,7 +1440,7 @@ function pctPointsToRatio(v) {
   const n = toFiniteNumberOrNull(v);
   return n == null ? null : n / 100;
 }
-;// ./src/shared/utils/numberNormalizer.ts
+;// ./src/shared/utils/format/numberNormalizer.ts
 function roundWithFactor(n, p) {
   const rounded = Math.round(n * p) / p;
   return Object.is(rounded, -0) ? 0 : rounded;
@@ -1824,7 +1824,7 @@ function parseQuotesResponse(payload) {
   normalizeNumbersDeepInPlace(out, 6);
   return out;
 }
-;// ./src/shared/utils/optionsExpiries.ts
+;// ./src/shared/utils/domain/optionsExpiries.ts
 const MONTH_MAP = {
   jan: 1,
   feb: 2,
@@ -3929,6 +3929,21 @@ function safeDiv(num, den, fallback = null) {
   if (!Number.isFinite(num) || !Number.isFinite(den)) return fallback;
   if (den === 0) return fallback;
   return num / den;
+}
+
+/**
+ * Sum of finite values; returns `null` when no finite values are present.
+ * Skips `null` / `undefined` / non-finite entries.
+ */
+function sumFinite(values) {
+  let total = 0;
+  let found = false;
+  for (const v of values) {
+    if (v == null || !Number.isFinite(v)) continue;
+    total += v;
+    found = true;
+  }
+  return found ? total : null;
 }
 ;// ./src/shared/utils/math/statistics.ts
 // ── Descriptive statistics ───────────────────────────────────────────────────
@@ -6150,7 +6165,7 @@ class ComputeWorkerPool {
   }
 }
 const computeWorkerPool = new ComputeWorkerPool();
-;// ./src/shared/utils/holdingsKeys.ts
+;// ./src/shared/utils/domain/holdingsKeys.ts
 const DEFAULT_OPTION_MULTIPLIER = 100;
 const toYmdUtc = d => {
   const y = d.getUTCFullYear();
@@ -6289,7 +6304,7 @@ function getUnderlyingKey(row, parentEquitySymbol) {
   }
   return null;
 }
-;// ./src/backend/core/network/schwab/holdings.ts
+;// ./src/backend/core/network/schwab/endpoints/holdings.ts
 
 
 
@@ -6600,6 +6615,79 @@ function findMatchingGroup(response, targetAcct, targetGroup) {
   }
   return null;
 }
+;// ./src/boot/initContextWaiter.ts
+
+const waitForDomReady = async () => {
+  if (document.readyState !== "loading") return;
+  await new Promise(resolve => document.addEventListener("DOMContentLoaded", () => resolve(), {
+    once: true
+  }));
+};
+const waitForInitContext = async (timeoutMs = 2000) => {
+  // Fast path: context already available (most common)
+  try {
+    const initCtx = readPageInitContext();
+    if (initCtx.asn) return initCtx;
+  } catch {}
+
+  // MutationObserver-based wait: resolves instantly when the template element
+  // appears or gets content
+  return new Promise(resolve => {
+    let resolved = false;
+    const tryResolve = () => {
+      if (resolved) return;
+      try {
+        const initCtx = readPageInitContext();
+        if (initCtx.asn) {
+          resolved = true;
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(initCtx);
+          return;
+        }
+        const upsEl = document.getElementById("ups-user-context");
+        if (upsEl && (upsEl.textContent || "").trim().length > 0) {
+          resolved = true;
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(initCtx);
+          return;
+        }
+      } catch {}
+    };
+    const observer = new MutationObserver(() => tryResolve());
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      observer.disconnect();
+      try {
+        resolve(readPageInitContext());
+      } catch {
+        resolve({
+          asn: null,
+          customerId: null,
+          cip: null,
+          upsUserContext: null,
+          userContext: null
+        });
+      }
+    }, timeoutMs);
+
+    // Check once more in case content arrived between fast-path and observer setup
+    tryResolve();
+  });
+};
+const maskTail = (v, keep = 4) => {
+  if (!v) return null;
+  const s = String(v);
+  if (s.length <= keep) return "*".repeat(s.length);
+  return "*".repeat(s.length - keep) + s.slice(-keep);
+};
 ;// ./src/backend/core/network/schwab/parsing/streamerParser.ts
 // Normalize streamer numerics and percent-point fields without a deep traversal.
 
@@ -6646,13 +6734,7 @@ function parseStreamerUpdate(raw) {
   }
   return update;
 }
-;// ./src/backend/core/network/schwab/streamer.ts
-
-
-
-
-
-const streamer_log = logService.namespace("streamer");
+;// ./src/backend/core/network/schwab/streamer/fieldMaps.ts
 // Schwab LEVELONE_EQUITIES field-id to normalized update key.
 const EQUITY_FIELD_MAP = {
   "0": "symbol",
@@ -6773,6 +6855,14 @@ const OPTION_FIELD_MAP = {
 };
 const EQUITY_FIELDS = "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54";
 const OPTIONS_FIELDS = "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55";
+;// ./src/backend/core/network/schwab/streamer.ts
+
+
+
+
+
+
+const streamer_log = logService.namespace("streamer");
 function normalizeSymbols(symbols) {
   return (Array.isArray(symbols) ? symbols : []).map(s => (s == null ? "" : String(s)).trim()).filter(Boolean);
 }
@@ -7262,7 +7352,7 @@ class Streamer {
   }
 }
 const streamer = new Streamer();
-;// ./src/frontend/components/core/createElement.ts
+;// ./src/frontend/components/core/builders/createElement.ts
 function createElement_ui_createElement(tag, {
   text = "",
   className = "",
@@ -7286,7 +7376,7 @@ function createElement_ui_createElement(tag, {
   });
   return el;
 }
-;// ./src/frontend/components/core/windowBehaviors.ts
+;// ./src/frontend/components/core/behaviors/windowBehaviors.ts
 function ui_makeDraggable(handle, container) {
   let shiftX = 0,
     shiftY = 0;
@@ -7361,7 +7451,7 @@ function ui_toggleMinimize(container, uiElements) {
     }
   });
 }
-;// ./src/shared/utils/globalShareMode.ts
+;// ./src/shared/utils/domain/globalShareMode.ts
 /**
  * Global Share Mode — a session-scoped display mode that masks or scales
  * monetary values across the entire UI for screen-sharing privacy.
@@ -8211,9 +8301,226 @@ function applyEffective(theme, animate = true) {
     }
   }
 }
+;// ./src/frontend/components/mainContainer/shareModeButton.ts
+
+
+
+
+const GEAR_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>';
+function buildShareModeButton() {
+  const wrapper = createElement_ui_createElement("div", {
+    className: "dock-settings-wrapper dock-share-btn"
+  });
+  const btn = createElement_ui_createElement("button", {
+    className: "dock-settings-btn",
+    props: {
+      "aria-label": "Settings",
+      innerHTML: GEAR_SVG
+    }
+  });
+  wrapper.appendChild(btn);
+
+  // ── Dropdown panel ──────────────────────────────────────────────────────
+  const panel = createElement_ui_createElement("div", {
+    className: "dock-settings-panel"
+  });
+
+  // Share Mode row
+  const shareRow = createElement_ui_createElement("div", {
+    className: "dock-settings-row"
+  });
+  const shareLabel = createElement_ui_createElement("span", {
+    text: "Share Mode",
+    className: "dock-settings-label"
+  });
+  shareRow.appendChild(shareLabel);
+  const optionsContainer = createElement_ui_createElement("div", {
+    className: "dock-settings-options"
+  });
+  const optionEls = [];
+
+  // Plain light-DOM <input> so Schwab's global keyboard handlers see
+  // e.target.tagName === "INPUT" and skip interception (standard pattern
+  // on trading platforms). Shadow DOM would retarget the event to a <span>,
+  // causing the host page to treat keystrokes as hotkeys instead.
+  const customInput = createElement_ui_createElement("input", {
+    className: "dock-settings-custom-input",
+    props: {
+      type: "number",
+      min: "1",
+      step: "1",
+      value: String(getCustomMultiplier()),
+      placeholder: "x"
+    }
+  });
+  customInput.style.cssText = "width:42px;padding:1px 3px;font-size: var(--ax-fs-sm);text-align:center;" + "border:1px solid var(--ax-border);border-radius: var(--ax-radius-xs);" + "background: var(--ax-bg-input);color: var(--ax-fg);box-sizing:border-box;" + "display:none;-moz-appearance:textfield;";
+  customInput.addEventListener("click", e => e.stopPropagation());
+  customInput.addEventListener("keydown", e => e.stopPropagation());
+  customInput.addEventListener("change", () => {
+    const v = Number(customInput.value);
+    if (Number.isFinite(v) && v > 0) {
+      setCustomMultiplier(v);
+    } else {
+      customInput.value = String(getCustomMultiplier());
+    }
+  });
+  for (const mode of SHARE_MODE_CYCLE) {
+    const optBtn = createElement_ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: SHARE_MODE_LABELS[mode],
+      events: {
+        click: e => {
+          e.stopPropagation();
+          setShareMode(mode);
+        }
+      }
+    });
+    optionEls.push(optBtn);
+    optionsContainer.appendChild(optBtn);
+  }
+  optionsContainer.appendChild(customInput);
+  shareRow.appendChild(optionsContainer);
+  panel.appendChild(shareRow);
+
+  // ── Theme Mode row ──────────────────────────────────────────────────────
+  const themeRow = createElement_ui_createElement("div", {
+    className: "dock-settings-row"
+  });
+  const themeLabel = createElement_ui_createElement("span", {
+    text: "Theme",
+    className: "dock-settings-label"
+  });
+  themeRow.appendChild(themeLabel);
+  const themeOptionsContainer = createElement_ui_createElement("div", {
+    className: "dock-settings-options"
+  });
+  const THEME_MODES = [{
+    mode: "light",
+    label: "Light"
+  }, {
+    mode: "dark",
+    label: "Dark"
+  }];
+  const themeOptionEls = [];
+  for (const {
+    mode,
+    label
+  } of THEME_MODES) {
+    const optBtn = createElement_ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: label,
+      events: {
+        click: e => {
+          e.stopPropagation();
+          setTheme(mode);
+        }
+      }
+    });
+    themeOptionEls.push({
+      mode,
+      el: optBtn
+    });
+    themeOptionsContainer.appendChild(optBtn);
+  }
+  themeRow.appendChild(themeOptionsContainer);
+  panel.appendChild(themeRow);
+  function syncThemeOptions(activeMode) {
+    for (const {
+      mode,
+      el
+    } of themeOptionEls) {
+      el.classList.toggle("active", mode === activeMode);
+    }
+  }
+  syncThemeOptions(getCurrentMode());
+  onThemeChanged(() => syncThemeOptions(getCurrentMode()));
+
+  // ── Render Mode row ─────────────────────────────────────────────────────
+  // Mirrors the Theme row above. Full keeps every glass effect, blur,
+  // glow, and motion; Eco strips the expensive composites for low-power
+  // devices or busy chart-heavy sessions.
+  const renderRow = createElement_ui_createElement("div", {
+    className: "dock-settings-row"
+  });
+  const renderLabel = createElement_ui_createElement("span", {
+    text: "Render",
+    className: "dock-settings-label"
+  });
+  renderRow.appendChild(renderLabel);
+  const renderOptionsContainer = createElement_ui_createElement("div", {
+    className: "dock-settings-options"
+  });
+  const RENDER_MODES = [{
+    mode: "full",
+    label: "Full"
+  }, {
+    mode: "eco",
+    label: "Eco"
+  }];
+  const renderOptionEls = [];
+  for (const {
+    mode,
+    label
+  } of RENDER_MODES) {
+    const optBtn = createElement_ui_createElement("button", {
+      className: "dock-settings-opt",
+      text: label,
+      events: {
+        click: e => {
+          e.stopPropagation();
+          setRenderMode(mode);
+        }
+      }
+    });
+    renderOptionEls.push({
+      mode,
+      el: optBtn
+    });
+    renderOptionsContainer.appendChild(optBtn);
+  }
+  renderRow.appendChild(renderOptionsContainer);
+  panel.appendChild(renderRow);
+  function syncRenderOptions(activeMode) {
+    for (const {
+      mode,
+      el
+    } of renderOptionEls) {
+      el.classList.toggle("active", mode === activeMode);
+    }
+  }
+  syncRenderOptions(getRenderMode());
+  onRenderModeChanged(() => syncRenderOptions(getRenderMode()));
+  wrapper.appendChild(panel);
+  function syncOptions(mode) {
+    for (let i = 0; i < SHARE_MODE_CYCLE.length; i++) {
+      optionEls[i].classList.toggle("active", SHARE_MODE_CYCLE[i] === mode);
+    }
+    customInput.style.display = mode === "custom" ? "inline-block" : "none";
+    if (mode === "custom" && document.activeElement !== customInput) {
+      customInput.value = String(getCustomMultiplier());
+    }
+  }
+  syncOptions(getShareMode());
+  onShareModeChange(syncOptions);
+  let isOpen = false;
+  function togglePanel() {
+    isOpen = !isOpen;
+    wrapper.classList.toggle("open", isOpen);
+  }
+  function closePanel() {
+    if (!isOpen) return;
+    isOpen = false;
+    wrapper.classList.remove("open");
+  }
+  btn.addEventListener("click", e => {
+    e.stopPropagation();
+    togglePanel();
+  });
+  document.addEventListener("click", closePanel);
+  panel.addEventListener("click", e => e.stopPropagation());
+  return wrapper;
+}
 ;// ./src/frontend/components/mainContainer/MainContainer.ts
-
-
 
 
 
@@ -8670,239 +8977,9 @@ function buildBottomTabBar(changeView) {
   return bar;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Settings Button — gear icon that opens a dropdown panel with settings
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const GEAR_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>';
-function buildShareModeButton() {
-  const wrapper = createElement_ui_createElement("div", {
-    className: "dock-settings-wrapper dock-share-btn"
-  });
-  const btn = createElement_ui_createElement("button", {
-    className: "dock-settings-btn",
-    props: {
-      "aria-label": "Settings",
-      innerHTML: GEAR_SVG
-    }
-  });
-  wrapper.appendChild(btn);
-
-  // ── Dropdown panel ──────────────────────────────────────────────────────
-  const panel = createElement_ui_createElement("div", {
-    className: "dock-settings-panel"
-  });
-
-  // Share Mode row
-  const shareRow = createElement_ui_createElement("div", {
-    className: "dock-settings-row"
-  });
-  const shareLabel = createElement_ui_createElement("span", {
-    text: "Share Mode",
-    className: "dock-settings-label"
-  });
-  shareRow.appendChild(shareLabel);
-
-  // Mode option buttons
-  const optionsContainer = createElement_ui_createElement("div", {
-    className: "dock-settings-options"
-  });
-  const optionEls = [];
-
-  // ── Custom multiplier input ─────────────────────────────────────────────
-  // Plain light-DOM <input> so Schwab's global keyboard handlers see
-  // e.target.tagName === "INPUT" and skip interception (standard pattern
-  // on trading platforms). Shadow DOM would retarget the event to a <span>,
-  // causing the host page to treat keystrokes as hotkeys instead.
-  const customInput = createElement_ui_createElement("input", {
-    className: "dock-settings-custom-input",
-    props: {
-      type: "number",
-      min: "1",
-      step: "1",
-      value: String(getCustomMultiplier()),
-      placeholder: "x"
-    }
-  });
-  customInput.style.cssText = "width:42px;padding:1px 3px;font-size: var(--ax-fs-sm);text-align:center;" + "border:1px solid var(--ax-border);border-radius: var(--ax-radius-xs);" + "background: var(--ax-bg-input);color: var(--ax-fg);box-sizing:border-box;" + "display:none;-moz-appearance:textfield;";
-
-  // Stop click/keyboard events from bubbling to panel-close or host-page handlers
-  customInput.addEventListener("click", e => e.stopPropagation());
-  customInput.addEventListener("keydown", e => e.stopPropagation());
-  customInput.addEventListener("change", () => {
-    const v = Number(customInput.value);
-    if (Number.isFinite(v) && v > 0) {
-      setCustomMultiplier(v);
-    } else {
-      customInput.value = String(getCustomMultiplier());
-    }
-  });
-  for (const mode of SHARE_MODE_CYCLE) {
-    const optBtn = createElement_ui_createElement("button", {
-      className: "dock-settings-opt",
-      text: SHARE_MODE_LABELS[mode],
-      events: {
-        click: e => {
-          e.stopPropagation();
-          setShareMode(mode);
-        }
-      }
-    });
-    optionEls.push(optBtn);
-    optionsContainer.appendChild(optBtn);
-  }
-  // Append custom input after the buttons as a sibling
-  optionsContainer.appendChild(customInput);
-  shareRow.appendChild(optionsContainer);
-  panel.appendChild(shareRow);
-
-  // ── Theme Mode row ──────────────────────────────────────────────────────
-  const themeRow = createElement_ui_createElement("div", {
-    className: "dock-settings-row"
-  });
-  const themeLabel = createElement_ui_createElement("span", {
-    text: "Theme",
-    className: "dock-settings-label"
-  });
-  themeRow.appendChild(themeLabel);
-  const themeOptionsContainer = createElement_ui_createElement("div", {
-    className: "dock-settings-options"
-  });
-  const THEME_MODES = [{
-    mode: "light",
-    label: "Light"
-  }, {
-    mode: "dark",
-    label: "Dark"
-  }];
-  const themeOptionEls = [];
-  for (const {
-    mode,
-    label
-  } of THEME_MODES) {
-    const optBtn = createElement_ui_createElement("button", {
-      className: "dock-settings-opt",
-      text: label,
-      events: {
-        click: e => {
-          e.stopPropagation();
-          setTheme(mode);
-        }
-      }
-    });
-    themeOptionEls.push({
-      mode,
-      el: optBtn
-    });
-    themeOptionsContainer.appendChild(optBtn);
-  }
-  themeRow.appendChild(themeOptionsContainer);
-  panel.appendChild(themeRow);
-  function syncThemeOptions(activeMode) {
-    for (const {
-      mode,
-      el
-    } of themeOptionEls) {
-      el.classList.toggle("active", mode === activeMode);
-    }
-  }
-  syncThemeOptions(getCurrentMode());
-  onThemeChanged(() => syncThemeOptions(getCurrentMode()));
-
-  // ── Render Mode row ─────────────────────────────────────────────────────
-  // Mirrors the Theme row above. Full keeps every glass effect, blur,
-  // glow, and motion; Eco strips the expensive composites for low-power
-  // devices or busy chart-heavy sessions.
-  const renderRow = createElement_ui_createElement("div", {
-    className: "dock-settings-row"
-  });
-  const renderLabel = createElement_ui_createElement("span", {
-    text: "Render",
-    className: "dock-settings-label"
-  });
-  renderRow.appendChild(renderLabel);
-  const renderOptionsContainer = createElement_ui_createElement("div", {
-    className: "dock-settings-options"
-  });
-  const RENDER_MODES = [{
-    mode: "full",
-    label: "Full"
-  }, {
-    mode: "eco",
-    label: "Eco"
-  }];
-  const renderOptionEls = [];
-  for (const {
-    mode,
-    label
-  } of RENDER_MODES) {
-    const optBtn = createElement_ui_createElement("button", {
-      className: "dock-settings-opt",
-      text: label,
-      events: {
-        click: e => {
-          e.stopPropagation();
-          setRenderMode(mode);
-        }
-      }
-    });
-    renderOptionEls.push({
-      mode,
-      el: optBtn
-    });
-    renderOptionsContainer.appendChild(optBtn);
-  }
-  renderRow.appendChild(renderOptionsContainer);
-  panel.appendChild(renderRow);
-  function syncRenderOptions(activeMode) {
-    for (const {
-      mode,
-      el
-    } of renderOptionEls) {
-      el.classList.toggle("active", mode === activeMode);
-    }
-  }
-  syncRenderOptions(getRenderMode());
-  onRenderModeChanged(() => syncRenderOptions(getRenderMode()));
-  wrapper.appendChild(panel);
-
-  // ── Sync dropdown option highlight ──────────────────────────────────────
-  function syncOptions(mode) {
-    for (let i = 0; i < SHARE_MODE_CYCLE.length; i++) {
-      optionEls[i].classList.toggle("active", SHARE_MODE_CYCLE[i] === mode);
-    }
-    customInput.style.display = mode === "custom" ? "inline-block" : "none";
-    if (mode === "custom" && document.activeElement !== customInput) {
-      customInput.value = String(getCustomMultiplier());
-    }
-  }
-  syncOptions(getShareMode());
-  onShareModeChange(syncOptions);
-
-  // ── Toggle panel open/close ─────────────────────────────────────────────
-  let isOpen = false;
-  function togglePanel() {
-    isOpen = !isOpen;
-    wrapper.classList.toggle("open", isOpen);
-  }
-  function closePanel() {
-    if (!isOpen) return;
-    isOpen = false;
-    wrapper.classList.remove("open");
-  }
-  btn.addEventListener("click", e => {
-    e.stopPropagation();
-    togglePanel();
-  });
-
-  // Close when clicking outside
-  document.addEventListener("click", closePanel);
-
-  // Prevent panel clicks from closing
-  panel.addEventListener("click", e => e.stopPropagation());
-  return wrapper;
-}
-;// ./src/shared/utils/TypedEventBus.ts
+// Settings Button (gear icon + share mode / theme / render dropdown)
+// lives in ./shareModeButton.ts.
+;// ./src/shared/utils/state/TypedEventBus.ts
 /**
  * Generic typed event bus with optional replay support.
  * Domain-agnostic — parameterize with your own event map.
@@ -8969,7 +9046,7 @@ class TypedEventBus {
     this.latestValues.clear();
   }
 }
-;// ./src/shared/utils/Clock.ts
+;// ./src/shared/utils/async/Clock.ts
 const systemClock = {
   now: () => Date.now(),
   setTimeout: (cb, delay) => setTimeout(cb, delay),
@@ -9041,7 +9118,7 @@ class HoldingsIndexBuilder {
     return typeof resolvedSymbol === "string" && resolvedSymbol.trim() ? resolvedSymbol.trim() : null;
   }
 }
-;// ./src/backend/computation/holdings/derivedMetrics.ts
+;// ./src/backend/computation/holdings/metrics/derivedMetrics.ts
 
 
 
@@ -9251,7 +9328,7 @@ function computeDerivedMetrics(row) {
     optDeltaShares
   };
 }
-;// ./src/backend/computation/holdings/valueExtractors.ts
+;// ./src/backend/computation/holdings/metrics/valueExtractors.ts
 // ── Shared value extraction helpers ─────────────────────────────────────────
 // Extract typed numeric values from raw holdings row objects.
 // These guard-and-extract functions are used by PortfolioAggregator,
@@ -9294,7 +9371,7 @@ function extractQty(row) {
   const qty = row?.qty?.qty ?? row?.qty?.val;
   return typeof qty === "number" ? qty : null;
 }
-;// ./src/backend/computation/holdings/UnderlyingAggregator.ts
+;// ./src/backend/computation/holdings/aggregators/UnderlyingAggregator.ts
 
 
 
@@ -9531,7 +9608,7 @@ class UnderlyingAggregator {
     }
   }
 }
-;// ./src/backend/computation/holdings/PortfolioAggregator.ts
+;// ./src/backend/computation/holdings/aggregators/PortfolioAggregator.ts
 
 
 
@@ -9664,7 +9741,7 @@ class PortfolioAggregator {
     };
   }
 }
-;// ./src/backend/computation/holdings/ScenarioCalculator.ts
+;// ./src/backend/computation/holdings/aggregators/ScenarioCalculator.ts
 
 class ScenarioCalculator {
   isSummaryRow(meta) {
@@ -9794,7 +9871,7 @@ class ScenarioCalculator {
     }
   }
 }
-;// ./src/backend/computation/holdings/hierarchyRowBuilders.ts
+;// ./src/backend/computation/holdings/rendering/hierarchyRowBuilders.ts
 
 
 /** Shorten verbose Schwab-generated symbol labels for compact display. */
@@ -9910,7 +9987,7 @@ function buildTickerBlock(underlyingKey, equityInfoRow, positions, derivedState,
     assetBadges
   };
 }
-;// ./src/backend/computation/holdings/hierarchyTotals.ts
+;// ./src/backend/computation/holdings/aggregators/hierarchyTotals.ts
 
 function extractVal(row, field) {
   const cell = row?.[field];
@@ -10174,7 +10251,7 @@ function mergeBrokerTotals(computed, brokerTotals) {
     gainLossPercent: typeof brokerTotals.gainLossPercent === "number" ? brokerTotals.gainLossPercent : computed.gainLossPercent
   };
 }
-;// ./src/backend/computation/holdings/HierarchyBuilder.ts
+;// ./src/backend/computation/holdings/aggregators/HierarchyBuilder.ts
 
 
 
@@ -10228,7 +10305,7 @@ class HierarchyBuilder {
     };
   }
 }
-;// ./src/backend/pipeline/DerivedStatePipeline.ts
+;// ./src/backend/pipeline/orchestration/DerivedStatePipeline.ts
 
 
 
@@ -10347,7 +10424,6 @@ const INDEX_SYMBOLS_SET = new Set(INDEX_SYMBOLS_ARRAY);
 
 const DataIngestion_holdFlow = logService.namespace("flow:hold");
 const quoteFlow = logService.namespace("flow:quote");
-const streamerFlow = logService.namespace("flow:strm");
 const overnightFlow = logService.namespace("flow:over");
 function applyHoldings(currentState, holdings) {
   if (DataIngestion_holdFlow.levelEnabled("debug")) {
@@ -10448,251 +10524,11 @@ function applyQuotes(currentState, quotes) {
   currentState.lastUpdated = Date.now();
   return currentState;
 }
-function applyStreamerUpdates(currentState, updates, symbolMap, mode = "full") {
-  // In disabled mode, ignore all streamer updates entirely
-  if (mode === "disabled") {
-    streamerFlow.debug("blocked", {
-      mode,
-      updateCount: updates.length
-    });
-    return {
-      newState: currentState,
-      touchedHoldingsKeys: new Set(),
-      touchedSymbols: new Set()
-    };
-  }
-  const touchedHoldingsKeys = new Set();
-  const touchedSymbols = new Set();
-  let hasChanges = false;
-  let holdingsMatched = 0;
-  let holdingsUnmatched = 0;
-  let indexMatched = 0;
-  for (const update of updates) {
-    const symbol = update.symbol;
-    touchedSymbols.add(symbol);
-    const row = symbolMap.get(symbol);
-    if (row) {
-      const pk = getHoldingsKey(row);
-      if (pk) {
-        applyUpdateToRow(row, update, mode);
-        touchedHoldingsKeys.add(pk);
-        hasChanges = true;
-        holdingsMatched++;
-      }
-    } else if (!INDEX_SYMBOLS_SET.has(symbol)) {
-      holdingsUnmatched++;
-    }
-    if (INDEX_SYMBOLS_SET.has(symbol)) {
-      // Mutate index entry in-place (consistent with in-place row mutation above)
-      if (!currentState.quotesBySymbol[symbol]) {
-        currentState.quotesBySymbol[symbol] = createEmptyQuoteItem(symbol);
-      }
-      applyUpdateToIndex(currentState.quotesBySymbol[symbol], update, mode);
-      hasChanges = true;
-      indexMatched++;
-    }
-  }
-  streamerFlow.debug("applied", () => {
-    const sampleRows = [];
-    let i = 0;
-    for (const update of updates) {
-      if (i >= 3) break;
-      const row = symbolMap.get(update.symbol);
-      if (row) {
-        sampleRows.push({
-          sym: update.symbol,
-          price: row.price?.val,
-          bid: row.bid?.val,
-          ask: row.ask?.val,
-          dayChange: row.dayChange?.val,
-          marketValue: row.marketValue?.val
-        });
-        i++;
-      }
-    }
-    return {
-      mode,
-      updateCount: updates.length,
-      holdingsMatched,
-      holdingsUnmatched,
-      indexMatched,
-      touchedKeys: touchedHoldingsKeys.size,
-      hasChanges,
-      sampleRows
-    };
-  });
 
-  // Mutate in-place: holdings rows and index entries are already updated above
-  if (hasChanges) {
-    currentState.lastUpdated = Date.now();
-  }
-  return {
-    newState: currentState,
-    touchedHoldingsKeys,
-    touchedSymbols
-  };
-}
+// Streamer ingestion lives in `./streamerIngestion.ts`; re-exported here for
+// existing call sites (BackendOrchestrator, IngestionCoordinator) that import
+// it from this module.
 
-// Field names that applyUpdateToRow writes to. Ensure objects exist once per row
-// to avoid repeated typeof checks on every streamer tick.
-const STREAMER_ROW_FIELDS = ["lastPrice", "price", "priceChng", "priceChngPrc", "marketValue", "dayChange", "dayChngPerc", "gainLoss", "bid", "ask", "bidSize", "askSize", "lastSize", "openPrice", "dayHigh", "dayLow", "closePrice", "volume", "openInterest", "impliedVolatility", "delta", "gamma", "theta", "vega", "rho", "dividendYield", "markPrice"];
-const ROW_FIELDS_INIT = Symbol("fieldsInit");
-function ensureRowFieldObjects(row) {
-  if (row[ROW_FIELDS_INIT]) return;
-  for (const f of STREAMER_ROW_FIELDS) {
-    if (!row[f] || typeof row[f] !== "object") {
-      row[f] = {};
-    }
-  }
-  row[ROW_FIELDS_INIT] = true;
-}
-function applyUpdateToRow(row, update, mode) {
-  ensureRowFieldObjects(row);
-  if (mode === "day_change_only") {
-    applyDayChangeOnlyUpdateToRow(row, update);
-    return;
-  }
-  const lastPrice = toFiniteNumberOrNullNoSentinel(update.lastPrice);
-  if (lastPrice !== null) {
-    row.lastPrice.val = lastPrice;
-    row.price.price = lastPrice;
-    row.price.val = lastPrice;
-    const close = toFiniteNumberOrNullNoSentinel(row.closePrice.val);
-    const streamerNetChange = toFiniteNumberOrNullNoSentinel(update.netChange);
-    const priceChng = streamerNetChange ?? (close != null ? lastPrice - close : null);
-    if (priceChng !== null) {
-      row.priceChng.val = priceChng;
-    }
-    const streamerPctChange = toFiniteNumberOrNullNoSentinel(update.netPercentChange);
-    const priceChngPrc = streamerPctChange ?? (close != null && close !== 0 ? (lastPrice - close) / close : null);
-    if (priceChngPrc !== null) {
-      row.priceChngPrc.val = priceChngPrc;
-    }
-    const qty = toFiniteNumberOrNullNoSentinel(row.qty?.qty ?? row.qty?.val);
-    const multiplier = isOption(row) ? 100 : 1;
-    if (qty !== null) {
-      const newMarketValue = lastPrice * qty * multiplier;
-      row.marketValue.val = newMarketValue;
-
-      // Use absolute netChange (or lastPrice - closePrice fallback) to avoid
-      // incremental drift that compounds across streamer ticks.
-      const streamerNetChange = toFiniteNumberOrNullNoSentinel(update.netChange);
-      const effectiveNetChange = streamerNetChange ?? (close != null ? lastPrice - close : null);
-      if (effectiveNetChange !== null) {
-        const newDayChange = effectiveNetChange * qty * multiplier;
-        row.dayChange.val = newDayChange;
-        const startOfDayMV = newMarketValue - newDayChange;
-        if (startOfDayMV !== 0) {
-          row.dayChngPerc.val = newDayChange / Math.abs(startOfDayMV);
-        }
-      }
-      const costBasis = toFiniteNumberOrNullNoSentinel(row.costBasis?.val);
-      if (costBasis !== null) {
-        const gainLossDlr = newMarketValue - costBasis;
-        row.gainLoss.gainLossDlr = gainLossDlr;
-        row.gainLoss.val = gainLossDlr;
-        if (costBasis !== 0) {
-          row.gainLoss.gainLossPct = gainLossDlr / Math.abs(costBasis);
-        }
-      }
-    }
-  }
-  const bidPrice = toFiniteNumberOrNullNoSentinel(update.bidPrice);
-  if (bidPrice !== null) row.bid.val = bidPrice;
-  const askPrice = toFiniteNumberOrNullNoSentinel(update.askPrice);
-  if (askPrice !== null) row.ask.val = askPrice;
-  const bidSize = toFiniteNumberOrNullNoSentinel(update.bidSize);
-  if (bidSize !== null) row.bidSize.val = bidSize;
-  const askSize = toFiniteNumberOrNullNoSentinel(update.askSize);
-  if (askSize !== null) row.askSize.val = askSize;
-  const lastSize = toFiniteNumberOrNullNoSentinel(update.lastSize);
-  if (lastSize !== null) row.lastSize.val = lastSize;
-  const openPrice = toFiniteNumberOrNullNoSentinel(update.openPrice);
-  if (openPrice !== null) row.openPrice.val = openPrice;
-  const highPrice = toFiniteNumberOrNullNoSentinel(update.highPrice);
-  if (highPrice !== null) row.dayHigh.val = highPrice;
-  const lowPrice = toFiniteNumberOrNullNoSentinel(update.lowPrice);
-  if (lowPrice !== null) row.dayLow.val = lowPrice;
-  const closePrice = toFiniteNumberOrNullNoSentinel(update.closePrice);
-  if (closePrice !== null) row.closePrice.val = closePrice;
-  const volume = toFiniteNumberOrNullNoSentinel(update.totalVolume);
-  if (volume !== null) row.volume.val = volume;
-  const openInterest = toFiniteNumberOrNullNoSentinel(update.openInterest);
-  if (openInterest !== null) row.openInterest.val = openInterest;
-  const impliedVolatility = toFiniteNumberOrNullNoSentinel(update.volatility);
-  if (impliedVolatility !== null) row.impliedVolatility.val = impliedVolatility;
-  const delta = toFiniteNumberOrNullNoSentinel(update.delta);
-  if (delta !== null) row.delta.val = delta;
-  const gamma = toFiniteNumberOrNullNoSentinel(update.gamma);
-  if (gamma !== null) row.gamma.val = gamma;
-  const theta = toFiniteNumberOrNullNoSentinel(update.theta);
-  if (theta !== null) row.theta.val = theta;
-  const vega = toFiniteNumberOrNullNoSentinel(update.vega);
-  if (vega !== null) row.vega.val = vega;
-  const rho = toFiniteNumberOrNullNoSentinel(update.rho);
-  if (rho !== null) row.rho.val = rho;
-  const dividendYield = toFiniteNumberOrNullNoSentinel(update.dividendYield);
-  if (dividendYield !== null) row.dividendYield.val = dividendYield;
-  const markPrice = toFiniteNumberOrNullNoSentinel(update.mark);
-  if (markPrice !== null) row.markPrice.val = markPrice;
-}
-function applyDayChangeOnlyUpdateToRow(row, update) {
-  // ensureRowFieldObjects already called by applyUpdateToRow
-  const qty = toFiniteNumberOrNullNoSentinel(row.qty?.qty ?? row.qty?.val);
-  const multiplier = isOption(row) ? 100 : 1;
-  const lastPrice = toFiniteNumberOrNullNoSentinel(update.lastPrice);
-  const streamerNetChange = toFiniteNumberOrNullNoSentinel(update.netChange);
-  const close = toFiniteNumberOrNullNoSentinel(row.closePrice?.val);
-  const effectiveNetChange = streamerNetChange ?? (lastPrice !== null && close !== null ? lastPrice - close : null);
-  if (effectiveNetChange !== null && qty !== null) {
-    const newDayChange = effectiveNetChange * qty * multiplier;
-    row.dayChange.val = newDayChange;
-
-    // Derive dayChngPerc from absolute values when possible
-    if (lastPrice !== null) {
-      const currentMV = lastPrice * qty * multiplier;
-      const startOfDayMV = currentMV - newDayChange;
-      if (startOfDayMV !== 0) {
-        row.dayChngPerc.val = newDayChange / Math.abs(startOfDayMV);
-      }
-    }
-  }
-
-  // Streamer explicit netPercentChange takes priority over derived value
-  const percentChange = toFiniteNumberOrNullNoSentinel(update.netPercentChange);
-  if (percentChange !== null) {
-    row.dayChngPerc.val = percentChange;
-  }
-}
-function applyUpdateToIndex(quoteItem, update, mode) {
-  const quote = quoteItem.quote;
-  if (mode !== "day_change_only") {
-    const lastPrice = toFiniteNumberOrNullNoSentinel(update.lastPrice);
-    if (lastPrice !== null) {
-      quote.lastPrice = lastPrice;
-    }
-  }
-  const netChange = toFiniteNumberOrNullNoSentinel(update.netChange);
-  if (netChange !== null) {
-    quote.netChange = netChange;
-  }
-  const percentChange = toFiniteNumberOrNullNoSentinel(update.netPercentChange);
-  if (percentChange !== null) {
-    quote.netChangePercent = percentChange;
-  }
-}
-function createEmptyQuoteItem(symbol) {
-  return {
-    reference: {
-      symbol
-    },
-    quote: {
-      lastPrice: 0,
-      netChange: 0,
-      netChangePercent: 0
-    }
-  };
-}
 
 /**
  * Merge quote data into holdings rows in-place.
@@ -10901,6 +10737,245 @@ function createEmptyRawState() {
     holdings: null,
     quotesBySymbol: {},
     lastUpdated: 0
+  };
+}
+;// ./src/backend/pipeline/ingestion/streamerIngestion.ts
+
+
+
+
+const streamerFlow = logService.namespace("flow:strm");
+
+// Field names that applyUpdateToRow writes to. Ensure objects exist once per row
+// to avoid repeated typeof checks on every streamer tick.
+const STREAMER_ROW_FIELDS = ["lastPrice", "price", "priceChng", "priceChngPrc", "marketValue", "dayChange", "dayChngPerc", "gainLoss", "bid", "ask", "bidSize", "askSize", "lastSize", "openPrice", "dayHigh", "dayLow", "closePrice", "volume", "openInterest", "impliedVolatility", "delta", "gamma", "theta", "vega", "rho", "dividendYield", "markPrice"];
+const ROW_FIELDS_INIT = Symbol("fieldsInit");
+function ensureRowFieldObjects(row) {
+  if (row[ROW_FIELDS_INIT]) return;
+  for (const f of STREAMER_ROW_FIELDS) {
+    if (!row[f] || typeof row[f] !== "object") {
+      row[f] = {};
+    }
+  }
+  row[ROW_FIELDS_INIT] = true;
+}
+function applyUpdateToRow(row, update, mode) {
+  ensureRowFieldObjects(row);
+  if (mode === "day_change_only") {
+    applyDayChangeOnlyUpdateToRow(row, update);
+    return;
+  }
+  const lastPrice = toFiniteNumberOrNullNoSentinel(update.lastPrice);
+  if (lastPrice !== null) {
+    row.lastPrice.val = lastPrice;
+    row.price.price = lastPrice;
+    row.price.val = lastPrice;
+    const close = toFiniteNumberOrNullNoSentinel(row.closePrice.val);
+    const streamerNetChange = toFiniteNumberOrNullNoSentinel(update.netChange);
+    const priceChng = streamerNetChange ?? (close != null ? lastPrice - close : null);
+    if (priceChng !== null) {
+      row.priceChng.val = priceChng;
+    }
+    const streamerPctChange = toFiniteNumberOrNullNoSentinel(update.netPercentChange);
+    const priceChngPrc = streamerPctChange ?? (close != null && close !== 0 ? (lastPrice - close) / close : null);
+    if (priceChngPrc !== null) {
+      row.priceChngPrc.val = priceChngPrc;
+    }
+    const qty = toFiniteNumberOrNullNoSentinel(row.qty?.qty ?? row.qty?.val);
+    const multiplier = isOption(row) ? 100 : 1;
+    if (qty !== null) {
+      const newMarketValue = lastPrice * qty * multiplier;
+      row.marketValue.val = newMarketValue;
+      const streamerNetChangeAbs = toFiniteNumberOrNullNoSentinel(update.netChange);
+      const effectiveNetChange = streamerNetChangeAbs ?? (close != null ? lastPrice - close : null);
+      if (effectiveNetChange !== null) {
+        const newDayChange = effectiveNetChange * qty * multiplier;
+        row.dayChange.val = newDayChange;
+        const startOfDayMV = newMarketValue - newDayChange;
+        if (startOfDayMV !== 0) {
+          row.dayChngPerc.val = newDayChange / Math.abs(startOfDayMV);
+        }
+      }
+      const costBasis = toFiniteNumberOrNullNoSentinel(row.costBasis?.val);
+      if (costBasis !== null) {
+        const gainLossDlr = newMarketValue - costBasis;
+        row.gainLoss.gainLossDlr = gainLossDlr;
+        row.gainLoss.val = gainLossDlr;
+        if (costBasis !== 0) {
+          row.gainLoss.gainLossPct = gainLossDlr / Math.abs(costBasis);
+        }
+      }
+    }
+  }
+  const bidPrice = toFiniteNumberOrNullNoSentinel(update.bidPrice);
+  if (bidPrice !== null) row.bid.val = bidPrice;
+  const askPrice = toFiniteNumberOrNullNoSentinel(update.askPrice);
+  if (askPrice !== null) row.ask.val = askPrice;
+  const bidSize = toFiniteNumberOrNullNoSentinel(update.bidSize);
+  if (bidSize !== null) row.bidSize.val = bidSize;
+  const askSize = toFiniteNumberOrNullNoSentinel(update.askSize);
+  if (askSize !== null) row.askSize.val = askSize;
+  const lastSize = toFiniteNumberOrNullNoSentinel(update.lastSize);
+  if (lastSize !== null) row.lastSize.val = lastSize;
+  const openPrice = toFiniteNumberOrNullNoSentinel(update.openPrice);
+  if (openPrice !== null) row.openPrice.val = openPrice;
+  const highPrice = toFiniteNumberOrNullNoSentinel(update.highPrice);
+  if (highPrice !== null) row.dayHigh.val = highPrice;
+  const lowPrice = toFiniteNumberOrNullNoSentinel(update.lowPrice);
+  if (lowPrice !== null) row.dayLow.val = lowPrice;
+  const closePrice = toFiniteNumberOrNullNoSentinel(update.closePrice);
+  if (closePrice !== null) row.closePrice.val = closePrice;
+  const volume = toFiniteNumberOrNullNoSentinel(update.totalVolume);
+  if (volume !== null) row.volume.val = volume;
+  const openInterest = toFiniteNumberOrNullNoSentinel(update.openInterest);
+  if (openInterest !== null) row.openInterest.val = openInterest;
+  const impliedVolatility = toFiniteNumberOrNullNoSentinel(update.volatility);
+  if (impliedVolatility !== null) row.impliedVolatility.val = impliedVolatility;
+  const delta = toFiniteNumberOrNullNoSentinel(update.delta);
+  if (delta !== null) row.delta.val = delta;
+  const gamma = toFiniteNumberOrNullNoSentinel(update.gamma);
+  if (gamma !== null) row.gamma.val = gamma;
+  const theta = toFiniteNumberOrNullNoSentinel(update.theta);
+  if (theta !== null) row.theta.val = theta;
+  const vega = toFiniteNumberOrNullNoSentinel(update.vega);
+  if (vega !== null) row.vega.val = vega;
+  const rho = toFiniteNumberOrNullNoSentinel(update.rho);
+  if (rho !== null) row.rho.val = rho;
+  const dividendYield = toFiniteNumberOrNullNoSentinel(update.dividendYield);
+  if (dividendYield !== null) row.dividendYield.val = dividendYield;
+  const markPrice = toFiniteNumberOrNullNoSentinel(update.mark);
+  if (markPrice !== null) row.markPrice.val = markPrice;
+}
+function applyDayChangeOnlyUpdateToRow(row, update) {
+  const qty = toFiniteNumberOrNullNoSentinel(row.qty?.qty ?? row.qty?.val);
+  const multiplier = isOption(row) ? 100 : 1;
+  const lastPrice = toFiniteNumberOrNullNoSentinel(update.lastPrice);
+  const streamerNetChange = toFiniteNumberOrNullNoSentinel(update.netChange);
+  const close = toFiniteNumberOrNullNoSentinel(row.closePrice?.val);
+  const effectiveNetChange = streamerNetChange ?? (lastPrice !== null && close !== null ? lastPrice - close : null);
+  if (effectiveNetChange !== null && qty !== null) {
+    const newDayChange = effectiveNetChange * qty * multiplier;
+    row.dayChange.val = newDayChange;
+    if (lastPrice !== null) {
+      const currentMV = lastPrice * qty * multiplier;
+      const startOfDayMV = currentMV - newDayChange;
+      if (startOfDayMV !== 0) {
+        row.dayChngPerc.val = newDayChange / Math.abs(startOfDayMV);
+      }
+    }
+  }
+  const percentChange = toFiniteNumberOrNullNoSentinel(update.netPercentChange);
+  if (percentChange !== null) {
+    row.dayChngPerc.val = percentChange;
+  }
+}
+function applyUpdateToIndex(quoteItem, update, mode) {
+  const quote = quoteItem.quote;
+  if (mode !== "day_change_only") {
+    const lastPrice = toFiniteNumberOrNullNoSentinel(update.lastPrice);
+    if (lastPrice !== null) {
+      quote.lastPrice = lastPrice;
+    }
+  }
+  const netChange = toFiniteNumberOrNullNoSentinel(update.netChange);
+  if (netChange !== null) {
+    quote.netChange = netChange;
+  }
+  const percentChange = toFiniteNumberOrNullNoSentinel(update.netPercentChange);
+  if (percentChange !== null) {
+    quote.netChangePercent = percentChange;
+  }
+}
+function createEmptyQuoteItem(symbol) {
+  return {
+    reference: {
+      symbol
+    },
+    quote: {
+      lastPrice: 0,
+      netChange: 0,
+      netChangePercent: 0
+    }
+  };
+}
+function applyStreamerUpdates(currentState, updates, symbolMap, mode = "full") {
+  if (mode === "disabled") {
+    streamerFlow.debug("blocked", {
+      mode,
+      updateCount: updates.length
+    });
+    return {
+      newState: currentState,
+      touchedHoldingsKeys: new Set(),
+      touchedSymbols: new Set()
+    };
+  }
+  const touchedHoldingsKeys = new Set();
+  const touchedSymbols = new Set();
+  let hasChanges = false;
+  let holdingsMatched = 0;
+  let holdingsUnmatched = 0;
+  let indexMatched = 0;
+  for (const update of updates) {
+    const symbol = update.symbol;
+    touchedSymbols.add(symbol);
+    const row = symbolMap.get(symbol);
+    if (row) {
+      const pk = getHoldingsKey(row);
+      if (pk) {
+        applyUpdateToRow(row, update, mode);
+        touchedHoldingsKeys.add(pk);
+        hasChanges = true;
+        holdingsMatched++;
+      }
+    } else if (!INDEX_SYMBOLS_SET.has(symbol)) {
+      holdingsUnmatched++;
+    }
+    if (INDEX_SYMBOLS_SET.has(symbol)) {
+      if (!currentState.quotesBySymbol[symbol]) {
+        currentState.quotesBySymbol[symbol] = createEmptyQuoteItem(symbol);
+      }
+      applyUpdateToIndex(currentState.quotesBySymbol[symbol], update, mode);
+      hasChanges = true;
+      indexMatched++;
+    }
+  }
+  streamerFlow.debug("applied", () => {
+    const sampleRows = [];
+    let i = 0;
+    for (const update of updates) {
+      if (i >= 3) break;
+      const row = symbolMap.get(update.symbol);
+      if (row) {
+        sampleRows.push({
+          sym: update.symbol,
+          price: row.price?.val,
+          bid: row.bid?.val,
+          ask: row.ask?.val,
+          dayChange: row.dayChange?.val,
+          marketValue: row.marketValue?.val
+        });
+        i++;
+      }
+    }
+    return {
+      mode,
+      updateCount: updates.length,
+      holdingsMatched,
+      holdingsUnmatched,
+      indexMatched,
+      touchedKeys: touchedHoldingsKeys.size,
+      hasChanges,
+      sampleRows
+    };
+  });
+  if (hasChanges) {
+    currentState.lastUpdated = Date.now();
+  }
+  return {
+    newState: currentState,
+    touchedHoldingsKeys,
+    touchedSymbols
   };
 }
 ;// ./src/backend/pipeline/ingestion/FieldMergePolicy.ts
@@ -11403,7 +11478,7 @@ class HoldingsFrameEmitter {
     }
   }
 }
-;// ./src/backend/computation/holdings/warningsEngine.ts
+;// ./src/backend/computation/holdings/rendering/warningsEngine.ts
 
 const levelRank = {
   none: 0,
@@ -11765,7 +11840,7 @@ class HoldingsDataService {
     }
   }
 }
-;// ./src/backend/core/network/schwab/quotes.ts
+;// ./src/backend/core/network/schwab/endpoints/quotes.ts
 
 
 
@@ -11819,7 +11894,7 @@ function fetchQuotes(symbols, token) {
     throw err;
   });
 }
-;// ./src/backend/core/network/schwab/indicesHistory.ts
+;// ./src/backend/core/network/schwab/endpoints/indicesHistory.ts
 
 
 
@@ -11873,7 +11948,7 @@ function fetchIndicesHistory(token, params) {
     throw err;
   });
 }
-;// ./src/backend/core/network/schwab/marketData.ts
+;// ./src/backend/core/network/schwab/endpoints/marketData.ts
 
 
 
@@ -11986,7 +12061,7 @@ function gmGet(url, timeoutMs = 30_000) {
     "User-Agent": "Mozilla/5.0"
   }, timeoutMs);
 }
-;// ./src/backend/core/network/schwab/news.ts
+;// ./src/backend/core/network/schwab/endpoints/news.ts
 
 
 
@@ -12206,7 +12281,7 @@ function parseRatingChangesHtml(html) {
   }
   return ratings;
 }
-;// ./src/backend/core/network/schwab/calendar.ts
+;// ./src/backend/core/network/schwab/endpoints/calendar.ts
 
 
 
@@ -12499,7 +12574,7 @@ class PipelineStatePersistor {
     this.flushRawHoldingsPersist();
   }
 }
-;// ./src/backend/pipeline/PollingScheduler.ts
+;// ./src/backend/pipeline/orchestration/PollingScheduler.ts
 class PollingScheduler {
   constructor(options = {}, clock, logger) {
     this.sources = new Map();
@@ -14051,23 +14126,9 @@ function minutesToHHMM(totalMinutes) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-// ---------------------------------------------------------------------------
-// Relative "time ago" formatting
-// ---------------------------------------------------------------------------
+// `formatTimeAgo` lives in shared/utils/format/relativeTime.ts — it is a pure
+// duration formatter and has no timezone dependency.
 
-function formatTimeAgo(isoString, options = {}) {
-  const timestamp = new Date(isoString).getTime();
-  if (!Number.isFinite(timestamp)) return "—";
-  const nowMs = options.nowMs ?? Date.now();
-  const diffMs = Math.max(0, nowMs - timestamp);
-  const mins = Math.floor(diffMs / 60_000);
-  const includeJustNow = options.includeJustNow !== false;
-  if (mins < 1 && includeJustNow) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 ;// ./src/backend/pipeline/bridges/OvernightBridge.ts
 
 
@@ -14392,6 +14453,14 @@ class KVStore {
     return count > 0;
   }
 }
+;// ./src/shared/settings/newsRefreshDefaults.ts
+const DEFAULT_NEWS_REFRESH_INTERVALS = {
+  yahooMacroMs: 120_000,
+  yahooSymbolMs: 120_000,
+  barronsMs: 180_000,
+  financialJuiceMs: 45_000,
+  schwabMs: 120_000
+};
 ;// ./src/backend/services/news/types.ts
 function generateNewsId(title, source) {
   let hash = 0;
@@ -14634,17 +14703,7 @@ async function fetchYahooGlobalMacroNews() {
   });
   return sorted;
 }
-;// ./src/backend/core/network/barrons/BarronsFetcher.ts
-/**
- * Barrons data fetcher and parser.
- * Fetches from multiple Barrons/MarketWatch endpoints (HTML + JSON APIs).
- * All parsed data is assembled into a BarronsDataBundle (see ai/types.ts).
- * See inline comments in each parser function for API -> internal field mappings.
- */
-
-
-const BarronsFetcher_log = logService.namespace("network");
-// ── Barron's transport helpers ──────────────────────────────────────────────
+;// ./src/backend/core/network/barrons/transport.ts
 
 function fetchBarronsJson(url, symbol, timeoutMs = 30_000) {
   return gmGetWithHeaders(url, {
@@ -14659,9 +14718,37 @@ function fetchBarronsHtml(url, timeoutMs = 30_000) {
     "Accept-Language": "en,zh-CN;q=0.9,zh-TW;q=0.8,zh;q=0.7"
   }, timeoutMs);
 }
-
-// ── Parse helpers ───────────────────────────────────────────────────────────
-
+;// ./src/backend/core/network/barrons/urls.ts
+function buildBarronsUrls(symbol) {
+  const base = `https://www.barrons.com/market-data/stocks/${symbol}`;
+  const finApiBase = `https://www.barrons.com/market-data/api/proxy?` + `https://quote-barrons.millstone.mktw.dowjones.io/api/quote/financials` + `?chartingSymbol=stock///${symbol}&urlFragment=`;
+  const millstoneBase = `https://www.barrons.com/market-data/api/millstone?ticker=${symbol}&PAGE=`;
+  const profileFetchUrl = `https://quote-barrons.millstone.mktw.dowjones.io/api/quote/profile?chartingSymbol=stock///${symbol}`;
+  const ufcJson = encodeURIComponent(JSON.stringify({
+    defaultLoginUrl: `https://www.barrons.com/client/login?target=${encodeURIComponent(`http://www.barrons.com/market-data/stocks/${symbol}/company-people`)}`,
+    pandaAPI: "https://follow-api.barrons.com",
+    ufcLoader: "https://www.barrons.com/asset/dj-ufc/loaders/barrons.js",
+    captchaSiteKey: "6LcmI7sUAAAAAF-vTKb3JIwIzz2CXCx8hJW0Ukis"
+  }));
+  const overviewPage = encodeURIComponent('{"renderTab":"","assetType":"stock","analyticsValue":"stockoverview"}');
+  const companyPage = encodeURIComponent('{"renderTab":"company-people","assetType":"stock","analyticsValue":"stockcompany"}');
+  const newsBase = `https://www.barrons.com/market-data/api/news?chartingSymbol=stock///${symbol}&pageNumber=0&count=40`;
+  return {
+    ratings: `${base}/research-ratings`,
+    overview: `${millstoneBase}${overviewPage}&ufc=%7B`,
+    companyPeople: `${millstoneBase}${companyPage}&ufc=${ufcJson}&fetchUrl=${encodeURIComponent(profileFetchUrl)}&countrycode=&iso=`,
+    finIncome: `${finApiBase}income/annual`,
+    finBalance: `${finApiBase}balance-sheet/annual`,
+    finCashFlow: `${finApiBase}cash-flow/annual`,
+    finIncomeQ: `${finApiBase}income/quarter`,
+    finBalanceQ: `${finApiBase}balance-sheet/quarter`,
+    finCashFlowQ: `${finApiBase}cash-flow/quarter`,
+    newsBarrons: `${newsBase}&channel=Barrons`,
+    newsDowJones: `${newsBase}&channel=BarronsDowJonesNetwork`,
+    newsPR: `${newsBase}&channel=BarronsPressReleases`
+  };
+}
+;// ./src/backend/core/network/barrons/extractors.ts
 function formattedValue(o) {
   return o?.formatted ?? o?.value ?? null;
 }
@@ -14736,11 +14823,8 @@ function parseStatement(apiData) {
       for (const item of items) {
         allRows.push({
           name: item.displayName,
-          // API: items[].displayName
           values: (item.values ?? []).map(v => v?.formatted ?? "-"),
-          // API: items[].values[].formatted
           rawValues: (item.values ?? []).map(v => v?.value ?? null),
-          // API: items[].values[].value
           type: item.type ?? 0,
           level: item.level ?? depth
         });
@@ -14771,39 +14855,18 @@ function extractNews(apiData) {
     label: s.label?.display ?? s.sectionLabel?.display ?? ""
   }));
 }
+;// ./src/backend/core/network/barrons/BarronsFetcher.ts
+/**
+ * Barrons data fetcher and parser.
+ * Fetches from multiple Barrons/MarketWatch endpoints (HTML + JSON APIs).
+ * All parsed data is assembled into a BarronsDataBundle (see ai/types.ts).
+ * See inline comments in each parser function for API -> internal field mappings.
+ */
 
-// ── URL builders ────────────────────────────────────────────────────────────
 
-function buildBarronsUrls(symbol) {
-  const base = `https://www.barrons.com/market-data/stocks/${symbol}`;
-  const finApiBase = `https://www.barrons.com/market-data/api/proxy?` + `https://quote-barrons.millstone.mktw.dowjones.io/api/quote/financials` + `?chartingSymbol=stock///${symbol}&urlFragment=`;
-  const millstoneBase = `https://www.barrons.com/market-data/api/millstone?ticker=${symbol}&PAGE=`;
-  const profileFetchUrl = `https://quote-barrons.millstone.mktw.dowjones.io/api/quote/profile?chartingSymbol=stock///${symbol}`;
-  const ufcJson = encodeURIComponent(JSON.stringify({
-    defaultLoginUrl: `https://www.barrons.com/client/login?target=${encodeURIComponent(`http://www.barrons.com/market-data/stocks/${symbol}/company-people`)}`,
-    pandaAPI: "https://follow-api.barrons.com",
-    ufcLoader: "https://www.barrons.com/asset/dj-ufc/loaders/barrons.js",
-    captchaSiteKey: "6LcmI7sUAAAAAF-vTKb3JIwIzz2CXCx8hJW0Ukis"
-  }));
-  const overviewPage = encodeURIComponent('{"renderTab":"","assetType":"stock","analyticsValue":"stockoverview"}');
-  const companyPage = encodeURIComponent('{"renderTab":"company-people","assetType":"stock","analyticsValue":"stockcompany"}');
-  const newsBase = `https://www.barrons.com/market-data/api/news?chartingSymbol=stock///${symbol}&pageNumber=0&count=40`;
-  return {
-    ratings: `${base}/research-ratings`,
-    overview: `${millstoneBase}${overviewPage}&ufc=%7B`,
-    companyPeople: `${millstoneBase}${companyPage}&ufc=${ufcJson}&fetchUrl=${encodeURIComponent(profileFetchUrl)}&countrycode=&iso=`,
-    finIncome: `${finApiBase}income/annual`,
-    finBalance: `${finApiBase}balance-sheet/annual`,
-    finCashFlow: `${finApiBase}cash-flow/annual`,
-    finIncomeQ: `${finApiBase}income/quarter`,
-    finBalanceQ: `${finApiBase}balance-sheet/quarter`,
-    finCashFlowQ: `${finApiBase}cash-flow/quarter`,
-    newsBarrons: `${newsBase}&channel=Barrons`,
-    newsDowJones: `${newsBase}&channel=BarronsDowJonesNetwork`,
-    newsPR: `${newsBase}&channel=BarronsPressReleases`
-  };
-}
 
+
+const BarronsFetcher_log = logService.namespace("network");
 // ── News-only fetch (lightweight, for the news page) ────────────────────────
 
 async function fetchBarronsNewsOnly(symbol) {
@@ -15393,6 +15456,183 @@ async function fetchFinancialJuiceNews() {
     return [];
   }
 }
+;// ./src/backend/services/news/newsItemHelpers.ts
+
+
+/** Compare two string arrays element-by-element. */
+function areSymbolsEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/** Strict deep-equal on the UnifiedNewsItem fields that the UI actually shows. */
+function areItemsEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false;
+    if (a[i].publishedAt !== b[i].publishedAt) return false;
+    if (a[i].title !== b[i].title) return false;
+    if (a[i].summary !== b[i].summary) return false;
+    if (a[i].source !== b[i].source) return false;
+    if (a[i].sourceType !== b[i].sourceType) return false;
+    if (a[i].symbol !== b[i].symbol) return false;
+    if (!areSymbolTagsEqual(a[i], b[i])) return false;
+    if ((a[i].url ?? null) !== (b[i].url ?? null)) return false;
+    if (!!a[i].isHeadline !== !!b[i].isHeadline) return false;
+  }
+  return true;
+}
+function areSymbolTagsEqual(a, b) {
+  const aSymbols = getNewsItemSymbols(a);
+  const bSymbols = getNewsItemSymbols(b);
+  if (aSymbols.length !== bSymbols.length) return false;
+  for (let i = 0; i < aSymbols.length; i++) {
+    if (aSymbols[i] !== bSymbols[i]) return false;
+  }
+  return true;
+}
+function areSymbolArraysEqual(a, b) {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+/** Re-normalize symbol tags so a stored item exposes a deduped, sorted list. */
+function normalizeNewsItemSymbols(item) {
+  const symbolTags = normalizeNewsSymbolTags(item.symbolTags, item.symbol);
+  const primary = symbolTags[0] ?? null;
+  if (item.symbol === primary && areSymbolArraysEqual(item.symbolTags, symbolTags)) {
+    return item;
+  }
+  return {
+    ...item,
+    symbol: primary,
+    symbolTags
+  };
+}
+
+/** Merge two duplicates into one canonical item. The newer publishedAt wins. */
+function mergeDuplicateNewsItems(existing, incoming) {
+  const mergedSymbols = normalizeNewsSymbolTags([...getNewsItemSymbols(existing), ...getNewsItemSymbols(incoming)]);
+  const existingTs = toEpochMs(existing.publishedAt);
+  const incomingTs = toEpochMs(incoming.publishedAt);
+  const primary = incomingTs > existingTs ? incoming : existing;
+  const secondary = primary === existing ? incoming : existing;
+  return {
+    ...primary,
+    summary: primary.summary || secondary.summary,
+    url: primary.url ?? secondary.url,
+    symbol: mergedSymbols[0] ?? null,
+    symbolTags: mergedSymbols,
+    isHeadline: !!primary.isHeadline || !!secondary.isHeadline
+  };
+}
+
+/**
+ * Normalize an inbound symbol-list to a stable, deduped, sorted array.
+ * Stable ordering avoids needless refresh churn from upstream order changes.
+ */
+function newsItemHelpers_normalizeSymbols(symbols) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of symbols) {
+    const normalized = normalizeSymbol(raw);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+/** Coerce a raw user-typed symbol string into a canonical ticker. */
+function normalizeSymbol(raw) {
+  const base = String(raw ?? "").trim().toUpperCase();
+  if (!base) return null;
+
+  // Option display symbols often look like "NVDA 03/20/2026 155.00 P".
+  let candidate = base.split(/\s+/)[0] ?? "";
+
+  // OCC compact options: AAPL250117C00225000 -> AAPL
+  const occMatch = candidate.match(/^([A-Z]{1,6})\d{6}[CP]\d{8}$/);
+  if (occMatch) candidate = occMatch[1];
+  candidate = candidate.replace(/\//g, ".").replace(/[^A-Z0-9.$-]/g, "");
+  if (!candidate || candidate.startsWith("$")) return null;
+  if (!/^[A-Z0-9][A-Z0-9.-]{0,9}$/.test(candidate)) return null;
+  return candidate;
+}
+;// ./src/backend/services/news/newsFetchHelpers.ts
+const SYMBOL_SCOPED_FETCH_CONCURRENCY = 6;
+const MIN_REFRESH_INTERVAL_MS = 1_000;
+
+/** Coerce a raw interval value to a sane positive ms (or 0 to mean off). */
+function normalizeIntervalMs(raw, fallback) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  if (n === 0) return 0;
+  return Math.max(MIN_REFRESH_INTERVAL_MS, Math.round(n));
+}
+
+/** Render a refresh interval for the settings UI ("Off", "30s", "5m", "1.5m"). */
+function formatInterval(ms) {
+  if (ms <= 0) return "Off";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  if (totalSeconds % 60 === 0) return `${totalSeconds / 60}m`;
+  return `${(totalSeconds / 60).toFixed(1)}m`;
+}
+
+/**
+ * Run `fetcher` against each `symbol` with a small worker pool. Per-symbol
+ * failures are swallowed so one bad symbol does not abort the batch.
+ */
+async function fetchPerSymbol(symbols, fetcher) {
+  if (symbols.length === 0) return [];
+  const merged = [];
+  const workerCount = Math.min(SYMBOL_SCOPED_FETCH_CONCURRENCY, symbols.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < symbols.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const symbol = symbols[currentIndex];
+      try {
+        const items = await fetcher(symbol);
+        merged.push(...items);
+      } catch {
+        // Fail-soft per symbol: keep processing remaining symbols.
+      }
+    }
+  };
+  await Promise.all(Array.from({
+    length: workerCount
+  }, () => worker()));
+  return merged;
+}
+
+/**
+ * Decide whether to use the freshly-fetched batch or fall back to the
+ * previously-cached `previous` batch on a transient empty pull. Empty pulls
+ * for symbol-scoped sources only matter when symbols are non-empty.
+ */
+function resolveSourceItems(source, fetched, previous, hasSymbols) {
+  // Keep previous symbol-scoped batch on transient empty pulls.
+  if ((source === "yahooSymbol" || source === "barrons") && hasSymbols && fetched.length === 0 && previous.length > 0) {
+    return previous;
+  }
+
+  // Keep previous global-source batch on transient empty pull.
+  if ((source === "financialJuice" || source === "schwab") && fetched.length === 0 && previous.length > 0) {
+    return previous;
+  }
+  return fetched;
+}
 ;// ./src/backend/services/ai/config/modelCatalog.ts
 const OPENAI_SERVICE_TIER_OPTIONS = ["auto", "default", "flex", "priority"];
 const OPENAI_PRICING_TIER_OPTIONS = (/* unused pure expression or super */ null && (["standard", "flex", "batch"]));
@@ -15545,15 +15785,152 @@ async function* parseSSEStream(response, signal) {
     reader.releaseLock();
   }
 }
-;// ./src/backend/core/network/llm/LLMClient.ts
+;// ./src/backend/core/network/llm/openaiProvider.ts
 
-
-
-const LLMClient_log = logService.namespace("ai");
 function isOpenAIReasoningModel(model) {
   const normalized = model.trim().toLowerCase();
   return /^o\d/.test(normalized) || /^gpt-5($|[-.])/.test(normalized);
 }
+async function completeOpenAI(ctx, options) {
+  const isReasoning = isOpenAIReasoningModel(ctx.model);
+  const payload = {
+    model: ctx.model,
+    input: [{
+      role: isReasoning ? "developer" : "system",
+      content: options.systemPrompt
+    }, ...options.messages],
+    max_output_tokens: options.maxTokens ?? ctx.maxTokens
+  };
+  if (isReasoning) {
+    payload.reasoning = {
+      effort: "medium",
+      summary: "auto"
+    };
+  }
+  if (!isReasoning && ctx.supportsCustomTemperature) {
+    payload.temperature = options.temperature ?? ctx.temperature;
+  }
+  const timeoutMs = ctx.openAIServiceTier === "flex" ? 600_000 : 180_000;
+  const response = await ctx.fetchWithTimeout("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.apiKey}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  }, timeoutMs, "OpenAI");
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`OpenAI API error ${response.status}: ${text.slice(0, 300)}`);
+  }
+  const parsed = await response.json();
+  const outputMsg = parsed.output?.find(o => o.type === "message");
+  const text = outputMsg?.content?.filter(c => c.type === "output_text").map(c => c.text ?? "").join("") ?? "";
+  const inputTokens = parsed.usage?.input_tokens ?? 0;
+  const outputTokens = parsed.usage?.output_tokens ?? 0;
+  const reasoningTokens = parsed.usage?.output_tokens_details?.reasoning_tokens;
+  const finishReason = parsed.status ?? undefined;
+  return {
+    content: text,
+    tokensUsed: inputTokens + outputTokens,
+    model: parsed.model ?? ctx.model,
+    ...(finishReason ? {
+      finishReason
+    } : {}),
+    ...(reasoningTokens != null ? {
+      reasoningTokens
+    } : {})
+  };
+}
+
+/**
+ * OpenAI streaming via the Responses API (/v1/responses).
+ * Uses Responses API for native web_search tool and reasoning.summary.
+ */
+async function* streamOpenAI(ctx, options) {
+  const isReasoning = isOpenAIReasoningModel(ctx.model);
+  const payload = {
+    model: ctx.model,
+    stream: true,
+    input: [{
+      role: isReasoning ? "developer" : "system",
+      content: options.systemPrompt
+    }, ...options.messages],
+    max_output_tokens: options.maxTokens ?? ctx.maxTokens
+  };
+  if (options.webSearch) {
+    payload.tools = [{
+      type: "web_search"
+    }];
+  }
+  if (isReasoning) {
+    payload.reasoning = {
+      effort: "medium",
+      summary: "auto"
+    };
+  }
+  if (!isReasoning && ctx.supportsCustomTemperature) {
+    payload.temperature = options.temperature ?? ctx.temperature;
+  }
+  const response = await ctx.fetchStreaming("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.apiKey}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  }, options.signal, "OpenAI");
+  for await (const data of parseSSEStream(response, options.signal)) {
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const eventType = event.type;
+    if (eventType === "response.output_text.delta") {
+      yield {
+        type: "text",
+        delta: event.delta ?? ""
+      };
+    } else if (eventType === "response.reasoning_summary_text.delta") {
+      yield {
+        type: "thinking",
+        delta: event.delta ?? ""
+      };
+    } else if (eventType === "response.output_text.annotation.added") {
+      const ann = event.annotation;
+      if (ann?.type === "url_citation" && ann.url) {
+        yield {
+          type: "annotation",
+          annotation: {
+            url: ann.url,
+            title: ann.title ?? "",
+            startIndex: ann.start_index ?? 0,
+            endIndex: ann.end_index ?? 0
+          }
+        };
+      }
+    } else if (eventType === "response.completed") {
+      const usage = event.response?.usage;
+      const inputTokens = usage?.input_tokens ?? 0;
+      const outputTokens = usage?.output_tokens ?? 0;
+      const outputDetails = usage?.output_tokens_details;
+      yield {
+        type: "done",
+        tokensUsed: inputTokens + outputTokens,
+        reasoningTokens: outputDetails?.reasoning_tokens,
+        finishReason: event.response?.status ?? undefined
+      };
+    }
+  }
+}
+;// ./src/backend/core/network/llm/LLMClient.ts
+
+
+
+
+const LLMClient_log = logService.namespace("ai");
 class LLMClient {
   constructor(config) {
     this.provider = config.provider;
@@ -15574,7 +15951,7 @@ class LLMClient {
     });
     try {
       let result;
-      if (this.provider === "anthropic") result = await this.completeAnthropic(options);else if (this.provider === "google") result = await this.completeGoogle(options);else result = await this.completeOpenAI(options);
+      if (this.provider === "anthropic") result = await this.completeAnthropic(options);else if (this.provider === "google") result = await this.completeGoogle(options);else result = await completeOpenAI(this.openAIContext(), options);
       span.end("ok", {
         tokensUsed: result.tokensUsed,
         model: result.model
@@ -15596,7 +15973,7 @@ class LLMClient {
       model: this.model
     });
     try {
-      if (this.provider === "anthropic") yield* this.streamAnthropic(options);else if (this.provider === "google") yield* this.streamGemini(options);else yield* this.streamOpenAI(options);
+      if (this.provider === "anthropic") yield* this.streamAnthropic(options);else if (this.provider === "google") yield* this.streamGemini(options);else yield* streamOpenAI(this.openAIContext(), options);
       span.end("ok", {}, "info");
     } catch (err) {
       span.end("error", {
@@ -15607,6 +15984,21 @@ class LLMClient {
         error: err?.message ?? String(err)
       };
     }
+  }
+
+  // ── Provider context ─────────────────────────────────────────────────────
+
+  openAIContext() {
+    return {
+      apiKey: this.apiKey,
+      model: this.model,
+      maxTokens: this.maxTokens,
+      temperature: this.temperature,
+      openAIServiceTier: this.openAIServiceTier,
+      supportsCustomTemperature: this.supportsCustomTemperature,
+      fetchWithTimeout: (url, init, timeoutMs, providerName) => this.fetchWithTimeout(url, init, timeoutMs, providerName),
+      fetchStreaming: (url, init, signal, providerName, connectTimeoutMs) => this.fetchStreaming(url, init, signal, providerName, connectTimeoutMs)
+    };
   }
 
   // ── Fetch helpers ────────────────────────────────────────────────────────
@@ -15637,7 +16029,6 @@ class LLMClient {
    */
   async fetchStreaming(url, init, signal, providerName = "LLM", connectTimeoutMs = 30_000) {
     const controller = new AbortController();
-    // Combine caller signal with connection timeout
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort);
     const timeoutId = setTimeout(() => controller.abort(), connectTimeoutMs);
@@ -15736,142 +16127,8 @@ class LLMClient {
       model: this.model
     };
   }
-  async completeOpenAI(options) {
-    const isReasoning = isOpenAIReasoningModel(this.model);
-    const payload = {
-      model: this.model,
-      input: [{
-        role: isReasoning ? "developer" : "system",
-        content: options.systemPrompt
-      }, ...options.messages],
-      max_output_tokens: options.maxTokens ?? this.maxTokens
-    };
-    if (isReasoning) {
-      payload.reasoning = {
-        effort: "medium",
-        summary: "auto"
-      };
-    }
-    if (!isReasoning && this.supportsCustomTemperature) {
-      payload.temperature = options.temperature ?? this.temperature;
-    }
-    const timeoutMs = this.openAIServiceTier === "flex" ? 600_000 : 180_000;
-    const response = await this.fetchWithTimeout("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    }, timeoutMs, "OpenAI");
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`OpenAI API error ${response.status}: ${text.slice(0, 300)}`);
-    }
-    const parsed = await response.json();
-    const outputMsg = parsed.output?.find(o => o.type === "message");
-    const text = outputMsg?.content?.filter(c => c.type === "output_text").map(c => c.text ?? "").join("") ?? "";
-    const inputTokens = parsed.usage?.input_tokens ?? 0;
-    const outputTokens = parsed.usage?.output_tokens ?? 0;
-    const reasoningTokens = parsed.usage?.output_tokens_details?.reasoning_tokens;
-    const finishReason = parsed.status ?? undefined;
-    return {
-      content: text,
-      tokensUsed: inputTokens + outputTokens,
-      model: parsed.model ?? this.model,
-      ...(finishReason ? {
-        finishReason
-      } : {}),
-      ...(reasoningTokens != null ? {
-        reasoningTokens
-      } : {})
-    };
-  }
 
   // ── Streaming providers ──────────────────────────────────────────────────
-
-  /**
-   * OpenAI streaming via the Responses API (/v1/responses).
-   * Uses Responses API for native web_search tool and reasoning.summary.
-   */
-  async *streamOpenAI(options) {
-    const isReasoning = isOpenAIReasoningModel(this.model);
-    const payload = {
-      model: this.model,
-      stream: true,
-      input: [{
-        role: isReasoning ? "developer" : "system",
-        content: options.systemPrompt
-      }, ...options.messages],
-      max_output_tokens: options.maxTokens ?? this.maxTokens
-    };
-    if (options.webSearch) {
-      payload.tools = [{
-        type: "web_search"
-      }];
-    }
-    if (isReasoning) {
-      payload.reasoning = {
-        effort: "medium",
-        summary: "auto"
-      };
-    }
-    if (!isReasoning && this.supportsCustomTemperature) {
-      payload.temperature = options.temperature ?? this.temperature;
-    }
-    const response = await this.fetchStreaming("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    }, options.signal, "OpenAI");
-    for await (const data of parseSSEStream(response, options.signal)) {
-      let event;
-      try {
-        event = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      const eventType = event.type;
-      if (eventType === "response.output_text.delta") {
-        yield {
-          type: "text",
-          delta: event.delta ?? ""
-        };
-      } else if (eventType === "response.reasoning_summary_text.delta") {
-        yield {
-          type: "thinking",
-          delta: event.delta ?? ""
-        };
-      } else if (eventType === "response.output_text.annotation.added") {
-        const ann = event.annotation;
-        if (ann?.type === "url_citation" && ann.url) {
-          yield {
-            type: "annotation",
-            annotation: {
-              url: ann.url,
-              title: ann.title ?? "",
-              startIndex: ann.start_index ?? 0,
-              endIndex: ann.end_index ?? 0
-            }
-          };
-        }
-      } else if (eventType === "response.completed") {
-        const usage = event.response?.usage;
-        const inputTokens = usage?.input_tokens ?? 0;
-        const outputTokens = usage?.output_tokens ?? 0;
-        const outputDetails = usage?.output_tokens_details;
-        yield {
-          type: "done",
-          tokensUsed: inputTokens + outputTokens,
-          reasoningTokens: outputDetails?.reasoning_tokens,
-          finishReason: event.response?.status ?? undefined
-        };
-      }
-    }
-  }
 
   /**
    * Anthropic streaming via /v1/messages with stream: true.
@@ -16190,6 +16447,9 @@ async function tagNewsItems(items, providerConfig) {
 
 
 
+
+
+
 const NEWS_FETCH_SOURCES = ["yahooMacro", "yahooSymbol", "barrons", "financialJuice", "schwab"];
 const NEWS_GLOBAL_SOURCES = ["financialJuice", "yahooMacro", "schwab"];
 const NEWS_SYMBOL_SOURCES = ["yahooSymbol", "barrons"];
@@ -16200,16 +16460,8 @@ const NewsService_NEWS_SOURCE_LABELS = {
   financialJuice: "FinancialJuice",
   schwab: "Schwab"
 };
-const MIN_REFRESH_INTERVAL_MS = 1_000;
-const SYMBOL_SCOPED_FETCH_CONCURRENCY = 6;
 const LOG_SYMBOL_SAMPLE_LIMIT = 10;
-const DEFAULT_NEWS_REFRESH_INTERVALS = {
-  yahooMacroMs: 120_000,
-  yahooSymbolMs: 120_000,
-  barronsMs: 180_000,
-  financialJuiceMs: 45_000,
-  schwabMs: 120_000
-};
+
 class NewsService {
   items = [];
   symbols = [];
@@ -16277,7 +16529,7 @@ class NewsService {
     return () => this.listeners.delete(listener);
   }
   start(symbols) {
-    this.symbols = this.normalizeSymbols(symbols);
+    this.symbols = newsItemHelpers_normalizeSymbols(symbols);
     this.logger.info("News symbols initialized", {
       symbolCount: this.symbols.length,
       symbolSample: this.getSymbolSample()
@@ -16297,8 +16549,8 @@ class NewsService {
     this.started = false;
   }
   updateSymbols(symbols) {
-    const normalized = this.normalizeSymbols(symbols);
-    const changed = !this.areSymbolsEqual(this.symbols, normalized);
+    const normalized = newsItemHelpers_normalizeSymbols(symbols);
+    const changed = !areSymbolsEqual(this.symbols, normalized);
     if (!changed) return;
     this.symbols = normalized;
     this.logger.info("News symbols updated", {
@@ -16340,26 +16592,26 @@ class NewsService {
   }
   getAutoRefreshLabel() {
     const i = this.refreshIntervals;
-    return `Auto-refresh: FJ ${this.formatInterval(i.financialJuiceMs)}` + ` · Yahoo Macro ${this.formatInterval(i.yahooMacroMs)}` + ` · Yahoo Symbol ${this.formatInterval(i.yahooSymbolMs)}` + ` · Barron's ${this.formatInterval(i.barronsMs)}` + ` · Schwab ${this.formatInterval(i.schwabMs)}`;
+    return `Auto-refresh: FJ ${formatInterval(i.financialJuiceMs)}` + ` · Yahoo Macro ${formatInterval(i.yahooMacroMs)}` + ` · Yahoo Symbol ${formatInterval(i.yahooSymbolMs)}` + ` · Barron's ${formatInterval(i.barronsMs)}` + ` · Schwab ${formatInterval(i.schwabMs)}`;
   }
   updateRefreshIntervals(patch) {
     const next = {
       ...this.refreshIntervals
     };
     if (patch.yahooMacroMs !== undefined) {
-      next.yahooMacroMs = this.normalizeIntervalMs(patch.yahooMacroMs, next.yahooMacroMs);
+      next.yahooMacroMs = normalizeIntervalMs(patch.yahooMacroMs, next.yahooMacroMs);
     }
     if (patch.yahooSymbolMs !== undefined) {
-      next.yahooSymbolMs = this.normalizeIntervalMs(patch.yahooSymbolMs, next.yahooSymbolMs);
+      next.yahooSymbolMs = normalizeIntervalMs(patch.yahooSymbolMs, next.yahooSymbolMs);
     }
     if (patch.barronsMs !== undefined) {
-      next.barronsMs = this.normalizeIntervalMs(patch.barronsMs, next.barronsMs);
+      next.barronsMs = normalizeIntervalMs(patch.barronsMs, next.barronsMs);
     }
     if (patch.financialJuiceMs !== undefined) {
-      next.financialJuiceMs = this.normalizeIntervalMs(patch.financialJuiceMs, next.financialJuiceMs);
+      next.financialJuiceMs = normalizeIntervalMs(patch.financialJuiceMs, next.financialJuiceMs);
     }
     if (patch.schwabMs !== undefined) {
-      next.schwabMs = this.normalizeIntervalMs(patch.schwabMs, next.schwabMs);
+      next.schwabMs = normalizeIntervalMs(patch.schwabMs, next.schwabMs);
     }
     const changed = next.yahooMacroMs !== this.refreshIntervals.yahooMacroMs || next.yahooSymbolMs !== this.refreshIntervals.yahooSymbolMs || next.barronsMs !== this.refreshIntervals.barronsMs || next.financialJuiceMs !== this.refreshIntervals.financialJuiceMs || next.schwabMs !== this.refreshIntervals.schwabMs;
     if (!changed) return;
@@ -16456,7 +16708,7 @@ class NewsService {
           hasSuccessfulFetch = true;
           const previous = this.sourceItems[source];
           const next = this.resolveSourceItems(source, result.value);
-          if (!this.areItemsEqual(previous, next)) {
+          if (!areItemsEqual(previous, next)) {
             this.sourceItems[source] = next;
             hasCacheChange = true;
           }
@@ -16547,53 +16799,23 @@ class NewsService {
       lastError: this.sourceHealth[source].lastError
     }));
   }
-  async fetchPerSymbol(fetcher) {
-    const targetSymbols = this.symbols;
-    if (targetSymbols.length === 0) return [];
-    const merged = [];
-    const workerCount = Math.min(SYMBOL_SCOPED_FETCH_CONCURRENCY, targetSymbols.length);
-    let nextIndex = 0;
-    const worker = async () => {
-      while (nextIndex < targetSymbols.length) {
-        const currentIndex = nextIndex;
-        nextIndex += 1;
-        const symbol = targetSymbols[currentIndex];
-        try {
-          const items = await fetcher(symbol);
-          merged.push(...items);
-        } catch {
-          // Fail-soft per symbol: keep processing remaining symbols.
-        }
-      }
-    };
-    await Promise.all(Array.from({
-      length: workerCount
-    }, () => worker()));
-    return merged;
+  fetchPerSymbol(fetcher) {
+    return fetchPerSymbol(this.symbols, fetcher);
   }
   resolveSourceItems(source, fetched) {
-    // Keep previous symbol-scoped batch on transient empty pulls.
-    if ((source === "yahooSymbol" || source === "barrons") && this.symbols.length > 0 && fetched.length === 0 && this.sourceItems[source].length > 0) {
-      return this.sourceItems[source];
-    }
-
-    // Keep previous global-source batch on transient empty pull.
-    if ((source === "financialJuice" || source === "schwab") && fetched.length === 0 && this.sourceItems[source].length > 0) {
-      return this.sourceItems[source];
-    }
-    return fetched;
+    return resolveSourceItems(source, fetched, this.sourceItems[source], this.symbols.length > 0);
   }
   async rebuildFromSources() {
     const raw = [...this.sourceItems.yahooMacro, ...this.sourceItems.yahooSymbol, ...this.sourceItems.barrons, ...this.sourceItems.financialJuice, ...this.sourceItems.schwab];
     const dedupedById = new Map();
     for (const rawItem of raw) {
-      const item = this.normalizeNewsItemSymbols(rawItem);
+      const item = normalizeNewsItemSymbols(rawItem);
       const existing = dedupedById.get(item.id);
       if (!existing) {
         dedupedById.set(item.id, item);
         continue;
       }
-      dedupedById.set(item.id, this.mergeDuplicateNewsItems(existing, item));
+      dedupedById.set(item.id, mergeDuplicateNewsItems(existing, item));
     }
     const sorted = this.sortNewestFirst(Array.from(dedupedById.values()));
     await this.ensureMemory();
@@ -16634,117 +16856,9 @@ class NewsService {
   sortNewestFirst(items) {
     return sortNewsItemsNewestFirst(items);
   }
-  normalizeIntervalMs(raw, fallback) {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) return fallback;
-    if (n === 0) return 0;
-    return Math.max(MIN_REFRESH_INTERVAL_MS, Math.round(n));
-  }
-  formatInterval(ms) {
-    if (ms <= 0) return "Off";
-    const totalSeconds = Math.max(1, Math.round(ms / 1000));
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    if (totalSeconds % 60 === 0) return `${totalSeconds / 60}m`;
-    return `${(totalSeconds / 60).toFixed(1)}m`;
-  }
   getSymbolSample(limit = LOG_SYMBOL_SAMPLE_LIMIT) {
     if (limit <= 0) return [];
     return this.symbols.slice(0, limit);
-  }
-  areSymbolsEqual(a, b) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i] !== b[i]) return false;
-    }
-    return true;
-  }
-  areItemsEqual(a, b) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-      if (a[i].id !== b[i].id) return false;
-      if (a[i].publishedAt !== b[i].publishedAt) return false;
-      if (a[i].title !== b[i].title) return false;
-      if (a[i].summary !== b[i].summary) return false;
-      if (a[i].source !== b[i].source) return false;
-      if (a[i].sourceType !== b[i].sourceType) return false;
-      if (a[i].symbol !== b[i].symbol) return false;
-      if (!this.areSymbolTagsEqual(a[i], b[i])) return false;
-      if ((a[i].url ?? null) !== (b[i].url ?? null)) return false;
-      if (!!a[i].isHeadline !== !!b[i].isHeadline) return false;
-    }
-    return true;
-  }
-  areSymbolTagsEqual(a, b) {
-    const aSymbols = getNewsItemSymbols(a);
-    const bSymbols = getNewsItemSymbols(b);
-    if (aSymbols.length !== bSymbols.length) return false;
-    for (let i = 0; i < aSymbols.length; i++) {
-      if (aSymbols[i] !== bSymbols[i]) return false;
-    }
-    return true;
-  }
-  normalizeNewsItemSymbols(item) {
-    const symbolTags = normalizeNewsSymbolTags(item.symbolTags, item.symbol);
-    const primary = symbolTags[0] ?? null;
-    if (item.symbol === primary && this.areSymbolArraysEqual(item.symbolTags, symbolTags)) {
-      return item;
-    }
-    return {
-      ...item,
-      symbol: primary,
-      symbolTags
-    };
-  }
-  mergeDuplicateNewsItems(existing, incoming) {
-    const mergedSymbols = normalizeNewsSymbolTags([...getNewsItemSymbols(existing), ...getNewsItemSymbols(incoming)]);
-    const existingTs = toEpochMs(existing.publishedAt);
-    const incomingTs = toEpochMs(incoming.publishedAt);
-    const primary = incomingTs > existingTs ? incoming : existing;
-    const secondary = primary === existing ? incoming : existing;
-    return {
-      ...primary,
-      summary: primary.summary || secondary.summary,
-      url: primary.url ?? secondary.url,
-      symbol: mergedSymbols[0] ?? null,
-      symbolTags: mergedSymbols,
-      isHeadline: !!primary.isHeadline || !!secondary.isHeadline
-    };
-  }
-  areSymbolArraysEqual(a, b) {
-    const left = a ?? [];
-    const right = b ?? [];
-    if (left.length !== right.length) return false;
-    for (let i = 0; i < left.length; i++) {
-      if (left[i] !== right[i]) return false;
-    }
-    return true;
-  }
-  normalizeSymbols(symbols) {
-    const out = [];
-    const seen = new Set();
-    for (const raw of symbols) {
-      const normalized = this.normalizeSymbol(raw);
-      if (!normalized || seen.has(normalized)) continue;
-      seen.add(normalized);
-      out.push(normalized);
-    }
-    // Stable order so noisy upstream ordering doesn't trigger needless refresh churn.
-    return out.sort((a, b) => a.localeCompare(b));
-  }
-  normalizeSymbol(raw) {
-    const base = String(raw ?? "").trim().toUpperCase();
-    if (!base) return null;
-
-    // Option display symbols often look like "NVDA 03/20/2026 155.00 P".
-    let candidate = base.split(/\s+/)[0] ?? "";
-
-    // OCC compact options: AAPL250117C00225000 -> AAPL
-    const occMatch = candidate.match(/^([A-Z]{1,6})\d{6}[CP]\d{8}$/);
-    if (occMatch) candidate = occMatch[1];
-    candidate = candidate.replace(/\//g, ".").replace(/[^A-Z0-9.$-]/g, "");
-    if (!candidate || candidate.startsWith("$")) return null;
-    if (!/^[A-Z0-9][A-Z0-9.-]{0,9}$/.test(candidate)) return null;
-    return candidate;
   }
 
   // ── AI orchestration ──────────────────────────────────────────────
@@ -16972,7 +17086,7 @@ function computeThreeFactorBeta(stockReturns, spxReturns, ndxReturns, djiReturns
     computedAt: new Date().toISOString()
   };
 }
-;// ./src/shared/utils/concurrency.ts
+;// ./src/shared/utils/async/concurrency.ts
 /** Run async work over a queue of items with a concurrency limit. */
 async function runConcurrentQueue(items, fn, concurrency, onError) {
   const results = new Map();
@@ -16992,13 +17106,9 @@ async function runConcurrentQueue(items, fn, concurrency, onError) {
   }, () => worker()));
   return results;
 }
-;// ./src/backend/pipeline/beta/BetaService.ts
+;// ./src/backend/pipeline/beta/betaHorizons.ts
 
-
-
-
-
-const BetaService_log = logService.namespace("compute");
+const betaHorizons_log = logService.namespace("compute");
 const DEFAULT_BENCHMARK = "$SPX";
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -17041,7 +17151,7 @@ async function computeAcrossHorizons(symbol, computeOne, logTag) {
     try {
       return [horizon.key, await computeOne(horizon)];
     } catch (err) {
-      BetaService_log.warn(logTag, {
+      betaHorizons_log.warn(logTag, {
         symbol,
         horizon: horizon.key,
         error: err?.message
@@ -17051,13 +17161,254 @@ async function computeAcrossHorizons(symbol, computeOne, logTag) {
   }));
   return Object.fromEntries(entries);
 }
+;// ./src/backend/pipeline/beta/BetaBarCache.ts
 
+
+
+const BetaBarCache_log = logService.namespace("compute");
+const MARKET_CACHE_TTL = 4 * 60 * 60 * 1000;
+const PERIOD_SAFETY_BUFFER_SECONDS = 3600;
+
+/**
+ * Caches OHLCV bar fetches used by the beta pipeline. Two caches:
+ *   - `marketBars` is shared across recompute cycles (TTL 4h).
+ *   - `stockBars` is session-scoped and cleared between cycles.
+ */
+class BetaBarCache {
+  marketBars = new Map();
+  stockBars = new Map();
+  constructor(chartService) {
+    this.chartService = chartService;
+  }
+
+  /** Pass-through fetch (no caching). */
+  async fetchBars(symbol, lookbackDays, interval) {
+    const now = Math.floor(Date.now() / 1000);
+    const period1 = now - lookbackDays * 86400 + PERIOD_SAFETY_BUFFER_SECONDS;
+    const result = await this.chartService.fetch({
+      symbol,
+      interval: interval,
+      window: {
+        kind: "period",
+        period1,
+        period2: now
+      },
+      includePrePost: false
+    });
+    return result.bars;
+  }
+
+  /** Cached benchmark-bar fetch (4h TTL). Empty fetches are not cached. */
+  async fetchMarketBars(lookbackDays, interval, marketSymbol = DEFAULT_BENCHMARK) {
+    const cacheKey = `${marketSymbol}_${lookbackDays}_${interval}`;
+    const cached = this.marketBars.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < MARKET_CACHE_TTL) {
+      return cached.bars;
+    }
+    const bars = await this.fetchBars(marketSymbol, lookbackDays, interval);
+    if (bars.length > 0) {
+      this.marketBars.set(cacheKey, {
+        bars,
+        fetchedAt: Date.now()
+      });
+    }
+    return bars;
+  }
+
+  /** Stock-bar cache shared across models within one recompute cycle. */
+  async fetchStockBars(symbol, lookbackDays, interval) {
+    const cacheKey = `${symbol}_${lookbackDays}_${interval}`;
+    const cached = this.stockBars.get(cacheKey);
+    if (cached && Date.now() - cached.fetchedAt < MARKET_CACHE_TTL) {
+      return cached.bars;
+    }
+    const bars = await this.fetchBars(symbol, lookbackDays, interval);
+    this.stockBars.set(cacheKey, {
+      bars,
+      fetchedAt: Date.now()
+    });
+    return bars;
+  }
+  async fetchRollingStockBarsForAll(symbols, cfg, concurrency, mode, onSymbolFetched) {
+    return runConcurrentQueue(symbols, async sym => {
+      const bars = await this.fetchBars(sym, cfg.lookbackDays, cfg.interval);
+      onSymbolFetched?.({
+        symbol: sym,
+        bars: bars.length
+      });
+      return bars;
+    }, concurrency, (sym, err) => {
+      BetaBarCache_log.warn("beta.rolling.fetchFail", {
+        symbol: sym,
+        mode,
+        error: err.message
+      });
+      onSymbolFetched?.({
+        symbol: sym,
+        bars: 0,
+        error: err.message
+      });
+    });
+  }
+
+  /** Drop both caches. */
+  clear() {
+    this.marketBars.clear();
+    this.stockBars.clear();
+  }
+
+  /** Drop only the per-cycle stock cache. */
+  clearStockBars() {
+    this.stockBars.clear();
+  }
+}
+;// ./src/backend/pipeline/beta/rollingBeta.ts
+
+
+
+const rollingBeta_log = logService.namespace("compute");
+const ROLLING_CONFIGS = {
+  intraday: {
+    lookbackDays: 60,
+    interval: "5m",
+    windowBars: 78,
+    rolling: {
+      minWindowPoints: 50,
+      smoothingWindow: 78,
+      samplingStep: 78
+    }
+  },
+  daily: {
+    lookbackDays: 730,
+    interval: "1h",
+    windowBars: 65,
+    rolling: {
+      minWindowPoints: 50,
+      smoothingWindow: 35,
+      samplingStep: 35
+    }
+  }
+};
+async function computeRollingForTicker(barCache, symbol, mode, marketSymbol = DEFAULT_BENCHMARK) {
+  const cfg = ROLLING_CONFIGS[mode];
+  const [stockBars, marketBars] = await Promise.all([barCache.fetchBars(symbol, cfg.lookbackDays, cfg.interval), barCache.fetchMarketBars(cfg.lookbackDays, cfg.interval, marketSymbol)]);
+  return computeWorkerPool.computeRollingBeta(stockBars, marketBars, cfg.windowBars, cfg.rolling);
+}
+async function computeRollingForAll(barCache, symbols, mode, optionsOrConcurrency = 3) {
+  const opts = typeof optionsOrConcurrency === "number" ? {
+    concurrency: optionsOrConcurrency
+  } : optionsOrConcurrency ?? {};
+  const concurrency = opts.concurrency ?? 3;
+  const marketSymbol = opts.marketSymbol ?? DEFAULT_BENCHMARK;
+  const onProgress = opts.onProgress;
+  rollingBeta_log.info("beta.rolling.start", {
+    count: symbols.length,
+    mode,
+    marketSymbol
+  });
+  const cfg = ROLLING_CONFIGS[mode];
+  const results = new Map();
+  const startedAt = Date.now();
+  const totalSteps = Math.max(1, symbols.length * 2 + 1);
+  let completedSteps = 0;
+  let stockFetchDone = 0;
+  let computeDone = 0;
+  const emitProgress = (stage, message, extra) => {
+    if (!onProgress) return;
+    const percent = totalSteps > 0 ? Math.round(Math.min(completedSteps, totalSteps) / totalSteps * 100) : 0;
+    onProgress({
+      mode,
+      stage,
+      message,
+      completed: Math.min(completedSteps, totalSteps),
+      total: totalSteps,
+      percent,
+      elapsedMs: Date.now() - startedAt,
+      symbol: extra?.symbol,
+      bars: extra?.bars,
+      points: extra?.points,
+      error: extra?.error
+    });
+  };
+  emitProgress("start", `Starting rolling beta for ${symbols.length} symbols`);
+
+  // Step A: fetch market bars once.
+  let marketBars = [];
+  try {
+    marketBars = await barCache.fetchMarketBars(cfg.lookbackDays, cfg.interval, marketSymbol);
+    completedSteps += 1;
+    emitProgress("market_fetch", `Fetched ${marketSymbol} bars (${marketBars.length})`, {
+      bars: marketBars.length
+    });
+  } catch (err) {
+    emitProgress("error", `Failed to fetch ${marketSymbol} bars`, {
+      error: err?.message ?? "unknown error"
+    });
+    throw err;
+  }
+
+  // Step B: fetch all ticker bars.
+  const stockBarsBySymbol = await barCache.fetchRollingStockBarsForAll(symbols, cfg, concurrency, mode, progress => {
+    stockFetchDone += 1;
+    completedSteps = 1 + stockFetchDone + computeDone;
+    const base = `Fetched ticker bars ${stockFetchDone}/${symbols.length}`;
+    emitProgress("stock_fetch", progress.error ? `${base} (with errors)` : base, {
+      symbol: progress.symbol,
+      bars: progress.bars,
+      error: progress.error
+    });
+  });
+
+  // Step C: compute rolling beta per ticker.
+  for (const sym of symbols) {
+    try {
+      const stockBars = stockBarsBySymbol.get(sym) ?? [];
+      const points = await computeWorkerPool.computeRollingBeta(stockBars, marketBars, cfg.windowBars, cfg.rolling);
+      results.set(sym, points);
+      computeDone += 1;
+      completedSteps = 1 + stockFetchDone + computeDone;
+      emitProgress("compute", `Computed rolling beta ${computeDone}/${symbols.length}`, {
+        symbol: sym,
+        points: points.length
+      });
+    } catch (err) {
+      rollingBeta_log.warn("beta.rolling.fail", {
+        symbol: sym,
+        mode,
+        error: err?.message
+      });
+      results.set(sym, []);
+      computeDone += 1;
+      completedSteps = 1 + stockFetchDone + computeDone;
+      emitProgress("compute", `Computed rolling beta ${computeDone}/${symbols.length} (with errors)`, {
+        symbol: sym,
+        points: 0,
+        error: err?.message ?? "unknown error"
+      });
+    }
+  }
+  completedSteps = totalSteps;
+  emitProgress("complete", `Completed rolling beta for ${results.size} symbols`);
+  rollingBeta_log.info("beta.rolling.done", {
+    computed: results.size,
+    mode
+  });
+  return results;
+}
+;// ./src/backend/pipeline/beta/BetaService.ts
+
+
+
+
+
+
+
+
+const BetaService_log = logService.namespace("compute");
 // ── BetaService ─────────────────────────────────────────────────────────────
 
 class BetaService {
   // Fetch-dedup caches only (not result caches — BetaManager owns result state).
-  marketBarsCache = new Map();
-  stockBarsCache = new Map();
 
   /**
    * Lightweight session cache for on-demand single-ticker computations
@@ -17066,11 +17417,13 @@ class BetaService {
    * ad-hoc callers of computeForTicker().
    */
   adHocBetaCache = new Map();
-  static MARKET_CACHE_TTL = 4 * 60 * 60 * 1000;
-  static PERIOD_SAFETY_BUFFER_SECONDS = 3600;
   constructor(chartService) {
-    this.chartService = chartService;
+    this.barCache = new BetaBarCache(chartService);
   }
+  fetchBars = (symbol, lookbackDays, interval) => this.barCache.fetchBars(symbol, lookbackDays, interval);
+  fetchMarketBars = (lookbackDays, interval, marketSymbol = DEFAULT_BENCHMARK) => this.barCache.fetchMarketBars(lookbackDays, interval, marketSymbol);
+  fetchStockBars = (symbol, lookbackDays, interval) => this.barCache.fetchStockBars(symbol, lookbackDays, interval);
+  fetchRollingStockBarsForAll = (symbols, cfg, concurrency, mode, onSymbolFetched) => this.barCache.fetchRollingStockBarsForAll(symbols, cfg, concurrency, mode, onSymbolFetched);
 
   // ── Ad-hoc cache access ─────────────────────────────────────────────────
 
@@ -17201,7 +17554,7 @@ class BetaService {
       symbol: sym,
       error: err.message
     }));
-    this.stockBarsCache.clear();
+    this.barCache.clearStockBars();
     BetaService_log.info("beta.unified.done", {
       symbols: symbols.length,
       singleFactor: [...singleFactor.values()].reduce((s, m) => s + m.size, 0),
@@ -17335,213 +17688,20 @@ class BetaService {
 
   /** Invalidate fetch-dedup caches and ad-hoc result cache. */
   invalidate() {
-    this.marketBarsCache.clear();
-    this.stockBarsCache.clear();
+    this.barCache.clear();
     this.adHocBetaCache.clear();
   }
 
-  // ── Rolling beta ────────────────────────────────────────────────────────
+  // ── Rolling beta (delegated to ./rollingBeta.ts) ────────────────────────
 
-  static ROLLING_CONFIGS = {
-    intraday: {
-      lookbackDays: 60,
-      interval: "5m",
-      windowBars: 78,
-      rolling: {
-        minWindowPoints: 50,
-        smoothingWindow: 78,
-        samplingStep: 78
-      }
-    },
-    daily: {
-      lookbackDays: 730,
-      interval: "1h",
-      windowBars: 65,
-      rolling: {
-        minWindowPoints: 50,
-        smoothingWindow: 35,
-        samplingStep: 35
-      }
-    }
-  };
-  async computeRollingForTicker(symbol, mode, marketSymbol = DEFAULT_BENCHMARK) {
-    const cfg = BetaService.ROLLING_CONFIGS[mode];
-    const [stockBars, marketBars] = await Promise.all([this.fetchBars(symbol, cfg.lookbackDays, cfg.interval), this.fetchMarketBars(cfg.lookbackDays, cfg.interval, marketSymbol)]);
-    return computeWorkerPool.computeRollingBeta(stockBars, marketBars, cfg.windowBars, cfg.rolling);
+  computeRollingForTicker(symbol, mode, marketSymbol = DEFAULT_BENCHMARK) {
+    return computeRollingForTicker(this.barCache, symbol, mode, marketSymbol);
   }
-  async computeRollingForAll(symbols, mode, optionsOrConcurrency = 3) {
-    const opts = typeof optionsOrConcurrency === "number" ? {
-      concurrency: optionsOrConcurrency
-    } : optionsOrConcurrency ?? {};
-    const concurrency = opts.concurrency ?? 3;
-    const marketSymbol = opts.marketSymbol ?? DEFAULT_BENCHMARK;
-    const onProgress = opts.onProgress;
-    BetaService_log.info("beta.rolling.start", {
-      count: symbols.length,
-      mode,
-      marketSymbol
-    });
-    const cfg = BetaService.ROLLING_CONFIGS[mode];
-    const results = new Map();
-    const startedAt = Date.now();
-    const totalSteps = Math.max(1, symbols.length * 2 + 1);
-    let completedSteps = 0;
-    let stockFetchDone = 0;
-    let computeDone = 0;
-    const emitProgress = (stage, message, extra) => {
-      if (!onProgress) return;
-      const percent = totalSteps > 0 ? Math.round(Math.min(completedSteps, totalSteps) / totalSteps * 100) : 0;
-      onProgress({
-        mode,
-        stage,
-        message,
-        completed: Math.min(completedSteps, totalSteps),
-        total: totalSteps,
-        percent,
-        elapsedMs: Date.now() - startedAt,
-        symbol: extra?.symbol,
-        bars: extra?.bars,
-        points: extra?.points,
-        error: extra?.error
-      });
-    };
-    emitProgress("start", `Starting rolling beta for ${symbols.length} symbols`);
-
-    // Step A: fetch market bars once.
-    let marketBars = [];
-    try {
-      marketBars = await this.fetchMarketBars(cfg.lookbackDays, cfg.interval, marketSymbol);
-      completedSteps += 1;
-      emitProgress("market_fetch", `Fetched ${marketSymbol} bars (${marketBars.length})`, {
-        bars: marketBars.length
-      });
-    } catch (err) {
-      emitProgress("error", `Failed to fetch ${marketSymbol} bars`, {
-        error: err?.message ?? "unknown error"
-      });
-      throw err;
-    }
-
-    // Step B: fetch all ticker bars.
-    const stockBarsBySymbol = await this.fetchRollingStockBarsForAll(symbols, cfg, concurrency, mode, progress => {
-      stockFetchDone += 1;
-      completedSteps = 1 + stockFetchDone + computeDone;
-      const base = `Fetched ticker bars ${stockFetchDone}/${symbols.length}`;
-      emitProgress("stock_fetch", progress.error ? `${base} (with errors)` : base, {
-        symbol: progress.symbol,
-        bars: progress.bars,
-        error: progress.error
-      });
-    });
-
-    // Step C: compute rolling beta per ticker.
-    for (const sym of symbols) {
-      try {
-        const stockBars = stockBarsBySymbol.get(sym) ?? [];
-        const points = await computeWorkerPool.computeRollingBeta(stockBars, marketBars, cfg.windowBars, cfg.rolling);
-        results.set(sym, points);
-        computeDone += 1;
-        completedSteps = 1 + stockFetchDone + computeDone;
-        emitProgress("compute", `Computed rolling beta ${computeDone}/${symbols.length}`, {
-          symbol: sym,
-          points: points.length
-        });
-      } catch (err) {
-        BetaService_log.warn("beta.rolling.fail", {
-          symbol: sym,
-          mode,
-          error: err?.message
-        });
-        results.set(sym, []);
-        computeDone += 1;
-        completedSteps = 1 + stockFetchDone + computeDone;
-        emitProgress("compute", `Computed rolling beta ${computeDone}/${symbols.length} (with errors)`, {
-          symbol: sym,
-          points: 0,
-          error: err?.message ?? "unknown error"
-        });
-      }
-    }
-    completedSteps = totalSteps;
-    emitProgress("complete", `Completed rolling beta for ${results.size} symbols`);
-    BetaService_log.info("beta.rolling.done", {
-      computed: results.size,
-      mode
-    });
-    return results;
-  }
-
-  // ── Private helpers ─────────────────────────────────────────────────────
-
-  async fetchBars(symbol, lookbackDays, interval) {
-    const now = Math.floor(Date.now() / 1000);
-    const period1 = now - lookbackDays * 86400 + BetaService.PERIOD_SAFETY_BUFFER_SECONDS;
-    const result = await this.chartService.fetch({
-      symbol,
-      interval: interval,
-      window: {
-        kind: "period",
-        period1,
-        period2: now
-      },
-      includePrePost: false
-    });
-    return result.bars;
-  }
-  async fetchMarketBars(lookbackDays, interval, marketSymbol = DEFAULT_BENCHMARK) {
-    const cacheKey = `${marketSymbol}_${lookbackDays}_${interval}`;
-    const cached = this.marketBarsCache.get(cacheKey);
-    if (cached && Date.now() - cached.fetchedAt < BetaService.MARKET_CACHE_TTL) {
-      return cached.bars;
-    }
-    const bars = await this.fetchBars(marketSymbol, lookbackDays, interval);
-    // Only cache non-empty results to avoid persisting transient fetch failures
-    if (bars.length > 0) {
-      this.marketBarsCache.set(cacheKey, {
-        bars,
-        fetchedAt: Date.now()
-      });
-    }
-    return bars;
-  }
-
-  /** Stock bar cache shared across models within one recalc cycle. */
-  async fetchStockBars(symbol, lookbackDays, interval) {
-    const cacheKey = `${symbol}_${lookbackDays}_${interval}`;
-    const cached = this.stockBarsCache.get(cacheKey);
-    if (cached && Date.now() - cached.fetchedAt < BetaService.MARKET_CACHE_TTL) {
-      return cached.bars;
-    }
-    const bars = await this.fetchBars(symbol, lookbackDays, interval);
-    this.stockBarsCache.set(cacheKey, {
-      bars,
-      fetchedAt: Date.now()
-    });
-    return bars;
-  }
-  async fetchRollingStockBarsForAll(symbols, cfg, concurrency, mode, onSymbolFetched) {
-    return runConcurrentQueue(symbols, async sym => {
-      const bars = await this.fetchBars(sym, cfg.lookbackDays, cfg.interval);
-      onSymbolFetched?.({
-        symbol: sym,
-        bars: bars.length
-      });
-      return bars;
-    }, concurrency, (sym, err) => {
-      BetaService_log.warn("beta.rolling.fetchFail", {
-        symbol: sym,
-        mode,
-        error: err.message
-      });
-      onSymbolFetched?.({
-        symbol: sym,
-        bars: 0,
-        error: err.message
-      });
-    });
+  computeRollingForAll(symbols, mode, optionsOrConcurrency = 3) {
+    return computeRollingForAll(this.barCache, symbols, mode, optionsOrConcurrency);
   }
 }
-;// ./src/backend/core/network/schwab/symbol_quotes_history.ts
+;// ./src/backend/core/network/schwab/endpoints/symbol_quotes_history.ts
 
 
 function fetchSchwabChart(symbol, options, token) {
@@ -18123,7 +18283,7 @@ class ChartDataService {
 
 /** Shared singleton instance for use across all consumers. */
 const chartDataService = new ChartDataService();
-;// ./src/backend/core/network/schwab/balances.ts
+;// ./src/backend/core/network/schwab/endpoints/balances.ts
 
 
 
@@ -18237,7 +18397,7 @@ function fetchBalances(token, accountId) {
     throw err;
   });
 }
-;// ./src/backend/pipeline/PhaseManager.ts
+;// ./src/backend/pipeline/orchestration/PhaseManager.ts
 
 
 const phaseLog = logService.namespace("phase");
@@ -18469,36 +18629,12 @@ class PhaseManager {
     }
   }
 }
-;// ./src/backend/pipeline/BackendOrchestrator.ts
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// ── Options ──────────────────────────────────────────────────────────────────
-
-// ── Storage adapter type ─────────────────────────────────────────────────────
-
-// ── Injected context (minimal surface from AppContext) ────────────────────────
-
-// ── BackendOrchestrator ──────────────────────────────────────────────────────
+;// ./src/backend/pipeline/orchestration/backendOrchestratorTypes.ts
+/** Minimal subset of AppContext that the backend needs. */
 
 const DEFAULT_BETA_RECALC_INTERVAL_MS = 7_200_000;
+
+/** Dedupe a heterogeneous symbol list and uppercase it. Empty entries dropped. */
 function normalizeSymbolsUnique(symbols) {
   const next = [];
   const seen = new Set();
@@ -18510,6 +18646,123 @@ function normalizeSymbolsUnique(symbols) {
   }
   return next;
 }
+;// ./src/backend/pipeline/orchestration/sourceOverrideManager.ts
+
+/**
+ * Manages user-driven source overrides ("forceOn"/"forceOff") on top of
+ * whatever the phase-driven defaults have set. Overrides are sticky: when
+ * the phase changes, any active override is re-applied via
+ * applySourceOverrides(phase).
+ */
+class SourceOverrideManager {
+  overrides = new Map();
+  constructor(deps) {
+    this.deps = deps;
+  }
+  setOverride(key, state) {
+    if (state === "auto") {
+      this.overrides.delete(key);
+    } else {
+      this.overrides.set(key, state);
+    }
+  }
+  getOverride(key) {
+    return this.overrides.get(key) ?? "auto";
+  }
+  getAll() {
+    return this.overrides;
+  }
+
+  /** Re-apply every active override on top of the current phase defaults. */
+  applySourceOverrides(phase) {
+    for (const [key, override] of this.overrides) {
+      const defaultOn = getPhaseSourceDefault(phase, key);
+      const wantOn = override === "forceOn";
+      const wantOff = override === "forceOff";
+      if (wantOn && !defaultOn) {
+        this.forceSourceOn(key);
+      } else if (wantOff && defaultOn) {
+        this.forceSourceOff(key);
+      }
+      // If override aligns with default, no action needed (phase already set it)
+    }
+  }
+  forceSourceOn(key) {
+    const {
+      scheduler,
+      streamerBridge,
+      overnightBridge
+    } = this.deps;
+    switch (key) {
+      case "holdings":
+        if (scheduler.hasSource("holdings")) scheduler.resumeSource("holdings");else this.deps.reregisterHoldings();
+        break;
+      case "quotes":
+        if (scheduler.hasSource("quotes")) scheduler.resumeSource("quotes");else this.deps.reregisterQuotes();
+        break;
+      case "balances":
+        if (scheduler.hasSource("balances")) scheduler.resumeSource("balances");else this.deps.reregisterBalances();
+        break;
+      case "streamer":
+        streamerBridge.setEnabled(true);
+        streamerBridge.reconnect(this.deps.getAuthToken(), this.deps.getCustomerId());
+        break;
+      case "overnight":
+        overnightBridge.setEnabled(true);
+        break;
+      // sparkline is handled by the frontend store, not here
+    }
+  }
+  forceSourceOff(key) {
+    const {
+      scheduler,
+      streamerBridge,
+      overnightBridge
+    } = this.deps;
+    switch (key) {
+      case "holdings":
+        scheduler.pauseSource("holdings");
+        break;
+      case "quotes":
+        scheduler.pauseSource("quotes");
+        break;
+      case "balances":
+        scheduler.pauseSource("balances");
+        break;
+      case "streamer":
+        streamerBridge.setEnabled(false);
+        streamerBridge.disconnect();
+        break;
+      case "overnight":
+        overnightBridge.setEnabled(false);
+        break;
+    }
+  }
+}
+;// ./src/backend/pipeline/orchestration/BackendOrchestrator.ts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ── BackendOrchestrator ──────────────────────────────────────────────────────
+
 class BackendOrchestrator {
   latestFrame = null;
   started = false;
@@ -18517,7 +18770,6 @@ class BackendOrchestrator {
   fetchHoldingsTask = null;
   fetchBalancesTask = null;
   fetchQuotesTask = null;
-  sourceOverrides = new Map();
   constructor(ctx, options = {}) {
     this.ctx = ctx;
     this.initialOptions = options;
@@ -18622,6 +18874,16 @@ class BackendOrchestrator {
         this.applySourceOverrides(phase);
         this.eventBus.emit("phaseChange", phase);
       }
+    });
+    this.sourceOverrideManager = new SourceOverrideManager({
+      scheduler: this.scheduler,
+      streamerBridge: this.streamerBridge,
+      overnightBridge: this.overnightBridge,
+      getAuthToken: () => this.ctx.authToken,
+      getCustomerId: () => this.ctx.customerId ?? null,
+      reregisterHoldings: () => this.reregisterHoldings(),
+      reregisterQuotes: () => this.reregisterQuotes(),
+      reregisterBalances: () => this.reregisterBalances()
     });
   }
 
@@ -18818,79 +19080,20 @@ class BackendOrchestrator {
   // ── Phase override API (in-memory only, not persisted) ──────────────────
 
   setSourceOverride(key, state) {
-    if (state === "auto") {
-      this.sourceOverrides.delete(key);
-    } else {
-      this.sourceOverrides.set(key, state);
-    }
-    this.applySourceOverrides(this.phaseManager.getPhase());
+    this.sourceOverrideManager.setOverride(key, state);
+    this.sourceOverrideManager.applySourceOverrides(this.phaseManager.getPhase());
   }
   getSourceOverride(key) {
-    return this.sourceOverrides.get(key) ?? "auto";
+    return this.sourceOverrideManager.getOverride(key);
   }
   getSourceOverrides() {
-    return this.sourceOverrides;
+    return this.sourceOverrideManager.getAll();
   }
   getCurrentPhase() {
     return this.phaseManager.getPhase();
   }
-
-  /** Apply active overrides on top of whatever applyPhaseConfig just set. */
   applySourceOverrides(phase) {
-    for (const [key, override] of this.sourceOverrides) {
-      const defaultOn = getPhaseSourceDefault(phase, key);
-      const wantOn = override === "forceOn";
-      const wantOff = override === "forceOff";
-      if (wantOn && !defaultOn) {
-        // Force-enable a source that the phase would normally disable
-        this.forceSourceOn(key);
-      } else if (wantOff && defaultOn) {
-        // Force-disable a source that the phase would normally enable
-        this.forceSourceOff(key);
-      }
-      // If override aligns with default, no action needed (phase already set it)
-    }
-  }
-  forceSourceOn(key) {
-    switch (key) {
-      case "holdings":
-        if (this.scheduler.hasSource("holdings")) this.scheduler.resumeSource("holdings");else this.reregisterHoldings();
-        break;
-      case "quotes":
-        if (this.scheduler.hasSource("quotes")) this.scheduler.resumeSource("quotes");else this.reregisterQuotes();
-        break;
-      case "balances":
-        if (this.scheduler.hasSource("balances")) this.scheduler.resumeSource("balances");else this.reregisterBalances();
-        break;
-      case "streamer":
-        this.streamerBridge.setEnabled(true);
-        this.streamerBridge.reconnect(this.ctx.authToken, this.ctx.customerId ?? null);
-        break;
-      case "overnight":
-        this.overnightBridge.setEnabled(true);
-        break;
-      // sparkline is handled by the frontend store, not here
-    }
-  }
-  forceSourceOff(key) {
-    switch (key) {
-      case "holdings":
-        this.scheduler.pauseSource("holdings");
-        break;
-      case "quotes":
-        this.scheduler.pauseSource("quotes");
-        break;
-      case "balances":
-        this.scheduler.pauseSource("balances");
-        break;
-      case "streamer":
-        this.streamerBridge.setEnabled(false);
-        this.streamerBridge.disconnect();
-        break;
-      case "overnight":
-        this.overnightBridge.setEnabled(false);
-        break;
-    }
+    this.sourceOverrideManager.applySourceOverrides(phase);
   }
 
   // ── Manual triggers ──────────────────────────────────────────────────────
@@ -19363,7 +19566,7 @@ function axSeverityColors(severity) {
     border: AX_TONE_BORDER.positive
   };
 }
-;// ./src/frontend/components/core/theme.ts
+;// ./src/frontend/components/core/styles/theme.ts
 // Design-system tokens consumed by every page renderer.
 //
 // Backed by the AlexQuant `--ax-*` CSS-var system in ./axTheme. The legacy
@@ -19622,7 +19825,7 @@ const DS_OPACITY = {
   muted: 0.7,
   soft: 0.8
 };
-;// ./src/shared/utils/formatters.ts
+;// ./src/shared/utils/format/formatters.ts
 /**
  * Format a number as locale-aware USD currency, e.g. "$1,234" or "$1,234.56".
  * Zero is rendered as "$0" (not dash). This is the shared canonical formatter;
@@ -20351,7 +20554,7 @@ class HeaderRenderer {
     }
   }
 }
-;// ./src/backend/computation/holdings/accountOverviewMetrics.ts
+;// ./src/backend/computation/holdings/metrics/accountOverviewMetrics.ts
 function computeAccountOverviewMetrics(accountTotals, derived, account, perAccountTotals) {
   const portfolioAgg = derived?.portfolioAgg;
   const marketValue = accountTotals?.marketValue ?? perAccountTotals?.marketValue ?? perAccountTotals?.liquidationValue ?? 0;
@@ -20402,7 +20605,7 @@ function computeAccountOverviewMetrics(accountTotals, derived, account, perAccou
     optionsShortValue: 0
   };
 }
-;// ./src/backend/computation/holdings/balancesOverlay.ts
+;// ./src/backend/computation/holdings/rendering/balancesOverlay.ts
 /**
  * Overlay balances-API fields onto an AccountOverviewMetrics snapshot.
  * Pure function — no side effects. Returns a new object.
@@ -20643,7 +20846,7 @@ class DataPipelineCoordinator {
     return false;
   }
 }
-;// ./src/frontend/components/core/layoutMode.ts
+;// ./src/frontend/components/core/behaviors/layoutMode.ts
 // Centralized layout-mode detection for CSS class toggles and JS branching.
 
 let current = "desktop";
@@ -20679,6 +20882,20 @@ function onLayoutModeChange(fn) {
 function applyHtmlClass(mode) {
   document.documentElement.classList.toggle("layout-mobile", mode === "mobile");
   document.documentElement.classList.toggle("layout-desktop", mode === "desktop");
+}
+;// ./src/shared/utils/format/relativeTime.ts
+function formatTimeAgo(isoString, options = {}) {
+  const timestamp = new Date(isoString).getTime();
+  if (!Number.isFinite(timestamp)) return "—";
+  const nowMs = options.nowMs ?? Date.now();
+  const diffMs = Math.max(0, nowMs - timestamp);
+  const mins = Math.floor(diffMs / 60_000);
+  const includeJustNow = options.includeJustNow !== false;
+  if (mins < 1 && includeJustNow) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 ;// ./src/frontend/snapshot/snapshotNewsSection.ts
 
@@ -24991,7 +25208,7 @@ function createAccountTimelinePanel(deps) {
     }
   };
 }
-;// ./src/shared/holdingsTableColumns.ts
+;// ./src/shared/types/holdingsTableColumns.ts
 const HOLDINGS_TABLE_COLUMNS = [{
   id: "symbol",
   label: "Symbol"
@@ -26412,7 +26629,7 @@ class ColumnWidthCalculator {
     return this.maxTextWidths;
   }
 }
-;// ./src/frontend/trade_holdings/formatters.ts
+;// ./src/frontend/trade_holdings/holding_table/formatting/cellFormatters.ts
 
 const formatOptionSymbol = symbol => {
   const match = symbol.match(/^.+?\s+(\d{2})\/(\d{2})\/(\d{4})\s+(.+)$/);
@@ -26662,6 +26879,153 @@ const buildBadgeMeasureText = badges => {
   }
   return groups.join(" ");
 };
+;// ./src/frontend/trade_holdings/holding_table/formatting/holdingsRowContext.ts
+
+
+
+
+const DISPLAY_SYMBOL_ALIASES = {
+  "Futures Positions Market Value": "FMktV",
+  "Futures Cash": "FCash"
+};
+
+/** Extracts the margin-requirement display string from a holdings row. */
+function computeMarginReqDisplay(d, derivedAny, isSummaryRow) {
+  const masked = isShareMasked();
+  if (isSummaryRow) {
+    const aggMargin = derivedAny?.totalMarginReqDol ?? derivedAny?.marginReqDol;
+    if (aggMargin == null) return DASH;
+    if (masked) return SHARE_MASKED_TEXT;
+    return formatCurrency(shareScaleValue(aggMargin), {
+      decimals: 2
+    });
+  }
+  if (derivedAny?.marginReqDol != null) {
+    if (masked) return SHARE_MASKED_TEXT;
+    return formatCurrency(shareScaleValue(derivedAny.marginReqDol), {
+      decimals: 2
+    });
+  }
+  const rawMarginVal = getVal(d, "marginReq.val") ?? getVal(d, "marginRequirement.val");
+  if (rawMarginVal != null && typeof rawMarginVal === "number") {
+    if (masked) return SHARE_MASKED_TEXT;
+    return formatCurrency(shareScaleValue(rawMarginVal), {
+      decimals: 2
+    });
+  }
+  return DASH;
+}
+/**
+ * Extracts pre-aggregated summary-row totals from derived metrics.
+ * Returns nulls for non-summary rows.
+ */
+function extractSummaryTotals(derivedAny, isSummaryRow) {
+  if (!isSummaryRow) {
+    return {
+      delta: null,
+      gamma: null,
+      theta: null,
+      vega: null,
+      rho: null,
+      marketValue: null,
+      costBasis: null
+    };
+  }
+  return {
+    delta: derivedAny?.totalDeltaShares ?? derivedAny?.deltaShares,
+    gamma: derivedAny?.totalGammaByUnderlying ?? derivedAny?.totalGammaSharesPerDol,
+    theta: derivedAny?.totalThetaByUnderlying ?? derivedAny?.totalThetaPerDay,
+    vega: derivedAny?.totalVegaByUnderlying ?? derivedAny?.totalVegaPerVolPoint,
+    rho: derivedAny?.totalRhoByUnderlying ?? derivedAny?.totalRhoPer1pctRate,
+    marketValue: derivedAny?.totalMarketValue,
+    costBasis: derivedAny?.totalCostBasis
+  };
+}
+
+/** Build the per-column gating helpers used by the row formatter. */
+function makeColumnGates(isSummaryRow, isOptionRow) {
+  return {
+    summaryOnly: (colId, value) => !isSummaryRow && SUMMARY_ONLY_COLUMNS.has(colId) ? DASH : value,
+    suppressOnSummary: (colId, value) => isSummaryRow && SUMMARY_SUPPRESS_COLUMNS.has(colId) ? DASH : value,
+    optionOnly: (colId, value) => !isSummaryRow && !isOptionRow && OPTION_ONLY_COLUMNS.has(colId) ? DASH : value
+  };
+}
+
+/** Build the share-mode formatting helpers (pv, sv). */
+function makeShareModeHelpers() {
+  const masked = isShareMasked();
+  return {
+    pv: formatted => masked ? SHARE_MASKED_TEXT : formatted,
+    sv: shareScaleValue
+  };
+}
+;// ./src/frontend/trade_holdings/holding_table/formatting/holdingsRowSensitivityCells.ts
+
+function formatSensitivityCells(ctx) {
+  const {
+    s,
+    derivedAny,
+    isSummaryRow,
+    summaryGamma,
+    summaryTheta,
+    summaryVega,
+    summaryRho,
+    pv,
+    sv,
+    optionOnly,
+    suppressOnSummary
+  } = ctx;
+  return [/* 42 */s?.(42) ? DASH : pv(formatNumOrDash(sv(isSummaryRow ? derivedAny?.totalDeltaShares ?? derivedAny?.deltaShares : derivedAny?.deltaShares), {
+    decimals: 4,
+    showSign: true
+  })), /* 43 */s?.(43) ? DASH : optionOnly("gammaSharesPerDol", pv(formatNumOrDash(sv(isSummaryRow ? summaryGamma : derivedAny?.gammaSharesPerDol), {
+    decimals: 4,
+    showSign: true
+  }))), /* 44 */s?.(44) ? DASH : optionOnly("absGammaSharesPerDol", pv(formatNumOrDash(sv(derivedAny?.absGammaSharesPerDol), {
+    decimals: 4
+  }))), /* 45 */s?.(45) ? DASH : optionOnly("thetaPerDay", pv(formatNumOrDash(sv(isSummaryRow ? summaryTheta : derivedAny?.thetaPerDay), {
+    decimals: 4,
+    showSign: true
+  }))), /* 46 */s?.(46) ? DASH : optionOnly("vegaPerVolPoint", pv(formatNumOrDash(sv(isSummaryRow ? summaryVega : derivedAny?.vegaPerVolPoint), {
+    decimals: 4,
+    showSign: true
+  }))), /* 47 */s?.(47) ? DASH : optionOnly("absVegaPerVolPoint", pv(formatNumOrDash(sv(derivedAny?.absVegaPerVolPoint), {
+    decimals: 4
+  }))), /* 48 */s?.(48) ? DASH : optionOnly("rhoPer1pctRate", pv(formatNumOrDash(sv(isSummaryRow ? summaryRho : derivedAny?.rhoPer1pctRate), {
+    decimals: 4,
+    showSign: true
+  }))), /* 49 */s?.(49) ? DASH : suppressOnSummary("marginUsageRatioPct", formatPctOrDash(derivedAny?.marginUsageRatioPct, {
+    decimals: 2,
+    showSign: true
+  })), /* 50 */s?.(50) ? DASH : formatNumOrDash(derivedAny?.deltaSharesPerMargin, {
+    decimals: 4,
+    showSign: true
+  }), /* 51 */s?.(51) ? DASH : formatNumOrDash(derivedAny?.deltaNotionalPerMargin, {
+    decimals: 4,
+    showSign: true
+  }), /* 52 */s?.(52) ? DASH : optionOnly("thetaPerMargin", formatNumOrDash(derivedAny?.thetaPerMargin, {
+    decimals: 4,
+    showSign: true
+  })), /* 53 */s?.(53) ? DASH : optionOnly("vegaPerMargin", formatNumOrDash(derivedAny?.vegaPerMargin, {
+    decimals: 4,
+    showSign: true
+  })), /* 54 */s?.(54) ? DASH : optionOnly("thetaOnMargin", formatNumOrDash(derivedAny?.thetaOnMargin, {
+    decimals: 4,
+    showSign: true
+  })), /* 55 */s?.(55) ? DASH : optionOnly("vegaOnMargin", formatNumOrDash(derivedAny?.vegaOnMargin, {
+    decimals: 4,
+    showSign: true
+  })), /* 56 */s?.(56) ? DASH : optionOnly("gammaOnMargin", formatNumOrDash(derivedAny?.gammaOnMargin, {
+    decimals: 4,
+    showSign: true
+  })), /* 57 */s?.(57) ? DASH : optionOnly("carryPerVega", formatNumOrDash(derivedAny?.carryPerVega, {
+    decimals: 4,
+    showSign: true
+  })), /* 58 */s?.(58) ? DASH : optionOnly("carryPerGamma", formatNumOrDash(derivedAny?.carryPerGamma, {
+    decimals: 4,
+    showSign: true
+  }))];
+}
 ;// ./src/frontend/trade_holdings/holding_table/formatting/holdingsRowFormatter.ts
 
 
@@ -26671,11 +27035,6 @@ const buildBadgeMeasureText = badges => {
 
 
 
-/** Display-level aliases for verbose Schwab labels. */
-const DISPLAY_SYMBOL_ALIASES = {
-  "Futures Positions Market Value": "FMktV",
-  "Futures Cash": "FCash"
-};
 function formatHoldingsRowDisplayValues(d, isChild, derivedOverride = null, warningOverride = null, neededIndices) {
   const skip = neededIndices ? i => !neededIndices.has(i) : null;
   let displaySymbol = d.symbol?.symbol || d.dataSymbol || "";
@@ -26704,51 +27063,28 @@ function formatHoldingsRowDisplayValues(d, isChild, derivedOverride = null, warn
   const warningText = warning?.level && warning.level !== "none" ? warning.text || warning.level : DASH;
   const derivedAny = derived;
   const isSummaryRow = !!d?.__isUnderlyingSummary;
-  const marginReqDisplay = (() => {
-    const masked = isShareMasked();
-    if (isSummaryRow) {
-      const aggMargin = derivedAny?.totalMarginReqDol ?? derivedAny?.marginReqDol;
-      if (aggMargin == null) return DASH;
-      if (masked) return SHARE_MASKED_TEXT;
-      return formatCurrency(shareScaleValue(aggMargin), {
-        decimals: 2
-      });
-    }
-    if (derivedAny?.marginReqDol != null) {
-      if (masked) return SHARE_MASKED_TEXT;
-      return formatCurrency(shareScaleValue(derivedAny.marginReqDol), {
-        decimals: 2
-      });
-    }
-    const rawMarginVal = getVal(d, "marginReq.val") ?? getVal(d, "marginRequirement.val");
-    if (rawMarginVal != null && typeof rawMarginVal === "number") {
-      if (masked) return SHARE_MASKED_TEXT;
-      return formatCurrency(shareScaleValue(rawMarginVal), {
-        decimals: 2
-      });
-    }
-    return DASH;
-  })();
+  const marginReqDisplay = computeMarginReqDisplay(d, derivedAny, isSummaryRow);
   const peRatio = getVal(d, "peRatio.val");
   const divYield = getVal(d, "dividendYield.val") ?? getVal(d, "divYield.val");
   const openInterestDisplay = formatIntOrDash(getVal(d, "openInterest.val"));
-  const summaryDelta = isSummaryRow ? derivedAny?.totalDeltaShares ?? derivedAny?.deltaShares : null;
-  const summaryGamma = isSummaryRow ? derivedAny?.totalGammaByUnderlying ?? derivedAny?.totalGammaSharesPerDol : null;
-  const summaryTheta = isSummaryRow ? derivedAny?.totalThetaByUnderlying ?? derivedAny?.totalThetaPerDay : null;
-  const summaryVega = isSummaryRow ? derivedAny?.totalVegaByUnderlying ?? derivedAny?.totalVegaPerVolPoint : null;
-  const summaryRho = isSummaryRow ? derivedAny?.totalRhoByUnderlying ?? derivedAny?.totalRhoPer1pctRate : null;
-  const summaryMarketValue = isSummaryRow ? derivedAny?.totalMarketValue : null;
-  const summaryCostBasis = isSummaryRow ? derivedAny?.totalCostBasis : null;
-  const summaryOnly = (colId, value) => !isSummaryRow && SUMMARY_ONLY_COLUMNS.has(colId) ? DASH : value;
-  const suppressOnSummary = (colId, value) => isSummaryRow && SUMMARY_SUPPRESS_COLUMNS.has(colId) ? DASH : value;
-  const optionOnly = (colId, value) => !isSummaryRow && !isOptionRow && OPTION_ONLY_COLUMNS.has(colId) ? DASH : value;
+  const totals = extractSummaryTotals(derivedAny, isSummaryRow);
+  const summaryDelta = totals.delta;
+  const summaryGamma = totals.gamma;
+  const summaryTheta = totals.theta;
+  const summaryVega = totals.vega;
+  const summaryRho = totals.rho;
+  const summaryMarketValue = totals.marketValue;
+  const summaryCostBasis = totals.costBasis;
+  const {
+    summaryOnly,
+    suppressOnSummary,
+    optionOnly
+  } = makeColumnGates(isSummaryRow, isOptionRow);
   const s = skip;
-
-  // Share mode helpers for position-value columns (not stock prices).
-  // pv() masks output in dollarOff mode; sv() scales numbers in 10x/custom.
-  const _masked = isShareMasked();
-  const pv = formatted => _masked ? SHARE_MASKED_TEXT : formatted;
-  const sv = shareScaleValue;
+  const {
+    pv,
+    sv
+  } = makeShareModeHelpers();
   return [/* 0  */s?.(0) ? DASH : displaySymbol, /* 1  */s?.(1) ? DASH : formatPlainOrDash(name), /* 2  */s?.(2) ? DASH : formatCurrency(price), /* 3  */s?.(3) ? DASH : formatCurrency(bid), /* 4  */s?.(4) ? DASH : formatCurrency(ask), /* 5  */s?.(5) ? DASH : formatIntOrDash(bidSize), /* 6  */s?.(6) ? DASH : formatIntOrDash(askSize), /* 7  */s?.(7) ? DASH : formatCurrency(last), /* 8  */s?.(8) ? DASH : formatIntOrDash(lastSize), /* 9  */s?.(9) ? DASH : formatCurrency(open), /* 10 */s?.(10) ? DASH : formatCurrency(getVal(d, "costBasis.cstPerShr")), /* 11 */s?.(11) ? DASH : formatPctOrDash(getVal(d, "priceChngPrc.val"), {
     showSign: true
   }), /* 12 */s?.(12) ? DASH : formatNumOrDash(getVal(d, "priceChng.val"), {
@@ -26810,56 +27146,19 @@ function formatHoldingsRowDisplayValues(d, isChild, derivedOverride = null, warn
   }), /* 41 */s?.(41) ? DASH : formatPctOrDash(derivedAny?.dayRangePct, {
     decimals: 2,
     showSign: true
-  }), /* 42 */s?.(42) ? DASH : pv(formatNumOrDash(sv(isSummaryRow ? derivedAny?.totalDeltaShares ?? derivedAny?.deltaShares : derivedAny?.deltaShares), {
-    decimals: 4,
-    showSign: true
-  })), /* 43 */s?.(43) ? DASH : optionOnly("gammaSharesPerDol", pv(formatNumOrDash(sv(isSummaryRow ? summaryGamma : derivedAny?.gammaSharesPerDol), {
-    decimals: 4,
-    showSign: true
-  }))), /* 44 */s?.(44) ? DASH : optionOnly("absGammaSharesPerDol", pv(formatNumOrDash(sv(derivedAny?.absGammaSharesPerDol), {
-    decimals: 4
-  }))), /* 45 */s?.(45) ? DASH : optionOnly("thetaPerDay", pv(formatNumOrDash(sv(isSummaryRow ? summaryTheta : derivedAny?.thetaPerDay), {
-    decimals: 4,
-    showSign: true
-  }))), /* 46 */s?.(46) ? DASH : optionOnly("vegaPerVolPoint", pv(formatNumOrDash(sv(isSummaryRow ? summaryVega : derivedAny?.vegaPerVolPoint), {
-    decimals: 4,
-    showSign: true
-  }))), /* 47 */s?.(47) ? DASH : optionOnly("absVegaPerVolPoint", pv(formatNumOrDash(sv(derivedAny?.absVegaPerVolPoint), {
-    decimals: 4
-  }))), /* 48 */s?.(48) ? DASH : optionOnly("rhoPer1pctRate", pv(formatNumOrDash(sv(isSummaryRow ? summaryRho : derivedAny?.rhoPer1pctRate), {
-    decimals: 4,
-    showSign: true
-  }))), /* 49 */s?.(49) ? DASH : suppressOnSummary("marginUsageRatioPct", formatPctOrDash(derivedAny?.marginUsageRatioPct, {
-    decimals: 2,
-    showSign: true
-  })), /* 50 */s?.(50) ? DASH : formatNumOrDash(derivedAny?.deltaSharesPerMargin, {
-    decimals: 4,
-    showSign: true
-  }), /* 51 */s?.(51) ? DASH : formatNumOrDash(derivedAny?.deltaNotionalPerMargin, {
-    decimals: 4,
-    showSign: true
-  }), /* 52 */s?.(52) ? DASH : optionOnly("thetaPerMargin", formatNumOrDash(derivedAny?.thetaPerMargin, {
-    decimals: 4,
-    showSign: true
-  })), /* 53 */s?.(53) ? DASH : optionOnly("vegaPerMargin", formatNumOrDash(derivedAny?.vegaPerMargin, {
-    decimals: 4,
-    showSign: true
-  })), /* 54 */s?.(54) ? DASH : optionOnly("thetaOnMargin", formatNumOrDash(derivedAny?.thetaOnMargin, {
-    decimals: 4,
-    showSign: true
-  })), /* 55 */s?.(55) ? DASH : optionOnly("vegaOnMargin", formatNumOrDash(derivedAny?.vegaOnMargin, {
-    decimals: 4,
-    showSign: true
-  })), /* 56 */s?.(56) ? DASH : optionOnly("gammaOnMargin", formatNumOrDash(derivedAny?.gammaOnMargin, {
-    decimals: 4,
-    showSign: true
-  })), /* 57 */s?.(57) ? DASH : optionOnly("carryPerVega", formatNumOrDash(derivedAny?.carryPerVega, {
-    decimals: 4,
-    showSign: true
-  })), /* 58 */s?.(58) ? DASH : optionOnly("carryPerGamma", formatNumOrDash(derivedAny?.carryPerGamma, {
-    decimals: 4,
-    showSign: true
-  })), /* 59 */s?.(59) ? DASH : summaryOnly("carryToStress", formatNumOrDash(derivedAny?.carryToStress, {
+  }), ...formatSensitivityCells({
+    s,
+    derivedAny,
+    isSummaryRow,
+    summaryGamma,
+    summaryTheta,
+    summaryVega,
+    summaryRho,
+    pv,
+    sv,
+    optionOnly,
+    suppressOnSummary
+  }), /* 59 */s?.(59) ? DASH : summaryOnly("carryToStress", formatNumOrDash(derivedAny?.carryToStress, {
     decimals: 4,
     showSign: true
   })), /* 60 */s?.(60) ? DASH : suppressOnSummary("marginReqReason", formatPlainOrDash(derivedAny?.marginReqReason)), /* 61 */s?.(61) ? DASH : suppressOnSummary("marginToUnderlyingNotional", formatPctOrDash(derivedAny?.marginToUnderlyingNotional, {
@@ -28146,7 +28445,7 @@ function injectTableStyles() {
     style.textContent = TABLE_CSS_STYLES;
   }
 }
-;// ./src/frontend/components/core/ui_builders.ts
+;// ./src/frontend/components/core/builders/ui_builders.ts
 /**
  * AlexQuant UI Builder Functions
  *
@@ -29772,7 +30071,7 @@ function createSymbolInput(initialSymbol) {
     symbolInput
   };
 }
-;// ./src/frontend/components/core/clipboard.ts
+;// ./src/frontend/components/core/behaviors/clipboard.ts
 async function ui_copyTextToClipboard(text) {
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -29797,7 +30096,7 @@ async function ui_copyTextToClipboard(text) {
     return false;
   }
 }
-;// ./src/frontend/components/core/pillGroup.ts
+;// ./src/frontend/components/core/builders/pillGroup.ts
 
 
 const pillGroup_PILL_STYLE = "padding: 5px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-semibold); border-radius: var(--ax-radius-md);" + " cursor: pointer; border: 1px solid var(--ax-border);" + " font-family: var(--ax-font-body); transition: all 0.15s; white-space: nowrap;";
@@ -32545,15 +32844,15 @@ function createMobileCardView(opts) {
     }
   };
 }
-;// ./src/shared/utils/holdingsGroups.ts
-function normalizeSymbol(value) {
+;// ./src/shared/utils/domain/holdingsGroups.ts
+function holdingsGroups_normalizeSymbol(value) {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
 function resolveRowSymbol(row) {
   if (!row) return null;
-  return normalizeSymbol(row.symbol?.symbol) ?? normalizeSymbol(row.dataSymbol);
+  return holdingsGroups_normalizeSymbol(row.symbol?.symbol) ?? holdingsGroups_normalizeSymbol(row.dataSymbol);
 }
 function extractEtfUnderlyingKeysFromGroups(groupedPositions) {
   const keys = new Set();
@@ -32794,6 +33093,287 @@ function appendSettingsFormRow(opts) {
   opts.body.appendChild(row);
   return row;
 }
+
+
+// ── Shared settings helpers ──────────────────────────────────────────────────
+
+/**
+ * Parse and validate a positive numeric interval value.
+ * Returns `fallback` when the value is not a finite positive number.
+ */
+function resolveInterval(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.round(parsed);
+}
+
+/**
+ * Like `resolveInterval` but also accepts zero (useful for "disabled" intervals).
+ */
+function resolveNonNegativeInterval(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.round(parsed);
+}
+/**
+ * Create a numeric input control wired to a settings key with unit label.
+ * Combines `createSettingsNumericInput` + `createSettingsControlWithUnit` +
+ * the resolve/commit pattern shared by portfolio and holdings panels.
+ */
+function createSettingsNumberControl(opts) {
+  const input = createSettingsNumericInput({
+    getResolved: () => resolveInterval(opts.settings[opts.key], opts.fallback),
+    min: opts.min,
+    step: opts.step,
+    onCommit: next => {
+      opts.ctx.onUpdateSettings({
+        [opts.key]: next
+      });
+      opts.settings[opts.key] = next;
+    }
+  });
+  return createSettingsControlWithUnit(input.element, opts.unit);
+}
+function createSettingsActionButton(text, opts) {
+  const variant = opts?.variant ?? "secondary";
+  const width = opts?.width ?? 84;
+  const base = variant === "primary" ? DS_BUTTONS.primary : variant === "danger" ? DS_BUTTONS.danger : DS_BUTTONS.secondary;
+  return createElement_ui_createElement("button", {
+    text,
+    props: {
+      type: "button"
+    },
+    styleString: base + ` justify-content:center; width:${width}px; height:28px; padding:0 8px; font-size:12px; border-radius:9px;`
+  });
+}
+
+// ── Phase matrix UI moved to ./settingsPhaseMatrix.ts ─────────
+
+;// ./src/frontend/components/core/settingsPhaseMatrix.ts
+
+
+const PHASE_LABELS = [{
+  phase: "market",
+  label: "M"
+}, {
+  phase: "afterHours",
+  label: "AH"
+}, {
+  phase: "preMarket",
+  label: "PM"
+}, {
+  phase: "overnight",
+  label: "ON"
+}, {
+  phase: "closed",
+  label: "CL"
+}];
+const PHASE_MATRIX_ROW_STYLE = "display: grid; grid-template-columns: minmax(130px, 1fr) auto 132px;" + " align-items: center; column-gap: 8px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid var(--ax-border-subtle);";
+const PHASE_CELL_BASE_STYLE = "width: 30px; height: 22px; border: 1px solid var(--ios-border); cursor: pointer;" + " font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;" + " transition: all 0.15s; padding: 0;";
+const STATUS_DOT_STYLE = "width: 8px; height: 8px; border-radius: 50%; background: var(--ax-gray); flex-shrink: 0;" + " transition: background 0.3s;";
+const settingsPhaseMatrix_ROW_LABEL_STYLE = "font-size: 11.5px; font-weight: var(--ax-fw-medium); color: var(--ios-text-primary);";
+const settingsPhaseMatrix_ROW_CONTROL_CELL_STYLE = "display: flex; align-items: center; justify-content: flex-end; gap: 4px;";
+const settingsPhaseMatrix_SECTION_HEADER_STYLE = "padding: 10px 12px; border-bottom: 1px solid var(--ax-border-subtle);";
+const settingsPhaseMatrix_SECTION_BODY_STYLE = "padding: 8px 12px;";
+
+/** Apply visual styling to a phase cell button based on override state and default. */
+function applyPhaseCellStyle(btn, override, defaultOn, isCurrentPhase) {
+  if (override === "forceOn") {
+    btn.style.background = "rgba(32,169,69,0.18)";
+    btn.style.borderColor = "rgba(32,169,69,0.45)";
+    btn.style.color = "#20a945";
+  } else if (override === "forceOff") {
+    btn.style.background = "rgba(215,49,38,0.12)";
+    btn.style.borderColor = "rgba(215,49,38,0.35)";
+    btn.style.color = "#d73126";
+  } else if (defaultOn) {
+    btn.style.background = "rgba(32,169,69,0.08)";
+    btn.style.borderColor = "rgba(32,169,69,0.20)";
+    btn.style.color = "rgba(32,169,69,0.7)";
+  } else {
+    btn.style.background = "transparent";
+    btn.style.borderColor = "var(--ios-border)";
+    btn.style.color = "var(--ios-text-secondary)";
+  }
+  btn.style.borderBottomWidth = isCurrentPhase ? "2px" : "1px";
+  if (isCurrentPhase) {
+    btn.style.borderBottomColor = "var(--ios-blue)";
+  }
+}
+/**
+ * Create a strip of 5 phase cells (M | AH | PM | ON | CL) for one scheduler source.
+ * Each cell cycles auto -> forceOn -> forceOff -> auto on click.
+ */
+function createPhaseStrip(opts) {
+  const strip = createElement_ui_createElement("div", {
+    styleString: "display: inline-flex; gap: 0; border-radius: 6px; overflow: hidden;"
+  });
+  const cells = PHASE_LABELS.map(({
+    phase,
+    label
+  }) => {
+    const isFirst = phase === "market";
+    const isLast = phase === "closed";
+    const btn = createElement_ui_createElement("button", {
+      text: label,
+      props: {
+        type: "button",
+        title: phase
+      },
+      styleString: PHASE_CELL_BASE_STYLE + (isFirst ? " border-radius: 4px 0 0 4px;" : isLast ? " border-radius: 0 4px 4px 0; border-left: none;" : " border-radius: 0; border-left: none;")
+    });
+    const update = (override, defaultOn, isCurrentPhase) => {
+      applyPhaseCellStyle(btn, override, defaultOn, isCurrentPhase);
+      const stateText = override === "auto" ? defaultOn ? "auto (on)" : "auto (off)" : override === "forceOn" ? "forced on" : "forced off";
+      btn.title = `${phase}: ${stateText}`;
+    };
+    btn.addEventListener("click", () => {
+      const current = opts.getOverride(phase);
+      const next = current === "auto" ? "forceOn" : current === "forceOn" ? "forceOff" : "auto";
+      opts.onOverrideChange(phase, next);
+    });
+    update(opts.getOverride(phase), opts.getDefault(phase), phase === opts.currentPhase);
+    strip.appendChild(btn);
+    return {
+      btn,
+      phase,
+      update
+    };
+  });
+  const updateAll = (currentPhase, getOverride, getDefault) => {
+    for (const cell of cells) {
+      cell.update(getOverride(cell.phase), getDefault(cell.phase), cell.phase === currentPhase);
+    }
+  };
+  return {
+    strip,
+    cells,
+    updateAll
+  };
+}
+function createStatusDot() {
+  return createElement_ui_createElement("div", {
+    styleString: STATUS_DOT_STYLE
+  });
+}
+function updateStatusDot(dot, status) {
+  if (status.error) {
+    dot.style.background = "#cc0000";
+  } else if (status.isFetching) {
+    dot.style.background = "#ffcc00";
+  } else if (status.isPaused) {
+    dot.style.background = "var(--ios-gray)";
+  } else {
+    dot.style.background = "#00aa00";
+  }
+}
+
+/**
+ * Append a phase-matrix row: [dot + label] [phase strip] [control]
+ */
+function appendPhaseMatrixRow(opts) {
+  const labelCell = createElement_ui_createElement("div", {
+    styleString: "display: flex; align-items: center; gap: 6px;",
+    children: [opts.dot, createElement_ui_createElement("span", {
+      text: opts.label,
+      styleString: settingsPhaseMatrix_ROW_LABEL_STYLE
+    })]
+  });
+  const row = createElement_ui_createElement("div", {
+    styleString: PHASE_MATRIX_ROW_STYLE,
+    children: [labelCell, opts.phaseStrip, createElement_ui_createElement("div", {
+      styleString: settingsPhaseMatrix_ROW_CONTROL_CELL_STYLE,
+      children: [opts.controlEl]
+    })]
+  });
+  opts.body.appendChild(row);
+  return row;
+}
+
+/** Create a phase badge showing current phase name. */
+function createPhaseBadge(phase) {
+  const PHASE_DISPLAY = {
+    market: "Market",
+    afterHours: "After Hours",
+    preMarket: "Pre-Market",
+    overnight: "Overnight",
+    closed: "Closed"
+  };
+  const PHASE_COLORS = {
+    market: {
+      bg: "rgba(32,169,69,0.10)",
+      border: "rgba(32,169,69,0.30)",
+      text: "#20a945"
+    },
+    afterHours: {
+      bg: "rgba(0,122,255,0.08)",
+      border: "rgba(0,122,255,0.25)",
+      text: "var(--ios-blue)"
+    },
+    preMarket: {
+      bg: "rgba(0,122,255,0.08)",
+      border: "rgba(0,122,255,0.25)",
+      text: "var(--ios-blue)"
+    },
+    overnight: {
+      bg: "var(--ax-tone-muted-soft-bg)",
+      border: "var(--ax-tone-muted-border)",
+      text: "var(--ax-fg-2)"
+    },
+    closed: {
+      bg: "var(--ax-tone-muted-soft-bg)",
+      border: "var(--ax-tone-muted-border)",
+      text: "var(--ax-fg-2)"
+    }
+  };
+  const element = createElement_ui_createElement("span", {
+    text: PHASE_DISPLAY[phase],
+    styleString: "display: inline-flex; align-items: center; height: 20px; padding: 0 8px;" + " border-radius: 999px; font-size: 10px; font-weight: 600;" + " transition: all 0.2s;"
+  });
+  const update = p => {
+    const c = PHASE_COLORS[p];
+    element.textContent = PHASE_DISPLAY[p];
+    element.style.background = c.bg;
+    element.style.border = `1px solid ${c.border}`;
+    element.style.color = c.text;
+  };
+  update(phase);
+  return {
+    element,
+    update
+  };
+}
+
+/** Create a section card with a right-aligned badge in the header. */
+function createSettingsSectionCardWithBadge(title, badge) {
+  const section = createElement_ui_createElement("section", {
+    styleString: theme_DS_COMPONENTS.settingGroupCard + " margin:0;"
+  });
+  section.appendChild(createElement_ui_createElement("div", {
+    styleString: settingsPhaseMatrix_SECTION_HEADER_STYLE + " display: flex; align-items: center; justify-content: space-between;",
+    children: [createElement_ui_createElement("span", {
+      text: title,
+      styleString: theme_DS_COMPONENTS.settingGroupTitle
+    }), badge]
+  }));
+  const body = createElement_ui_createElement("div", {
+    styleString: settingsPhaseMatrix_SECTION_BODY_STYLE
+  });
+  section.appendChild(body);
+  return {
+    section,
+    body
+  };
+}
+;// ./src/frontend/components/core/settingsJsonEditorModal.ts
+
+
+
+/**
+ * Build a modal JSON editor with Format / Apply buttons. The modal is
+ * detached until `setOpen(true)` is called; the caller mounts the returned
+ * `backdrop` into the DOM (typically the page root).
+ */
 function createSettingsJsonEditorModal(opts) {
   const backdrop = createElement_ui_createElement("div", {
     styleString: "position: fixed; inset: 0; z-index: var(--ax-z-page-popover);" + " background: var(--ax-modal-backdrop-light); display: none; align-items: center; justify-content: center;" + " padding: 24px;"
@@ -32898,285 +33478,6 @@ function createSettingsJsonEditorModal(opts) {
     isOpen: () => isModalOpen,
     refreshValue,
     onEscapeHandler
-  };
-}
-
-// ── Shared settings helpers ──────────────────────────────────────────────────
-
-/**
- * Parse and validate a positive numeric interval value.
- * Returns `fallback` when the value is not a finite positive number.
- */
-function resolveInterval(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.round(parsed);
-}
-
-/**
- * Like `resolveInterval` but also accepts zero (useful for "disabled" intervals).
- */
-function resolveNonNegativeInterval(value, fallback) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.round(parsed);
-}
-/**
- * Create a numeric input control wired to a settings key with unit label.
- * Combines `createSettingsNumericInput` + `createSettingsControlWithUnit` +
- * the resolve/commit pattern shared by portfolio and holdings panels.
- */
-function createSettingsNumberControl(opts) {
-  const input = createSettingsNumericInput({
-    getResolved: () => resolveInterval(opts.settings[opts.key], opts.fallback),
-    min: opts.min,
-    step: opts.step,
-    onCommit: next => {
-      opts.ctx.onUpdateSettings({
-        [opts.key]: next
-      });
-      opts.settings[opts.key] = next;
-    }
-  });
-  return createSettingsControlWithUnit(input.element, opts.unit);
-}
-function createSettingsActionButton(text, opts) {
-  const variant = opts?.variant ?? "secondary";
-  const width = opts?.width ?? 84;
-  const base = variant === "primary" ? DS_BUTTONS.primary : variant === "danger" ? DS_BUTTONS.danger : DS_BUTTONS.secondary;
-  return createElement_ui_createElement("button", {
-    text,
-    props: {
-      type: "button"
-    },
-    styleString: base + ` justify-content:center; width:${width}px; height:28px; padding:0 8px; font-size:12px; border-radius:9px;`
-  });
-}
-
-// ── Phase matrix UI ──────────────────────────────────────────────────────────
-
-const PHASE_LABELS = [{
-  phase: "market",
-  label: "M"
-}, {
-  phase: "afterHours",
-  label: "AH"
-}, {
-  phase: "preMarket",
-  label: "PM"
-}, {
-  phase: "overnight",
-  label: "ON"
-}, {
-  phase: "closed",
-  label: "CL"
-}];
-const PHASE_MATRIX_ROW_STYLE = "display: grid; grid-template-columns: minmax(130px, 1fr) auto 132px;" + " align-items: center; column-gap: 8px; min-height: 44px; padding: 6px 0;" + " border-bottom: 1px solid var(--ax-border-subtle);";
-const PHASE_CELL_BASE_STYLE = "width: 30px; height: 22px; border: 1px solid var(--ios-border); cursor: pointer;" + " font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;" + " transition: all 0.15s; padding: 0;";
-const STATUS_DOT_STYLE = "width: 8px; height: 8px; border-radius: 50%; background: var(--ax-gray); flex-shrink: 0;" + " transition: background 0.3s;";
-
-/** Apply visual styling to a phase cell button based on override state and default. */
-function applyPhaseCellStyle(btn, override, defaultOn, isCurrentPhase) {
-  // Determine visual state
-  if (override === "forceOn") {
-    // Force on = solid green
-    btn.style.background = "rgba(32,169,69,0.18)";
-    btn.style.borderColor = "rgba(32,169,69,0.45)";
-    btn.style.color = "#20a945";
-  } else if (override === "forceOff") {
-    // Force off = solid red
-    btn.style.background = "rgba(215,49,38,0.12)";
-    btn.style.borderColor = "rgba(215,49,38,0.35)";
-    btn.style.color = "#d73126";
-  } else if (defaultOn) {
-    // Auto + default on = light green
-    btn.style.background = "rgba(32,169,69,0.08)";
-    btn.style.borderColor = "rgba(32,169,69,0.20)";
-    btn.style.color = "rgba(32,169,69,0.7)";
-  } else {
-    // Auto + default off = dim
-    btn.style.background = "transparent";
-    btn.style.borderColor = "var(--ios-border)";
-    btn.style.color = "var(--ios-text-secondary)";
-  }
-
-  // Current phase indicator: bottom accent
-  btn.style.borderBottomWidth = isCurrentPhase ? "2px" : "1px";
-  if (isCurrentPhase) {
-    btn.style.borderBottomColor = "var(--ios-blue)";
-  }
-}
-/**
- * Create a strip of 5 phase cells (M | AH | PM | ON | CL) for one scheduler source.
- * Each cell cycles auto -> forceOn -> forceOff -> auto on click.
- */
-function createPhaseStrip(opts) {
-  const strip = createElement_ui_createElement("div", {
-    styleString: "display: inline-flex; gap: 0; border-radius: 6px; overflow: hidden;"
-  });
-  const cells = PHASE_LABELS.map(({
-    phase,
-    label
-  }) => {
-    const isFirst = phase === "market";
-    const isLast = phase === "closed";
-    const btn = createElement_ui_createElement("button", {
-      text: label,
-      props: {
-        type: "button",
-        title: phase
-      },
-      styleString: PHASE_CELL_BASE_STYLE + (isFirst ? " border-radius: 4px 0 0 4px;" : isLast ? " border-radius: 0 4px 4px 0; border-left: none;" : " border-radius: 0; border-left: none;")
-    });
-    const update = (override, defaultOn, isCurrentPhase) => {
-      applyPhaseCellStyle(btn, override, defaultOn, isCurrentPhase);
-      const stateText = override === "auto" ? defaultOn ? "auto (on)" : "auto (off)" : override === "forceOn" ? "forced on" : "forced off";
-      btn.title = `${phase}: ${stateText}`;
-    };
-
-    // Cycle: auto -> forceOn -> forceOff -> auto
-    btn.addEventListener("click", () => {
-      const current = opts.getOverride(phase);
-      const next = current === "auto" ? "forceOn" : current === "forceOn" ? "forceOff" : "auto";
-      opts.onOverrideChange(phase, next);
-    });
-
-    // Initial render
-    update(opts.getOverride(phase), opts.getDefault(phase), phase === opts.currentPhase);
-    strip.appendChild(btn);
-    return {
-      btn,
-      phase,
-      update
-    };
-  });
-  const updateAll = (currentPhase, getOverride, getDefault) => {
-    for (const cell of cells) {
-      cell.update(getOverride(cell.phase), getDefault(cell.phase), cell.phase === currentPhase);
-    }
-  };
-  return {
-    strip,
-    cells,
-    updateAll
-  };
-}
-function createStatusDot() {
-  return createElement_ui_createElement("div", {
-    styleString: STATUS_DOT_STYLE
-  });
-}
-function updateStatusDot(dot, status) {
-  if (status.error) {
-    dot.style.background = "#cc0000";
-  } else if (status.isFetching) {
-    dot.style.background = "#ffcc00";
-  } else if (status.isPaused) {
-    dot.style.background = "var(--ios-gray)";
-  } else {
-    dot.style.background = "#00aa00";
-  }
-}
-
-/**
- * Append a phase-matrix row: [dot + label] [phase strip] [control]
- */
-function appendPhaseMatrixRow(opts) {
-  const labelCell = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; gap: 6px;",
-    children: [opts.dot, createElement_ui_createElement("span", {
-      text: opts.label,
-      styleString: ROW_LABEL_STYLE
-    })]
-  });
-  const row = createElement_ui_createElement("div", {
-    styleString: PHASE_MATRIX_ROW_STYLE,
-    children: [labelCell, opts.phaseStrip, createElement_ui_createElement("div", {
-      styleString: ROW_CONTROL_CELL_STYLE,
-      children: [opts.controlEl]
-    })]
-  });
-  opts.body.appendChild(row);
-  return row;
-}
-
-/**
- * Create a phase badge showing current phase name.
- */
-function createPhaseBadge(phase) {
-  const PHASE_DISPLAY = {
-    market: "Market",
-    afterHours: "After Hours",
-    preMarket: "Pre-Market",
-    overnight: "Overnight",
-    closed: "Closed"
-  };
-  const PHASE_COLORS = {
-    market: {
-      bg: "rgba(32,169,69,0.10)",
-      border: "rgba(32,169,69,0.30)",
-      text: "#20a945"
-    },
-    afterHours: {
-      bg: "rgba(0,122,255,0.08)",
-      border: "rgba(0,122,255,0.25)",
-      text: "var(--ios-blue)"
-    },
-    preMarket: {
-      bg: "rgba(0,122,255,0.08)",
-      border: "rgba(0,122,255,0.25)",
-      text: "var(--ios-blue)"
-    },
-    overnight: {
-      bg: "var(--ax-tone-muted-soft-bg)",
-      border: "var(--ax-tone-muted-border)",
-      text: "var(--ax-fg-2)"
-    },
-    closed: {
-      bg: "var(--ax-tone-muted-soft-bg)",
-      border: "var(--ax-tone-muted-border)",
-      text: "var(--ax-fg-2)"
-    }
-  };
-  const element = createElement_ui_createElement("span", {
-    text: PHASE_DISPLAY[phase],
-    styleString: "display: inline-flex; align-items: center; height: 20px; padding: 0 8px;" + " border-radius: 999px; font-size: 10px; font-weight: 600;" + " transition: all 0.2s;"
-  });
-  const update = p => {
-    const c = PHASE_COLORS[p];
-    element.textContent = PHASE_DISPLAY[p];
-    element.style.background = c.bg;
-    element.style.border = `1px solid ${c.border}`;
-    element.style.color = c.text;
-  };
-  update(phase);
-  return {
-    element,
-    update
-  };
-}
-
-/**
- * Create a section card with a right-aligned badge in the header.
- */
-function createSettingsSectionCardWithBadge(title, badge) {
-  const section = createElement_ui_createElement("section", {
-    styleString: theme_DS_COMPONENTS.settingGroupCard + " margin:0;"
-  });
-  section.appendChild(createElement_ui_createElement("div", {
-    styleString: SECTION_HEADER_STYLE + " display: flex; align-items: center; justify-content: space-between;",
-    children: [createElement_ui_createElement("span", {
-      text: title,
-      styleString: theme_DS_COMPONENTS.settingGroupTitle
-    }), badge]
-  }));
-  const body = createElement_ui_createElement("div", {
-    styleString: SECTION_BODY_STYLE
-  });
-  section.appendChild(body);
-  return {
-    section,
-    body
   };
 }
 ;// ./src/frontend/trade_holdings/setting_panel/settingsPanel.ts
@@ -37109,7 +37410,7 @@ function createPortfolioSettingsPanel(opts) {
     }
   };
 }
-;// ./src/frontend/components/core/sectionLayout.ts
+;// ./src/frontend/components/core/builders/sectionLayout.ts
 /**
  * Generic Section Layout
  *
@@ -38156,7 +38457,7 @@ function riskManagement_renderPage(ctx) {
   };
   return wrapper;
 }
-;// ./src/backend/core/network/schwab/options.ts
+;// ./src/backend/core/network/schwab/endpoints/options.ts
 
 
 
@@ -38212,7 +38513,7 @@ function fetchOptionChains(symbol, token, params = {}) {
     throw err;
   });
 }
-;// ./src/shared/utils/optionsChains.ts
+;// ./src/shared/utils/domain/optionsChains.ts
 function getExpirationOI(expiration) {
   let total = 0;
   for (const chain of expiration.chains) {
@@ -38231,106 +38532,6 @@ function pruneLowOIExpirations(response) {
   const avgOI = oiPerExp.reduce((a, b) => a + b, 0) / oiPerExp.length;
   const threshold = avgOI / 100;
   response.expirations = response.expirations.filter((_expiration, i) => oiPerExp[i] >= threshold);
-}
-;// ./src/frontend/analysis_optionFlow/monitor/monitorSettings.ts
-/**
- * Monitor settings — types, defaults, persistence.
- */
-
-
-
-
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-
-const FIXED_SLOTS = ["0dte", "this_week", "next_week", "month_end", "quarter_end", "year_end", "leap"];
-function describeUniverseMode(mode) {
-  if (mode === "top_n") return "Top N expiries";
-  if (mode === "fixed_slots") return "Fixed key slots";
-  return "All expiries";
-}
-const DEFAULT_MONITOR_TOP_N = 10;
-const MIN_MONITOR_TOP_N = 1;
-const MAX_MONITOR_TOP_N = 30;
-const DEFAULT_MONITOR_SETTINGS = {
-  symbols: ["SPY", "QQQ", "IWM", "NVDA", "TSLA", "AAPL", "AMZN", "AMD", "META", "MSFT", "GOOG", "GLD", "SLV", "XLF", "XLE", "SMH", "TLT", "HYG"],
-  intervalMinutes: 10,
-  concurrency: 4,
-  enabled: true,
-  universeMode: "all",
-  defaultTopN: DEFAULT_MONITOR_TOP_N,
-  topNBySymbol: {}
-};
-const MONITOR_SYMBOLS = DEFAULT_MONITOR_SETTINGS.symbols;
-function normalizeMonitorSymbolList(value) {
-  if (!Array.isArray(value) || value.length === 0) return [...DEFAULT_MONITOR_SETTINGS.symbols];
-  const symbols = value.filter(s => typeof s === "string" && s.trim().length > 0).map(s => s.trim().toUpperCase());
-  return symbols.length > 0 ? symbols : [...DEFAULT_MONITOR_SETTINGS.symbols];
-}
-function normalizeTopNValue(value, fallback) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  const rounded = Math.trunc(value);
-  return Math.max(MIN_MONITOR_TOP_N, Math.min(MAX_MONITOR_TOP_N, rounded));
-}
-function normalizeTopNBySymbol(raw) {
-  if (!raw || typeof raw !== "object") return {};
-  const out = {};
-  for (const [key, value] of Object.entries(raw)) {
-    const symbol = key.trim().toUpperCase();
-    if (!symbol) continue;
-    out[symbol] = normalizeTopNValue(value, DEFAULT_MONITOR_TOP_N);
-  }
-  return out;
-}
-function parseMonitorSettings(parsed) {
-  if (!parsed || typeof parsed !== "object") return cloneMonitorSettings(DEFAULT_MONITOR_SETTINGS);
-  const symbols = normalizeMonitorSymbolList(parsed.symbols);
-  const defaultTopN = DEFAULT_MONITOR_TOP_N;
-  const topNBySymbolRaw = normalizeTopNBySymbol(parsed.topNBySymbol);
-  const topNBySymbol = {};
-  for (const sym of symbols) {
-    if (topNBySymbolRaw[sym] != null) {
-      topNBySymbol[sym] = topNBySymbolRaw[sym];
-    }
-  }
-  return {
-    symbols,
-    intervalMinutes: typeof parsed.intervalMinutes === "number" && parsed.intervalMinutes >= 1 && parsed.intervalMinutes <= 60 ? parsed.intervalMinutes : DEFAULT_MONITOR_SETTINGS.intervalMinutes,
-    concurrency: typeof parsed.concurrency === "number" && parsed.concurrency >= 1 && parsed.concurrency <= 10 ? parsed.concurrency : DEFAULT_MONITOR_SETTINGS.concurrency,
-    enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_MONITOR_SETTINGS.enabled,
-    universeMode: parsed.universeMode === "top_n" || parsed.universeMode === "fixed_slots" ? parsed.universeMode : DEFAULT_MONITOR_SETTINGS.universeMode,
-    defaultTopN,
-    topNBySymbol
-  };
-}
-function cloneMonitorSettings(settings) {
-  return {
-    ...settings,
-    symbols: [...settings.symbols],
-    topNBySymbol: {
-      ...settings.topNBySymbol
-    }
-  };
-}
-async function loadMonitorSettings() {
-  try {
-    const db = await openAlexQuantDB();
-    const kv = new KVStore(db);
-    const raw = await kv.get("monitor.settings");
-    return parseMonitorSettings(raw);
-  } catch {
-    return cloneMonitorSettings(DEFAULT_MONITOR_SETTINGS);
-  }
-}
-function saveMonitorSettings(settings) {
-  void (async () => {
-    try {
-      const db = await openAlexQuantDB();
-      const kv = new KVStore(db);
-      await kv.set("monitor.settings", settings);
-    } catch {}
-  })();
 }
 ;// ./src/frontend/analysis_options/savedView/savedViewSerializer.ts
 function normalizeScopeMode(mode) {
@@ -38424,98 +38625,11 @@ function savedViewSerializer_formatTimeLabel(iso) {
     timeZone: "America/Chicago"
   });
 }
-;// ./src/backend/core/db/capture/TimestampCaptureStore.ts
-
-
-
-const TimestampCaptureStore_log = logService.namespace("storage");
-class TimestampCaptureStore {
-  constructor(db) {
-    this.db = db;
-  }
-  async getBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readonly");
-    const index = tx.objectStore(STORES.TIMESTAMP_OPENINGS).index("symbol");
-    return txPromise(index.getAll(symbol));
-  }
-  async put(record) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
-    tx.objectStore(STORES.TIMESTAMP_OPENINGS).put(record);
-    await txComplete(tx);
-    TimestampCaptureStore_log.debug("timestampCaptures.put", {
-      symbol: record.symbol
-    });
-  }
-  async replaceSymbol(symbol, records) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.TIMESTAMP_OPENINGS);
-    const index = store.index("symbol");
-    const existingKeys = await txPromise(index.getAllKeys(symbol));
-    for (const key of existingKeys) store.delete(key);
-    for (const record of records) store.put(record);
-    await txComplete(tx);
-    TimestampCaptureStore_log.debug("timestampCaptures.replaceSymbol", {
-      symbol,
-      removed: existingKeys.length,
-      added: records.length
-    });
-  }
-  async deleteBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.TIMESTAMP_OPENINGS);
-    const index = store.index("symbol");
-    const keys = await txPromise(index.getAllKeys(symbol));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
-    TimestampCaptureStore_log.debug("timestampCaptures.deleteBySymbol", {
-      symbol,
-      deletedCount: keys.length
-    });
-  }
-}
-;// ./src/frontend/analysis_options/savedView/savedViewRepository.ts
-
-
-async function readTimestampSavedViews(symbol) {
-  if (!symbol) return [];
-  try {
-    const db = await openAlexQuantDB();
-    const store = new TimestampCaptureStore(db);
-    const records = await store.getBySymbol(symbol.trim().toUpperCase());
-    const views = records.filter(item => item && item.version === 1 && typeof item.symbol === "string" && item.response && Array.isArray(item.response.expirations) && item.view);
-    views.sort((a, b) => a.savedAt < b.savedAt ? 1 : -1);
-    return views;
-  } catch {
-    return [];
-  }
-}
-async function writeTimestampSavedViews(symbol, views) {
-  const db = await openAlexQuantDB();
-  const store = new TimestampCaptureStore(db);
-  const limited = views.slice(0, 32).map(o => ({
-    symbol: o.symbol,
-    savedAt: o.savedAt,
-    version: o.version,
-    dataTimestamp: o.dataTimestamp,
-    response: o.response,
-    view: o.view
-  }));
-  await store.replaceSymbol(symbol.trim().toUpperCase(), limited);
-}
 ;// ./src/frontend/analysis_options/store/filters.ts
+
 
 const legKeysToAverage = ["bid", "ask", "last", "mark", "iv", "delta", "gamma", "theta", "vega", "rho", "intrinsic", "extrinsic", "theoVal", "change", "changePct", "high", "low"];
 const legKeysToSum = ["vol", "oi", "bidSize", "askSize"];
-function sumFinite(values) {
-  let total = 0;
-  let found = false;
-  for (const v of values) {
-    if (v == null || !isFinite(v)) continue;
-    total += v;
-    found = true;
-  }
-  return found ? total : null;
-}
 function mergeLegs(legs, optionType, strike) {
   if (!legs || legs.length === 0) return null;
   const weights = legs.map(l => l.oi ?? l.vol ?? 0);
@@ -54717,12 +54831,8 @@ const GAMMA_SOURCE_LABELS = {
   schwab: "Market",
   bs: "BS Model"
 };
-;// ./src/frontend/analysis_options/controls/OptionsViewControls.ts
-
-
-
-
-const OptionsViewControls_barStyle = "display: flex; flex-direction: column; gap: 4px; padding: 4px 8px;" + " border-bottom: 1px solid var(--ax-border-subtle);" + " background: var(--ax-glass-2-bg);" + " font-family: var(--ax-font-body);";
+;// ./src/frontend/analysis_options/controls/optionsControlStyles.ts
+const optionsControlStyles_barStyle = "display: flex; flex-direction: column; gap: 4px; padding: 4px 8px;" + " border-bottom: 1px solid var(--ax-border-subtle);" + " background: var(--ax-glass-2-bg);" + " font-family: var(--ax-font-body);";
 const controlsRowStyle = "display: flex; align-items: center; gap: 6px; flex-wrap: nowrap;" + " overflow-x: auto; overflow-y: hidden;";
 const groupStyle = "display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; white-space: nowrap;";
 const groupLabelStyle = "font-size: 11px; font-weight: 600; color: var(--ios-text-secondary);" + " letter-spacing: 0.2px; white-space: nowrap;";
@@ -54733,6 +54843,7 @@ const selectMultiStyle = selectBaseStyle + " min-width: 228px; min-height: 82px;
 const subRowStyle = "display: flex; align-items: center; gap: 6px; margin-left: 4px; flex-wrap: wrap;";
 const subLabelStyle = "font-size: 10px; font-weight: 600; color: var(--ios-text-secondary);";
 const infoTagStyle = "font-size: 9px; font-weight: 600; color: #D78100; background: rgba(215, 129, 0, 0.1);" + " padding: 1px 5px; border-radius: 4px; white-space: nowrap;";
+;// ./src/frontend/analysis_options/controls/optionsControlHelpers.ts
 function createOption(value, label, selected = false) {
   const opt = document.createElement("option");
   opt.value = value;
@@ -54749,6 +54860,82 @@ function localChoiceValue(mode, pct, delta) {
   if (mode === "pct") return `pct:${pct}`;
   return `delta:${delta[0]}-${delta[1]}`;
 }
+;// ./src/frontend/analysis_options/controls/optionsLiquidityAdvanced.ts
+
+
+
+
+/**
+ * Render the advanced-liquidity controls (Spread / MinVol / MinOI / Stale)
+ * into `liqAdvancedRow` when the preset is "advanced". A no-op when the
+ * preset is anything else.
+ *
+ * The state read/write goes through `handle` so the parent renderer remains
+ * the single source of truth for `st.liquidityAdvanced`.
+ */
+function renderLiquidityAdvancedRow(liqAdvancedRow, preset, handle, onChange) {
+  liqAdvancedRow.innerHTML = "";
+  if (preset !== "advanced") return;
+  const addNumberSelect = (title, baseValues, current, setter, formatter = n => String(n)) => {
+    liqAdvancedRow.appendChild(createElement_ui_createElement("span", {
+      text: `${title}:`,
+      styleString: subLabelStyle
+    }));
+    const select = createElement_ui_createElement("select", {
+      styleString: selectSmallStyle + " min-width: 88px;"
+    });
+    const values = numericOptionSet(baseValues, current);
+    values.forEach(v => select.appendChild(createOption(String(v), formatter(v), v === current)));
+    select.addEventListener("change", e => {
+      const v = Number(e.target.value);
+      if (!Number.isFinite(v)) return;
+      const nextAdvanced = setter(handle.getAdvanced(), v);
+      handle.setAdvanced(nextAdvanced);
+      onChange(nextAdvanced);
+    });
+    liqAdvancedRow.appendChild(select);
+  };
+  const advanced = handle.getAdvanced();
+  addNumberSelect("Spread", LIQUIDITY_SPREAD_BASE, advanced.spreadPct, (a, next) => ({
+    ...a,
+    spreadPct: next
+  }), n => `<${n}%`);
+  addNumberSelect("MinVol", LIQUIDITY_MIN_VOL_BASE, advanced.minVol, (a, next) => ({
+    ...a,
+    minVol: next
+  }));
+  addNumberSelect("MinOI", LIQUIDITY_MIN_OI_BASE, advanced.minOI, (a, next) => ({
+    ...a,
+    minOI: next
+  }));
+  liqAdvancedRow.appendChild(createElement_ui_createElement("span", {
+    text: "Stale:",
+    styleString: subLabelStyle
+  }));
+  const staleSelect = createElement_ui_createElement("select", {
+    styleString: selectSmallStyle + " min-width: 110px;"
+  });
+  staleSelect.appendChild(createOption("include", "Include", !advanced.excludeStale));
+  staleSelect.appendChild(createOption("exclude", "Exclude", advanced.excludeStale));
+  staleSelect.addEventListener("change", e => {
+    const exclude = e.target.value === "exclude";
+    const nextAdvanced = {
+      ...handle.getAdvanced(),
+      excludeStale: exclude
+    };
+    handle.setAdvanced(nextAdvanced);
+    onChange(nextAdvanced);
+  });
+  liqAdvancedRow.appendChild(staleSelect);
+}
+;// ./src/frontend/analysis_options/controls/OptionsViewControls.ts
+
+
+
+
+
+
+
 function renderScopeLock(stateSlice, expirations, callbacks) {
   let st = {
     ...stateSlice,
@@ -54756,7 +54943,7 @@ function renderScopeLock(stateSlice, expirations, callbacks) {
   };
   let exps = expirations;
   const bar = createElement_ui_createElement("div", {
-    styleString: OptionsViewControls_barStyle
+    styleString: optionsControlStyles_barStyle
   });
   const controlsRow = createElement_ui_createElement("div", {
     styleString: controlsRowStyle
@@ -55057,66 +55244,12 @@ function renderScopeLock(stateSlice, expirations, callbacks) {
     renderLiqSelect();
     renderLiqAdvanced();
   });
-  const renderLiqAdvanced = () => {
-    liqAdvancedRow.innerHTML = "";
-    if (st.liquidityPreset !== "advanced") return;
-    const addNumberSelect = (title, baseValues, current, onChange, formatter = n => String(n)) => {
-      liqAdvancedRow.appendChild(createElement_ui_createElement("span", {
-        text: `${title}:`,
-        styleString: subLabelStyle
-      }));
-      const select = createElement_ui_createElement("select", {
-        styleString: selectSmallStyle + " min-width: 88px;"
-      });
-      const values = numericOptionSet(baseValues, current);
-      values.forEach(v => select.appendChild(createOption(String(v), formatter(v), v === current)));
-      select.addEventListener("change", e => {
-        const v = Number(e.target.value);
-        if (!Number.isFinite(v)) return;
-        onChange(v);
-      });
-      liqAdvancedRow.appendChild(select);
-    };
-    addNumberSelect("Spread", LIQUIDITY_SPREAD_BASE, st.liquidityAdvanced.spreadPct, next => {
-      st.liquidityAdvanced = {
-        ...st.liquidityAdvanced,
-        spreadPct: next
-      };
-      callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-    }, n => `<${n}%`);
-    addNumberSelect("MinVol", LIQUIDITY_MIN_VOL_BASE, st.liquidityAdvanced.minVol, next => {
-      st.liquidityAdvanced = {
-        ...st.liquidityAdvanced,
-        minVol: next
-      };
-      callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-    });
-    addNumberSelect("MinOI", LIQUIDITY_MIN_OI_BASE, st.liquidityAdvanced.minOI, next => {
-      st.liquidityAdvanced = {
-        ...st.liquidityAdvanced,
-        minOI: next
-      };
-      callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-    });
-    liqAdvancedRow.appendChild(createElement_ui_createElement("span", {
-      text: "Stale:",
-      styleString: subLabelStyle
-    }));
-    const staleSelect = createElement_ui_createElement("select", {
-      styleString: selectSmallStyle + " min-width: 110px;"
-    });
-    staleSelect.appendChild(createOption("include", "Include", !st.liquidityAdvanced.excludeStale));
-    staleSelect.appendChild(createOption("exclude", "Exclude", st.liquidityAdvanced.excludeStale));
-    staleSelect.addEventListener("change", e => {
-      const exclude = e.target.value === "exclude";
-      st.liquidityAdvanced = {
-        ...st.liquidityAdvanced,
-        excludeStale: exclude
-      };
-      callbacks.onLiquidityChange("advanced", st.liquidityAdvanced);
-    });
-    liqAdvancedRow.appendChild(staleSelect);
-  };
+  const renderLiqAdvanced = () => renderLiquidityAdvancedRow(liqAdvancedRow, st.liquidityPreset, {
+    getAdvanced: () => st.liquidityAdvanced,
+    setAdvanced: next => {
+      st.liquidityAdvanced = next;
+    }
+  }, next => callbacks.onLiquidityChange("advanced", next));
   const renderBasisSelect = () => {
     basisSelect.innerHTML = "";
     ["mid", "mark"].forEach(b => {
@@ -56542,7 +56675,7 @@ function renderEnhancedGex(analytics, underlyingPrice, basis, oiTimestamp, ladde
   };
   return result;
 }
-;// ./src/shared/utils/tooltipHost.ts
+;// ./src/shared/utils/dom/tooltipHost.ts
 /**
  * Factory for shadow-isolated tooltip hosts (`<alexquant-tip>`).
  *
@@ -60399,6 +60532,373 @@ function buildControlCallbacks(deps, store) {
     }
   };
 }
+;// ./src/frontend/analysis_optionFlow/monitor/monitorSettings.ts
+/**
+ * Monitor settings — types, defaults, persistence.
+ */
+
+
+
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+const FIXED_SLOTS = ["0dte", "this_week", "next_week", "month_end", "quarter_end", "year_end", "leap"];
+function describeUniverseMode(mode) {
+  if (mode === "top_n") return "Top N expiries";
+  if (mode === "fixed_slots") return "Fixed key slots";
+  return "All expiries";
+}
+const DEFAULT_MONITOR_TOP_N = 10;
+const MIN_MONITOR_TOP_N = 1;
+const MAX_MONITOR_TOP_N = 30;
+const DEFAULT_MONITOR_SETTINGS = {
+  symbols: ["SPY", "QQQ", "IWM", "NVDA", "TSLA", "AAPL", "AMZN", "AMD", "META", "MSFT", "GOOG", "GLD", "SLV", "XLF", "XLE", "SMH", "TLT", "HYG"],
+  intervalMinutes: 10,
+  concurrency: 4,
+  enabled: true,
+  universeMode: "all",
+  defaultTopN: DEFAULT_MONITOR_TOP_N,
+  topNBySymbol: {}
+};
+const MONITOR_SYMBOLS = DEFAULT_MONITOR_SETTINGS.symbols;
+function normalizeMonitorSymbolList(value) {
+  if (!Array.isArray(value) || value.length === 0) return [...DEFAULT_MONITOR_SETTINGS.symbols];
+  const symbols = value.filter(s => typeof s === "string" && s.trim().length > 0).map(s => s.trim().toUpperCase());
+  return symbols.length > 0 ? symbols : [...DEFAULT_MONITOR_SETTINGS.symbols];
+}
+function normalizeTopNValue(value, fallback) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const rounded = Math.trunc(value);
+  return Math.max(MIN_MONITOR_TOP_N, Math.min(MAX_MONITOR_TOP_N, rounded));
+}
+function normalizeTopNBySymbol(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const symbol = key.trim().toUpperCase();
+    if (!symbol) continue;
+    out[symbol] = normalizeTopNValue(value, DEFAULT_MONITOR_TOP_N);
+  }
+  return out;
+}
+function parseMonitorSettings(parsed) {
+  if (!parsed || typeof parsed !== "object") return cloneMonitorSettings(DEFAULT_MONITOR_SETTINGS);
+  const symbols = normalizeMonitorSymbolList(parsed.symbols);
+  const defaultTopN = DEFAULT_MONITOR_TOP_N;
+  const topNBySymbolRaw = normalizeTopNBySymbol(parsed.topNBySymbol);
+  const topNBySymbol = {};
+  for (const sym of symbols) {
+    if (topNBySymbolRaw[sym] != null) {
+      topNBySymbol[sym] = topNBySymbolRaw[sym];
+    }
+  }
+  return {
+    symbols,
+    intervalMinutes: typeof parsed.intervalMinutes === "number" && parsed.intervalMinutes >= 1 && parsed.intervalMinutes <= 60 ? parsed.intervalMinutes : DEFAULT_MONITOR_SETTINGS.intervalMinutes,
+    concurrency: typeof parsed.concurrency === "number" && parsed.concurrency >= 1 && parsed.concurrency <= 10 ? parsed.concurrency : DEFAULT_MONITOR_SETTINGS.concurrency,
+    enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_MONITOR_SETTINGS.enabled,
+    universeMode: parsed.universeMode === "top_n" || parsed.universeMode === "fixed_slots" ? parsed.universeMode : DEFAULT_MONITOR_SETTINGS.universeMode,
+    defaultTopN,
+    topNBySymbol
+  };
+}
+function cloneMonitorSettings(settings) {
+  return {
+    ...settings,
+    symbols: [...settings.symbols],
+    topNBySymbol: {
+      ...settings.topNBySymbol
+    }
+  };
+}
+async function loadMonitorSettings() {
+  try {
+    const db = await openAlexQuantDB();
+    const kv = new KVStore(db);
+    const raw = await kv.get("monitor.settings");
+    return parseMonitorSettings(raw);
+  } catch {
+    return cloneMonitorSettings(DEFAULT_MONITOR_SETTINGS);
+  }
+}
+function saveMonitorSettings(settings) {
+  void (async () => {
+    try {
+      const db = await openAlexQuantDB();
+      const kv = new KVStore(db);
+      await kv.set("monitor.settings", settings);
+    } catch {}
+  })();
+}
+;// ./src/frontend/analysis_options/pageHelpers.ts
+
+
+
+
+/** Apply a SavedViewState onto the OptionsStore, clamping invalid indexes. */
+function pageHelpers_applySavedViewState(store, view, response) {
+  const safeExpIdx = Math.max(0, Math.min(response.expirations.length - 1, view.selectedExpirationIdx));
+  const safeCustom = view.customExpirationIdxs.filter(i => i >= 0 && i < response.expirations.length).sort((a, b) => a - b);
+  store.setState({
+    selectedExpirationIdx: safeExpIdx,
+    selectedStrikeCount: view.selectedStrikeCount,
+    customExpirationIdxs: safeCustom,
+    scopeMode: normalizeScopeMode(view.scopeMode),
+    greeksBasis: view.greeksBasis,
+    gammaSource: view.gammaSource ?? "schwab",
+    liquidityThreshold: view.liquidityThreshold,
+    localWindowMode: view.localWindowMode,
+    localWindowPct: view.localWindowPct ?? 10,
+    localWindowDeltaRange: view.localWindowDeltaRange ?? [0.25, 0.75],
+    strikeMode: view.strikeMode ?? "count",
+    strikeDollarWidth: view.strikeDollarWidth ?? 50,
+    liquidityPreset: view.liquidityPreset ?? "normal",
+    liquidityAdvanced: view.liquidityAdvanced ?? {
+      spreadPct: 0.25,
+      minVol: 0,
+      minOI: 0,
+      excludeStale: false
+    },
+    expectedMoveMode: view.expectedMoveMode ?? "straddle",
+    ivMetric: view.ivMetric ?? "iv",
+    ivSlice: view.ivSlice ?? "atm"
+  });
+}
+
+/** Set the Copy-Out button visual state without touching its text. */
+function setCopyOutBtnAppearance(btn, state) {
+  if (state === "success") {
+    btn.style.borderColor = "#169c35";
+    btn.style.color = "#0c7a28";
+    return;
+  }
+  if (state === "error") {
+    btn.style.borderColor = DS_COLORS.negative;
+    btn.style.color = DS_COLORS.negative;
+    return;
+  }
+  btn.style.borderColor = "var(--ios-border)";
+  btn.style.color = "var(--ios-text-primary)";
+}
+
+/** Resolve the monitored ticker list for the page's <select>. */
+function getTickerList(ctx) {
+  const mc = ctx?.monitorController;
+  const monitored = mc?.getSymbols?.() ?? [];
+  const source = monitored.length > 0 ? monitored : DEFAULT_MONITOR_SETTINGS.symbols;
+  const unique = [];
+  const seen = new Set();
+  for (const raw of source) {
+    const symbol = String(raw ?? "").trim().toUpperCase();
+    if (!symbol || seen.has(symbol)) continue;
+    seen.add(symbol);
+    unique.push(symbol);
+  }
+  return unique;
+}
+
+/** Repopulate the ticker <select> with the current monitor universe. */
+function pageHelpers_renderTickerSelect(tickerSelect, symbolInput, ctx, symbolOverride) {
+  const list = getTickerList(ctx);
+  const current = (symbolOverride ?? symbolInput.value).trim().toUpperCase();
+  tickerSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Ticker List";
+  placeholder.selected = !current;
+  tickerSelect.appendChild(placeholder);
+  let matched = false;
+  for (const ticker of list) {
+    const opt = document.createElement("option");
+    opt.value = ticker;
+    opt.textContent = ticker;
+    if (ticker === current) {
+      opt.selected = true;
+      matched = true;
+    }
+    tickerSelect.appendChild(opt);
+  }
+  if (current && !matched) {
+    const customOpt = document.createElement("option");
+    customOpt.value = current;
+    customOpt.textContent = `${current} (Manual)`;
+    customOpt.selected = true;
+    tickerSelect.appendChild(customOpt);
+  }
+}
+;// ./src/backend/core/db/capture/TimestampCaptureStore.ts
+
+
+
+const TimestampCaptureStore_log = logService.namespace("storage");
+class TimestampCaptureStore {
+  constructor(db) {
+    this.db = db;
+  }
+  async getBySymbol(symbol) {
+    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readonly");
+    const index = tx.objectStore(STORES.TIMESTAMP_OPENINGS).index("symbol");
+    return txPromise(index.getAll(symbol));
+  }
+  async put(record) {
+    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
+    tx.objectStore(STORES.TIMESTAMP_OPENINGS).put(record);
+    await txComplete(tx);
+    TimestampCaptureStore_log.debug("timestampCaptures.put", {
+      symbol: record.symbol
+    });
+  }
+  async replaceSymbol(symbol, records) {
+    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
+    const store = tx.objectStore(STORES.TIMESTAMP_OPENINGS);
+    const index = store.index("symbol");
+    const existingKeys = await txPromise(index.getAllKeys(symbol));
+    for (const key of existingKeys) store.delete(key);
+    for (const record of records) store.put(record);
+    await txComplete(tx);
+    TimestampCaptureStore_log.debug("timestampCaptures.replaceSymbol", {
+      symbol,
+      removed: existingKeys.length,
+      added: records.length
+    });
+  }
+  async deleteBySymbol(symbol) {
+    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
+    const store = tx.objectStore(STORES.TIMESTAMP_OPENINGS);
+    const index = store.index("symbol");
+    const keys = await txPromise(index.getAllKeys(symbol));
+    for (const key of keys) store.delete(key);
+    await txComplete(tx);
+    TimestampCaptureStore_log.debug("timestampCaptures.deleteBySymbol", {
+      symbol,
+      deletedCount: keys.length
+    });
+  }
+}
+;// ./src/frontend/analysis_options/savedView/savedViewRepository.ts
+
+
+async function readTimestampSavedViews(symbol) {
+  if (!symbol) return [];
+  try {
+    const db = await openAlexQuantDB();
+    const store = new TimestampCaptureStore(db);
+    const records = await store.getBySymbol(symbol.trim().toUpperCase());
+    const views = records.filter(item => item && item.version === 1 && typeof item.symbol === "string" && item.response && Array.isArray(item.response.expirations) && item.view);
+    views.sort((a, b) => a.savedAt < b.savedAt ? 1 : -1);
+    return views;
+  } catch {
+    return [];
+  }
+}
+async function writeTimestampSavedViews(symbol, views) {
+  const db = await openAlexQuantDB();
+  const store = new TimestampCaptureStore(db);
+  const limited = views.slice(0, 32).map(o => ({
+    symbol: o.symbol,
+    savedAt: o.savedAt,
+    version: o.version,
+    dataTimestamp: o.dataTimestamp,
+    response: o.response,
+    view: o.view
+  }));
+  await store.replaceSymbol(symbol.trim().toUpperCase(), limited);
+}
+;// ./src/frontend/analysis_options/pageTimestampActions.ts
+
+
+
+
+async function handleSaveTimestamp(ctx) {
+  const {
+    store,
+    statusLabel,
+    getCurrentSymbol,
+    buildSavedViewState
+  } = ctx;
+  const state = store.getState();
+  if (!state.response) {
+    statusLabel.textContent = "Load data first before saving timestamp.";
+    statusLabel.style.color = DS_COLORS.negative;
+    return;
+  }
+  const symbol = (state.response.underlying.symbol || getCurrentSymbol()).trim().toUpperCase();
+  if (!symbol) {
+    statusLabel.textContent = "Missing symbol; cannot save timestamp view.";
+    statusLabel.style.color = DS_COLORS.negative;
+    return;
+  }
+  const savedView = {
+    version: 1,
+    symbol,
+    savedAt: new Date().toISOString(),
+    dataTimestamp: state.response.currentDateTime || state.timestamp || new Date().toISOString(),
+    response: state.response,
+    view: buildSavedViewState()
+  };
+  try {
+    const existing = await readTimestampSavedViews(symbol);
+    const merged = [savedView, ...existing.filter(s => s.dataTimestamp !== savedView.dataTimestamp)];
+    await writeTimestampSavedViews(symbol, merged);
+    statusLabel.textContent = `Saved timestamp ${savedViewSerializer_formatTimeLabel(savedView.dataTimestamp)} (${symbol}).`;
+    statusLabel.style.color = "var(--ios-text-secondary)";
+  } catch (err) {
+    statusLabel.textContent = `Save timestamp failed: ${err?.message ?? "unknown error"}`;
+    statusLabel.style.color = DS_COLORS.negative;
+  }
+}
+async function handleLoadTimestamp(ctx) {
+  const {
+    store,
+    statusLabel,
+    symbolInput,
+    getCurrentSymbol,
+    renderTickerSelect,
+    applySavedViewState,
+    renderCharts
+  } = ctx;
+  const symbol = getCurrentSymbol();
+  if (!symbol) {
+    statusLabel.textContent = "Enter/load a symbol first.";
+    statusLabel.style.color = DS_COLORS.negative;
+    return;
+  }
+  const savedViews = await readTimestampSavedViews(symbol);
+  if (savedViews.length === 0) {
+    statusLabel.textContent = `No saved timestamps for ${symbol}.`;
+    statusLabel.style.color = DS_COLORS.negative;
+    return;
+  }
+  const maxChoices = Math.min(12, savedViews.length);
+  const options = savedViews.slice(0, maxChoices).map((s, i) => `${i + 1}. data=${savedViewSerializer_formatTimeLabel(s.dataTimestamp)} | saved=${savedViewSerializer_formatTimeLabel(s.savedAt)}`).join("\n");
+  const choice = window.prompt(`Load saved timestamp for ${symbol}:\n${options}\nEnter 1-${maxChoices}`, "1");
+  if (choice == null) return;
+  const index = Number(choice) - 1;
+  if (!Number.isInteger(index) || index < 0 || index >= maxChoices) {
+    statusLabel.textContent = "Invalid timestamp selection.";
+    statusLabel.style.color = DS_COLORS.negative;
+    return;
+  }
+  const selected = savedViews[index];
+  try {
+    clearFocusedStrike();
+    symbolInput.value = symbol;
+    renderTickerSelect(symbol);
+    store.setState({
+      response: selected.response,
+      timestamp: selected.dataTimestamp || new Date().toISOString()
+    });
+    applySavedViewState(selected.view, selected.response);
+    renderCharts();
+    statusLabel.textContent = `Loaded timestamp ${savedViewSerializer_formatTimeLabel(selected.dataTimestamp)} (${symbol}).`;
+    statusLabel.style.color = "var(--ios-text-secondary)";
+  } catch (err) {
+    statusLabel.textContent = `Load timestamp failed: ${err?.message ?? "unknown error"}`;
+    statusLabel.style.color = DS_COLORS.negative;
+  }
+}
 ;// ./src/frontend/analysis_options/page.ts
 
 
@@ -60448,48 +60948,7 @@ function options_renderPage(ctx) {
   let _latestSavedView = null;
   let pendingSavedView = null;
   let copyOutResetTimer = null;
-  const getTickerList = () => {
-    const mc = ctx?.monitorController;
-    const monitored = mc?.getSymbols?.() ?? [];
-    const source = monitored.length > 0 ? monitored : DEFAULT_MONITOR_SETTINGS.symbols;
-    const unique = [];
-    const seen = new Set();
-    for (const raw of source) {
-      const symbol = String(raw ?? "").trim().toUpperCase();
-      if (!symbol || seen.has(symbol)) continue;
-      seen.add(symbol);
-      unique.push(symbol);
-    }
-    return unique;
-  };
-  const renderTickerSelect = symbolOverride => {
-    const list = getTickerList();
-    const current = (symbolOverride ?? symbolInput.value).trim().toUpperCase();
-    tickerSelect.innerHTML = "";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = "Ticker List";
-    placeholder.selected = !current;
-    tickerSelect.appendChild(placeholder);
-    let matched = false;
-    for (const ticker of list) {
-      const opt = document.createElement("option");
-      opt.value = ticker;
-      opt.textContent = ticker;
-      if (ticker === current) {
-        opt.selected = true;
-        matched = true;
-      }
-      tickerSelect.appendChild(opt);
-    }
-    if (current && !matched) {
-      const customOpt = document.createElement("option");
-      customOpt.value = current;
-      customOpt.textContent = `${current} (Manual)`;
-      customOpt.selected = true;
-      tickerSelect.appendChild(customOpt);
-    }
-  };
+  const renderTickerSelect = symbolOverride => pageHelpers_renderTickerSelect(tickerSelect, symbolInput, ctx, symbolOverride);
   const buttonStyle = "padding: 7px 12px; font-size: var(--ax-fs-sm); font-weight: var(--ax-fw-bold); border-radius: var(--ax-radius-lg); cursor: pointer;" + " border: 1px solid var(--ax-border); background: var(--ax-bg-input); color: var(--ax-fg);" + " font-family: var(--ax-font-body);";
   const getCurrentSymbol = () => symbolInput.value.trim().toUpperCase() || store.getState().response?.underlying.symbol?.toUpperCase() || "";
   const optionsStatusDot = ctx?.optionsStatus ?? null;
@@ -60508,48 +60967,7 @@ function options_renderPage(ctx) {
     refreshBtn.style.pointerEvents = isLoading ? "none" : "auto";
   };
   const buildSavedViewState = () => projectSavedViewState(store.getState());
-  const applySavedViewState = (view, response) => {
-    const safeExpIdx = Math.max(0, Math.min(response.expirations.length - 1, view.selectedExpirationIdx));
-    const safeCustom = view.customExpirationIdxs.filter(i => i >= 0 && i < response.expirations.length).sort((a, b) => a - b);
-    store.setState({
-      selectedExpirationIdx: safeExpIdx,
-      selectedStrikeCount: view.selectedStrikeCount,
-      customExpirationIdxs: safeCustom,
-      scopeMode: normalizeScopeMode(view.scopeMode),
-      greeksBasis: view.greeksBasis,
-      gammaSource: view.gammaSource ?? "schwab",
-      liquidityThreshold: view.liquidityThreshold,
-      localWindowMode: view.localWindowMode,
-      localWindowPct: view.localWindowPct ?? 10,
-      localWindowDeltaRange: view.localWindowDeltaRange ?? [0.25, 0.75],
-      strikeMode: view.strikeMode ?? "count",
-      strikeDollarWidth: view.strikeDollarWidth ?? 50,
-      liquidityPreset: view.liquidityPreset ?? "normal",
-      liquidityAdvanced: view.liquidityAdvanced ?? {
-        spreadPct: 0.25,
-        minVol: 0,
-        minOI: 0,
-        excludeStale: false
-      },
-      expectedMoveMode: view.expectedMoveMode ?? "straddle",
-      ivMetric: view.ivMetric ?? "iv",
-      ivSlice: view.ivSlice ?? "atm"
-    });
-  };
-  const setCopyOutBtnAppearance = (btn, state) => {
-    if (state === "success") {
-      btn.style.borderColor = "#169c35";
-      btn.style.color = "#0c7a28";
-      return;
-    }
-    if (state === "error") {
-      btn.style.borderColor = DS_COLORS.negative;
-      btn.style.color = DS_COLORS.negative;
-      return;
-    }
-    btn.style.borderColor = "var(--ios-border)";
-    btn.style.color = "var(--ios-text-primary)";
-  };
+  const applySavedViewState = (view, response) => pageHelpers_applySavedViewState(store, view, response);
   const buildCopyOutText = () => {
     const state = store.getState();
     const response = state.response;
@@ -60596,88 +61014,11 @@ function options_renderPage(ctx) {
   });
   const saveTimestampBtn = createElement_ui_createElement("button", {
     text: "Save Timestamp",
-    styleString: buttonStyle,
-    events: {
-      click: async () => {
-        const state = store.getState();
-        if (!state.response) {
-          statusLabel.textContent = "Load data first before saving timestamp.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-        const symbol = (state.response.underlying.symbol || getCurrentSymbol()).trim().toUpperCase();
-        if (!symbol) {
-          statusLabel.textContent = "Missing symbol; cannot save timestamp view.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-        const savedView = {
-          version: 1,
-          symbol,
-          savedAt: new Date().toISOString(),
-          dataTimestamp: state.response.currentDateTime || state.timestamp || new Date().toISOString(),
-          response: state.response,
-          view: buildSavedViewState()
-        };
-        try {
-          const existing = await readTimestampSavedViews(symbol);
-          const merged = [savedView, ...existing.filter(s => s.dataTimestamp !== savedView.dataTimestamp)];
-          await writeTimestampSavedViews(symbol, merged);
-          statusLabel.textContent = `Saved timestamp ${savedViewSerializer_formatTimeLabel(savedView.dataTimestamp)} (${symbol}).`;
-          statusLabel.style.color = "var(--ios-text-secondary)";
-        } catch (err) {
-          statusLabel.textContent = `Save timestamp failed: ${err?.message ?? "unknown error"}`;
-          statusLabel.style.color = DS_COLORS.negative;
-        }
-      }
-    }
+    styleString: buttonStyle
   });
   const loadTimestampBtn = createElement_ui_createElement("button", {
     text: "Load Timestamp",
-    styleString: buttonStyle,
-    events: {
-      click: async () => {
-        const symbol = getCurrentSymbol();
-        if (!symbol) {
-          statusLabel.textContent = "Enter/load a symbol first.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-        const savedViews = await readTimestampSavedViews(symbol);
-        if (savedViews.length === 0) {
-          statusLabel.textContent = `No saved timestamps for ${symbol}.`;
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-        const maxChoices = Math.min(12, savedViews.length);
-        const options = savedViews.slice(0, maxChoices).map((s, i) => `${i + 1}. data=${savedViewSerializer_formatTimeLabel(s.dataTimestamp)} | saved=${savedViewSerializer_formatTimeLabel(s.savedAt)}`).join("\n");
-        const choice = window.prompt(`Load saved timestamp for ${symbol}:\n${options}\nEnter 1-${maxChoices}`, "1");
-        if (choice == null) return;
-        const index = Number(choice) - 1;
-        if (!Number.isInteger(index) || index < 0 || index >= maxChoices) {
-          statusLabel.textContent = "Invalid timestamp selection.";
-          statusLabel.style.color = DS_COLORS.negative;
-          return;
-        }
-        const selected = savedViews[index];
-        try {
-          clearFocusedStrike();
-          symbolInput.value = symbol;
-          renderTickerSelect(symbol);
-          store.setState({
-            response: selected.response,
-            timestamp: selected.dataTimestamp || new Date().toISOString()
-          });
-          applySavedViewState(selected.view, selected.response);
-          renderCharts();
-          statusLabel.textContent = `Loaded timestamp ${savedViewSerializer_formatTimeLabel(selected.dataTimestamp)} (${symbol}).`;
-          statusLabel.style.color = "var(--ios-text-secondary)";
-        } catch (err) {
-          statusLabel.textContent = `Load timestamp failed: ${err?.message ?? "unknown error"}`;
-          statusLabel.style.color = DS_COLORS.negative;
-        }
-      }
-    }
+    styleString: buttonStyle
   });
   inputBar.appendChild(tickerSelect);
   inputBar.appendChild(symbolInput);
@@ -60961,6 +61302,30 @@ function options_renderPage(ctx) {
         setCopyOutBtnAppearance(copyOutBtn, "default");
       }, 1800);
     })();
+  });
+  saveTimestampBtn.addEventListener("click", () => {
+    void handleSaveTimestamp({
+      store,
+      statusLabel,
+      symbolInput,
+      getCurrentSymbol,
+      buildSavedViewState,
+      renderTickerSelect,
+      applySavedViewState,
+      renderCharts
+    });
+  });
+  loadTimestampBtn.addEventListener("click", () => {
+    void handleLoadTimestamp({
+      store,
+      statusLabel,
+      symbolInput,
+      getCurrentSymbol,
+      buildSavedViewState,
+      renderTickerSelect,
+      applySavedViewState,
+      renderCharts
+    });
   });
   symbolInput.addEventListener("keydown", e => {
     if (e.key === "Enter") void loadSymbol();
@@ -62275,7 +62640,85 @@ function renderStatusBand(metaRows, expiryRows) {
     expiry: expiryRows
   });
 }
+;// ./src/frontend/charts/types/heatmapInterpolation.ts
+/** Interpolate the X coordinate for a `value` falling between column anchors. */
+function interpolateSpotX(value, colValues, startX, colX, colW) {
+  if (colValues.length === 0) return null;
+  if (value <= colValues[0]) return startX + colW(0) / 2;
+  if (value >= colValues[colValues.length - 1]) {
+    const last = colValues.length - 1;
+    return startX + colX(last) + colW(last) / 2;
+  }
+  for (let i = 0; i < colValues.length - 1; i++) {
+    if (value >= colValues[i] && value <= colValues[i + 1]) {
+      const frac = (value - colValues[i]) / (colValues[i + 1] - colValues[i]);
+      const x1 = startX + colX(i) + colW(i) / 2;
+      const x2 = startX + colX(i + 1) + colW(i + 1) / 2;
+      return x1 + frac * (x2 - x1);
+    }
+  }
+  return null;
+}
+
+/**
+ * Interpolate the Y coordinate for a `value` falling between row anchors.
+ * Supports ascending or descending row value sequences.
+ */
+function interpolateSpotY(value, rowValues, startY, cellHeight) {
+  if (rowValues.length === 0) return null;
+  const first = rowValues[0];
+  const last = rowValues[rowValues.length - 1];
+  const lo = Math.min(first, last);
+  const hi = Math.max(first, last);
+  const ascending = first <= last;
+  if (value <= lo) {
+    const idx = ascending ? 0 : rowValues.length - 1;
+    return startY + idx * cellHeight + cellHeight / 2;
+  }
+  if (value >= hi) {
+    const idx = ascending ? rowValues.length - 1 : 0;
+    return startY + idx * cellHeight + cellHeight / 2;
+  }
+  for (let i = 0; i < rowValues.length - 1; i++) {
+    const v0 = rowValues[i];
+    const v1 = rowValues[i + 1];
+    if (value >= Math.min(v0, v1) && value <= Math.max(v0, v1)) {
+      const frac = (value - v0) / (v1 - v0);
+      const y1 = startY + i * cellHeight + cellHeight / 2;
+      const y2 = startY + (i + 1) * cellHeight + cellHeight / 2;
+      return y1 + frac * (y2 - y1);
+    }
+  }
+  return null;
+}
+
+/** Trace a rectangle path with rounded corners (or plain rect if r is too large). */
+function heatmapInterpolation_traceRoundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  if (r <= 0 || w < 2 * r || h < 2 * r) {
+    ctx.rect(x, y, w, h);
+  } else {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+  }
+  ctx.closePath();
+}
+
+/** Format a heatmap color-scale label, preferring compact decimals. */
+function formatScaleLabel(value) {
+  if (!Number.isFinite(value)) return "";
+  if (Number.isInteger(value)) return String(value);
+  return Math.abs(value) < 10 ? value.toFixed(2) : value.toFixed(1);
+}
 ;// ./src/frontend/charts/types/HeatmapChart.ts
+
 
 
 
@@ -62903,24 +63346,7 @@ class HeatmapChart {
     });
   }
   traceRoundRect(x, y, w, h, r) {
-    const {
-      ctx
-    } = this;
-    ctx.beginPath();
-    if (r <= 0 || w < 2 * r || h < 2 * r) {
-      ctx.rect(x, y, w, h);
-    } else {
-      ctx.moveTo(x + r, y);
-      ctx.lineTo(x + w - r, y);
-      ctx.arcTo(x + w, y, x + w, y + r, r);
-      ctx.lineTo(x + w, y + h - r);
-      ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-      ctx.lineTo(x + r, y + h);
-      ctx.arcTo(x, y + h, x, y + h - r, r);
-      ctx.lineTo(x, y + r);
-      ctx.arcTo(x, y, x + r, y, r);
-    }
-    ctx.closePath();
+    heatmapInterpolation_traceRoundRect(this.ctx, x, y, w, h, r);
   }
   drawColorScale() {
     const {
@@ -62978,9 +63404,7 @@ class HeatmapChart {
     ctx.fillText(this.formatScaleLabel(rawMax), scaleX + scaleWidth, labelY);
   }
   formatScaleLabel(value) {
-    if (!Number.isFinite(value)) return "";
-    if (Number.isInteger(value)) return String(value);
-    return Math.abs(value) < 10 ? value.toFixed(2) : value.toFixed(1);
+    return formatScaleLabel(value);
   }
   drawSpotLine(startX, startY) {
     const {
@@ -63080,48 +63504,10 @@ class HeatmapChart {
     ctx.restore();
   }
   interpolateSpotX(value, colValues, startX, _cellWidth) {
-    if (colValues.length === 0) return null;
-    if (value <= colValues[0]) return startX + this.colW(0) / 2;
-    if (value >= colValues[colValues.length - 1]) {
-      const last = colValues.length - 1;
-      return startX + this.colX(last) + this.colW(last) / 2;
-    }
-    for (let i = 0; i < colValues.length - 1; i++) {
-      if (value >= colValues[i] && value <= colValues[i + 1]) {
-        const frac = (value - colValues[i]) / (colValues[i + 1] - colValues[i]);
-        const x1 = startX + this.colX(i) + this.colW(i) / 2;
-        const x2 = startX + this.colX(i + 1) + this.colW(i + 1) / 2;
-        return x1 + frac * (x2 - x1);
-      }
-    }
-    return null;
+    return interpolateSpotX(value, colValues, startX, col => this.colX(col), col => this.colW(col));
   }
   interpolateSpotY(value, rowValues, startY, cellHeight) {
-    if (rowValues.length === 0) return null;
-    const first = rowValues[0];
-    const last = rowValues[rowValues.length - 1];
-    const lo = Math.min(first, last);
-    const hi = Math.max(first, last);
-    const ascending = first <= last;
-    if (value <= lo) {
-      const idx = ascending ? 0 : rowValues.length - 1;
-      return startY + idx * cellHeight + cellHeight / 2;
-    }
-    if (value >= hi) {
-      const idx = ascending ? rowValues.length - 1 : 0;
-      return startY + idx * cellHeight + cellHeight / 2;
-    }
-    for (let i = 0; i < rowValues.length - 1; i++) {
-      const v0 = rowValues[i];
-      const v1 = rowValues[i + 1];
-      if (value >= Math.min(v0, v1) && value <= Math.max(v0, v1)) {
-        const frac = (value - v0) / (v1 - v0);
-        const y1 = startY + i * cellHeight + cellHeight / 2;
-        const y2 = startY + (i + 1) * cellHeight + cellHeight / 2;
-        return y1 + frac * (y2 - y1);
-      }
-    }
-    return null;
+    return interpolateSpotY(value, rowValues, startY, cellHeight);
   }
   update(newData, newRows, newColumns, extra) {
     this.options.data = newData;
@@ -71126,7 +71512,7 @@ function decisionColor(action) {
   if (action === "SELL" || action === "STRONG_SELL") return "var(--ios-red)";
   return "var(--ios-orange)";
 }
-;// ./src/shared/utils/markdown.ts
+;// ./src/shared/utils/format/markdown.ts
 /**
  * Lightweight markdown -> HTML for AI output rendering.
  *
@@ -78818,12 +79204,9 @@ const axAnimationsCss = `
       75%      { --ax-lg-mx: -28; --ax-lg-mx-abs: 28; --ax-lg-my: -10; }
     }
   `;
-;// ./src/frontend/components/core/axTheme/shellCss.ts
-// App-shell CSS — dock, header, nav, mobile, tables, buttons, badges, notifications.
-// Theme-aware: every value reads from --ax-* CSS vars.
-// Replaces the hand-coded legacy styles in the original ui_styles.ts.
-
-const axShellCss = `
+;// ./src/frontend/components/core/axTheme/shellCss.core.ts
+// Core shell CSS: dock, header skeleton, settings button.
+const axShellCssCore = `
     body { background: var(--ax-app-scenery); }
     body.theme-dark {
       background: var(--ax-app-scenery) !important;
@@ -79359,6 +79742,10 @@ const axShellCss = `
 
     /* iOS Tables */
     .ios-table {
+`;
+;// ./src/frontend/components/core/axTheme/shellCss.components.ts
+// Components shell CSS: tables, search, buttons, badges.
+const axShellCssComponents = `
       width: max-content;
       min-width: 100%;
       table-layout: fixed;
@@ -79719,6 +80106,10 @@ const axShellCss = `
       overflow: hidden;
       opacity: 0;
       transform: translateX(100px);
+`;
+;// ./src/frontend/components/core/axTheme/shellCss.responsive.ts
+// Responsive + notifications shell CSS.
+const axShellCssResponsive = `
       transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1),
                   transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
@@ -80003,7 +80394,16 @@ const axShellCss = `
     }
     .ios-table td { line-height: 1.2; padding-top: 6px; padding-bottom: 6px; }
     .ios-table th { line-height: 1.2; padding-top: 8px; padding-bottom: 8px; }
-  `;
+`;
+;// ./src/frontend/components/core/axTheme/shellCss.ts
+// App-shell CSS — composed from per-section files in ./shellCss.*.ts.
+// Theme-aware: every value reads from --ax-* CSS vars.
+// The previous monolithic version lived in this file; the per-section split keeps each piece below 600 lines.
+
+
+
+
+const axShellCss = axShellCssCore + axShellCssComponents + axShellCssResponsive;
 ;// ./src/frontend/components/core/axTheme/renderMode/overrideCss.ts
 // All Eco-mode CSS overrides live here. Injected once after the rest of
 // the AlexQuant stylesheet so the !important rules take precedence over
@@ -80180,7 +80580,7 @@ function ensureAxUICss() {
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }
-;// ./src/frontend/components/core/ui_styles.ts
+;// ./src/frontend/components/core/styles/ui_styles.ts
 // Theme + style runtime entry. Thin wrapper around the AlexQuant
 // design-token system in ./axTheme. Existing callsites import the same
 // three functions (addAnimationStyles / addGlobalStyle / applyColorTheme),
@@ -80376,7 +80776,7 @@ function installLogDevTools() {
     w.__alexquantLog = createLogDevTools();
   }
 }
-;// ./src/shared/utils/equality.ts
+;// ./src/shared/utils/data/equality.ts
 function isEqual(a, b) {
   if (a === b) return true;
   if (typeof a !== typeof b || a === null || b === null) return false;
@@ -80805,7 +81205,7 @@ function createPersistenceLayer({
     }
   };
 }
-;// ./src/shared/utils/eventEmitter.ts
+;// ./src/shared/utils/state/eventEmitter.ts
 
 const eventEmitter_log = logService.namespace("storage");
 function createEventEmitter() {
@@ -82352,38 +82752,9 @@ const defaultSettings = {
   betaRefreshIntervalMs: 7_200_000
 };
 const VALID_ANCHOR_MODES = new Set(["shares", "deltaDollar", "deltaDollarPct", "betaPct"]);
-const OLD_MODE_SET = new Set(["deltaDollarPct", "betaPct", "shares", "deltaDollar", "gamma", "theta", "vega"]);
-const ANCHOR_PRIORITY = ["shares", "deltaDollar", "deltaDollarPct", "betaPct"];
 const normalizeRebalanceTargets = raw => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const obj = raw;
-  const topKeys = Object.keys(obj);
-  if (topKeys.length === 0) return undefined;
-
-  // Detect old format: top-level keys are mode IDs
-  const isOldFormat = topKeys.some(k => OLD_MODE_SET.has(k));
-  if (isOldFormat) {
-    // Migrate: old { mode: { underlyingKey: value } } → new { underlyingKey: { anchor, value } }
-    const result = {};
-    for (const anchorMode of ANCHOR_PRIORITY) {
-      const modeTargets = obj[anchorMode];
-      if (!modeTargets || typeof modeTargets !== "object" || Array.isArray(modeTargets)) continue;
-      for (const [key, val] of Object.entries(modeTargets)) {
-        const num = Number(val);
-        if (typeof key !== "string" || key.length === 0 || !Number.isFinite(num)) continue;
-        // First anchor mode wins for a given underlying
-        if (!result[key]) {
-          result[key] = {
-            anchor: anchorMode,
-            value: Math.round(num * 100) / 100
-          };
-        }
-      }
-    }
-    return Object.keys(result).length > 0 ? result : undefined;
-  }
-
-  // New format: { underlyingKey: { anchor, value } }
   const result = {};
   for (const [key, entry] of Object.entries(obj)) {
     if (typeof key !== "string" || key.length === 0) continue;
@@ -82516,80 +82887,6 @@ function syncRecorderSettings(recorder, settings, defaults) {
   w.__SCHWABER_INITIALIZED__ = true;
   installLogDevTools();
   const log = logService.namespace("main");
-  const waitForDomReady = async () => {
-    if (document.readyState !== "loading") return;
-    await new Promise(resolve => document.addEventListener("DOMContentLoaded", () => resolve(), {
-      once: true
-    }));
-  };
-  const waitForInitContext = async (timeoutMs = 2000) => {
-    // Fast path: context already available (most common)
-    try {
-      const initCtx = readPageInitContext();
-      if (initCtx.asn) return initCtx;
-    } catch {}
-
-    // MutationObserver-based wait: resolves instantly when the template element appears or gets content
-    return new Promise(resolve => {
-      let resolved = false;
-      const tryResolve = () => {
-        if (resolved) return;
-        try {
-          const initCtx = readPageInitContext();
-          if (initCtx.asn) {
-            resolved = true;
-            observer.disconnect();
-            clearTimeout(timer);
-            resolve(initCtx);
-            return;
-          }
-          const upsEl = document.getElementById("ups-user-context");
-          if (upsEl && (upsEl.textContent || "").trim().length > 0) {
-            resolved = true;
-            observer.disconnect();
-            clearTimeout(timer);
-            resolve(initCtx);
-            return;
-          }
-        } catch {}
-      };
-
-      // Observe document for template script insertion / content changes
-      const observer = new MutationObserver(() => tryResolve());
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        characterData: true
-      });
-
-      // Timeout fallback: return whatever we have after timeoutMs
-      const timer = setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        observer.disconnect();
-        try {
-          resolve(readPageInitContext());
-        } catch {
-          resolve({
-            asn: null,
-            customerId: null,
-            cip: null,
-            upsUserContext: null,
-            userContext: null
-          });
-        }
-      }, timeoutMs);
-
-      // Check once more in case content arrived between fast-path and observer setup
-      tryResolve();
-    });
-  };
-  const maskTail = (v, keep = 4) => {
-    if (!v) return null;
-    const s = String(v);
-    if (s.length <= keep) return "*".repeat(s.length);
-    return "*".repeat(s.length - keep) + s.slice(-keep);
-  };
   const syncNewsRefreshIntervals = settings => {
     newsService.updateRefreshIntervals({
       yahooMacroMs: settings.newsYahooMacroEnabled === false ? 0 : settings.newsYahooMacroRefreshInterval,
