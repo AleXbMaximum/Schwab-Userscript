@@ -6,9 +6,13 @@ import {
   stopAuthTokenAutoRefresh,
   startSessionKeepAlive,
   stopSessionKeepAlive,
-} from "./backend/core/network/schwab/auth";
-import { fetchAccountInfo } from "./backend/core/network/schwab/holdings";
-import { readPageInitContext } from "./backend/core/network/schwab/initContext";
+} from "./backend/core/network/schwab/infra/auth";
+import { fetchAccountInfo } from "./backend/core/network/schwab/endpoints/holdings";
+import {
+  waitForDomReady,
+  waitForInitContext,
+  maskTail,
+} from "./boot/initContextWaiter";
 import { streamer } from "./backend/core/network/schwab/streamer";
 import { ui_createMain } from "./frontend/components/mainContainer/MainContainer";
 import { DataPipelineCoordinator } from "./frontend/components/DataPipelineCoordinator";
@@ -19,13 +23,13 @@ import {
   addGlobalStyle,
   addAnimationStyles,
   applyColorTheme,
-} from "./frontend/components/core/ui_styles";
+} from "./frontend/components/core/styles/ui_styles";
 import {
   initRenderMode,
   hydrateRenderModeFromKV,
   hydrateThemeFromKV,
 } from "./frontend/components/core/axTheme";
-import { initLayoutMode, getLayoutMode } from "./frontend/components/core/layoutMode";
+import { initLayoutMode, getLayoutMode } from "./frontend/components/core/behaviors/layoutMode";
 import { logService } from "./shared/log/core/LogService";
 import { installLogDevTools } from "./shared/log/devTools";
 import { storageOperator } from "./backend/core/setting/settingsStorage";
@@ -94,85 +98,6 @@ function syncRecorderSettings(
 
   installLogDevTools();
   const log = logService.namespace("main");
-
-  const waitForDomReady = async () => {
-    if (document.readyState !== "loading") return;
-    await new Promise<void>((resolve) =>
-      document.addEventListener("DOMContentLoaded", () => resolve(), {
-        once: true,
-      }),
-    );
-  };
-
-  const waitForInitContext = async (timeoutMs = 2000) => {
-    // Fast path: context already available (most common)
-    try {
-      const initCtx = readPageInitContext();
-      if (initCtx.asn) return initCtx;
-    } catch {}
-
-    // MutationObserver-based wait: resolves instantly when the template element appears or gets content
-    return new Promise<ReturnType<typeof readPageInitContext>>((resolve) => {
-      let resolved = false;
-      const tryResolve = () => {
-        if (resolved) return;
-        try {
-          const initCtx = readPageInitContext();
-          if (initCtx.asn) {
-            resolved = true;
-            observer.disconnect();
-            clearTimeout(timer);
-            resolve(initCtx);
-            return;
-          }
-          const upsEl = document.getElementById("ups-user-context");
-          if (upsEl && (upsEl.textContent || "").trim().length > 0) {
-            resolved = true;
-            observer.disconnect();
-            clearTimeout(timer);
-            resolve(initCtx);
-            return;
-          }
-        } catch {}
-      };
-
-      // Observe document for template script insertion / content changes
-      const observer = new MutationObserver(() => tryResolve());
-      observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-        characterData: true,
-      });
-
-      // Timeout fallback: return whatever we have after timeoutMs
-      const timer = setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        observer.disconnect();
-        try {
-          resolve(readPageInitContext());
-        } catch {
-          resolve({
-            asn: null,
-            customerId: null,
-            cip: null,
-            upsUserContext: null,
-            userContext: null,
-          } as any);
-        }
-      }, timeoutMs);
-
-      // Check once more in case content arrived between fast-path and observer setup
-      tryResolve();
-    });
-  };
-
-  const maskTail = (v: string | null | undefined, keep = 4) => {
-    if (!v) return null;
-    const s = String(v);
-    if (s.length <= keep) return "*".repeat(s.length);
-    return "*".repeat(s.length - keep) + s.slice(-keep);
-  };
 
   const syncNewsRefreshIntervals = (settings: Settings) => {
     newsService.updateRefreshIntervals({
