@@ -1,5 +1,5 @@
 import { LOG_CONFIG, DEBUG_MODE_LEVELS } from "./LogConfig";
-import { deepClone } from "../../utils/deepClone";
+import { deepClone } from "../../utils/data/deepClone";
 import { deepMerge } from "../utils/objectUtils";
 
 class ConfigManager {

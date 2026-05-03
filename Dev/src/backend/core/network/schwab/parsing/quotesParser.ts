@@ -1,6 +1,6 @@
 // Normalize quote percent fields and derived IDs before the shared deep number pass.
 import type{ QuoteItem, QuotesResponse, RegularQuote } from "shared/types/holdings";
-import { normalizeNumbersDeepInPlace } from "shared/utils/numberNormalizer";
+import { normalizeNumbersDeepInPlace } from "shared/utils/format/numberNormalizer";
 import { toFiniteNumberOrNull } from "./numberParsers";
 
 function parseSerPdfIdFromDockey(dockey: string): number | null {

@@ -6,8 +6,7 @@
 
 ## Owns
 
-- shared domain types in `types.ts`
-- holdings column definitions in `holdingsTableColumns.ts`
+- shared domain types in `types/`
 - logging primitives in `log/`
 - general utilities in `utils/`
 
@@ -19,8 +18,9 @@
 
 ## Key Entry Files
 
-- [`types.ts`](types.ts)
-- [`holdingsTableColumns.ts`](holdingsTableColumns.ts)
+- [`types/core.ts`](types/core.ts)
+- [`types/holdingsTableColumns.ts`](types/holdingsTableColumns.ts)
+- [`types/marketData.ts`](types/marketData.ts)
 - [`log/core/LogService.ts`](log/core/LogService.ts)
 - [`utils/formatters.ts`](utils/formatters.ts)
 - [`utils/time.ts`](utils/time.ts)

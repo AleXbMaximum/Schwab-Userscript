@@ -1,6 +1,6 @@
 import type{ HoldingsResponse, QuotesResponse } from "../../../shared/types/holdings";
 import type{ OptionsChainsResponse } from "../../../shared/types/options";
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 import type { OptionCaptureExpiryMetricsRow } from "../../core/db/capture/optionMonitorTypes";
 import type { ExpirySelectionContext } from "../options/monitor/etl/ExpiryMetricsETL";
 import type {

@@ -1,4 +1,4 @@
-import { deepClone, isPlainObject, cloneRegExp } from "../../utils/deepClone";
+import { deepClone, isPlainObject, cloneRegExp } from "../../utils/data/deepClone";
 
 export const deepMerge = <T extends Record<string, unknown>>(
   target: T | unknown,

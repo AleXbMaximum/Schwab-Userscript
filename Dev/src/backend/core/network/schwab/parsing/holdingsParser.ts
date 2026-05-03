@@ -1,6 +1,6 @@
 import type{ HoldingsResponse } from "shared/types/holdings";
 import { pctPointsToRatio } from "./numberParsers";
-import { normalizeNumbersDeepInPlace } from "shared/utils/numberNormalizer";
+import { normalizeNumbersDeepInPlace } from "shared/utils/format/numberNormalizer";
 
 function flattenParsedValuesDeepInPlace(obj: unknown): void {
   if (!obj || typeof obj !== "object") return;

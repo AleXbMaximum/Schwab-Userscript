@@ -5,7 +5,7 @@ import type {
   VolumeProfileBucket,
   GapStats,
 } from "../types";
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 import { sma as smaSeries, ema as emaSeries } from "shared/utils/math/timeSeries";
 import { mean as mathMean, stdDev as mathStdDev } from "shared/utils/math/statistics";
 

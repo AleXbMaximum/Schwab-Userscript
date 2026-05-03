@@ -1,6 +1,6 @@
 import type{ OptionsChainsResponse } from "shared/types/options";
 import type { OptionCaptureMetaRow } from "backend/core/db/capture/optionMonitorTypes";
-import { generateUUID } from "shared/utils/uuid";
+import { generateUUID } from "shared/utils/data/uuid";
 import {
   formatHourMinuteCT,
   parseSchwabEtTimestampToUtcIso,

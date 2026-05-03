@@ -1,4 +1,4 @@
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 
 type SanitizedBar = {
   date: string;

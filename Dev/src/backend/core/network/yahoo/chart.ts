@@ -2,7 +2,7 @@ import type {
   OHLCVBar,
   YahooDividendEvent,
   YahooSplitEvent,
-} from "shared/utils/chartDataTypes";
+} from "shared/types/chartData";
 import type {
   YahooChartParams,
   YahooChartResult,
