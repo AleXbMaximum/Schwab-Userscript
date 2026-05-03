@@ -1,98 +1,55 @@
-import type{ HoldingsResponse } from "../../shared/types/holdings";
-import type{ ChangeToken, DerivedState, HoldingsFrame } from "../../shared/types/derived";
-import type{ StreamerLike } from "../../shared/types/streamer";
-import type { Logger } from "../../shared/log/Logger";
-import { logService } from "../../shared/log/core/LogService";
+import type{ HoldingsResponse } from "../../../shared/types/holdings";
+import type{ DerivedState, HoldingsFrame } from "../../../shared/types/derived";
+import type{ StreamerLike } from "../../../shared/types/streamer";
+import type { Logger } from "../../../shared/log/Logger";
+import { logService } from "../../../shared/log/core/LogService";
 
-import { TypedEventBus } from "../../shared/utils/TypedEventBus";
+import { TypedEventBus } from "../../../shared/utils/state/TypedEventBus";
 import type { BackendEvents } from "./EventBus";
-import { systemClock } from "../../shared/utils/Clock";
+import { systemClock } from "../../../shared/utils/async/Clock";
 
-import { HoldingsDataService } from "./HoldingsDataService";
-import { SchwabNetworkSource } from "../core/network/schwab/SchwabNetworkSource";
-import { InMemoryStateRepository } from "./InMemoryStateRepository";
-import { PipelineStatePersistor } from "./persistence/PipelineStatePersistor";
-import type { RawDataState } from "./ingestion/DataIngestion";
-import type { SymbolDelta } from "./ingestion/IngestionCoordinator";
+import { HoldingsDataService } from "../HoldingsDataService";
+import { SchwabNetworkSource } from "../../core/network/schwab/SchwabNetworkSource";
+import { InMemoryStateRepository } from "../InMemoryStateRepository";
+import { PipelineStatePersistor } from "../persistence/PipelineStatePersistor";
+import type { RawDataState } from "../ingestion/DataIngestion";
+import type { SymbolDelta } from "../ingestion/IngestionCoordinator";
 
 import { PollingScheduler } from "./PollingScheduler";
-import { BetaManager } from "./beta/BetaManager";
-import { StreamerBridge } from "./bridges/StreamerBridge";
-import { OvernightBridge } from "./bridges/OvernightBridge";
-import { NewsLifecycleCoordinator } from "../services/news/NewsLifecycleCoordinator";
+import { BetaManager } from "../beta/BetaManager";
+import { StreamerBridge } from "../bridges/StreamerBridge";
+import { OvernightBridge } from "../bridges/OvernightBridge";
+import { NewsLifecycleCoordinator } from "../../services/news/NewsLifecycleCoordinator";
 
-import { BetaService, type AllBenchmarkBetaData } from "./beta/BetaService";
+import { BetaService } from "../beta/BetaService";
 import {
   chartDataService,
   type ChartDataService,
-} from "../core/network/chart/ChartDataService";
-import type { ThreeFactorBundle } from "../computation/beta/types";
+} from "../../core/network/chart/ChartDataService";
 import {
   fetchHoldings,
   fetchDualHoldings,
-} from "../core/network/schwab/holdings";
-import { fetchBalances } from "../core/network/schwab/balances";
-import { fetchQuotes } from "../core/network/schwab/quotes";
+} from "../../core/network/schwab/endpoints/holdings";
+import { PhaseManager, type PhaseSourceKey } from "./PhaseManager";
+import type { OrchestratorPhase } from "../../../shared/utils/time";
+import type { SchedulerOverride } from "../../../shared/types/core";
+
 import {
-  PhaseManager,
-  getPhaseSourceDefault,
-  type PhaseSourceKey,
-} from "./PhaseManager";
-import type { OrchestratorPhase } from "../../shared/utils/time";
-import type { SchedulerOverride } from "../../shared/types/core";
-import { INDEX_SYMBOLS_ARRAY } from "./indexSymbols";
+  type BackendOrchestratorOptions,
+  type BackendContext,
+  type StorageLike,
+  DEFAULT_BETA_RECALC_INTERVAL_MS,
+} from "./backendOrchestratorTypes";
+import { SourceOverrideManager } from "./sourceOverrideManager";
+import { setupPolling as runSetupPolling } from "./pollingOrchestrator";
+import { routeSettingsUpdate } from "./settingsRouter";
 
-// ── Options ──────────────────────────────────────────────────────────────────
-
-export interface BackendOrchestratorOptions {
-  refreshIntervalMs?: number;
-  holdingsRefreshInterval?: number;
-  quotesRefreshInterval?: number;
-  betaRefreshIntervalMs?: number;
-  enableStreamer?: boolean;
-  enableOvernightPrice?: boolean;
-  warningRulesJson?: string | null;
-  balancesRefreshInterval?: number;
-}
-
-// ── Storage adapter type ─────────────────────────────────────────────────────
-
-type StorageLike = {
-  set?: (
-    key: string,
-    value: unknown,
-    options?: { immediate?: boolean; silent?: boolean },
-  ) => unknown;
-};
-
-// ── Injected context (minimal surface from AppContext) ────────────────────────
-
-export interface BackendContext {
-  authToken: string | null;
-  accountId: string | null;
-  customerId?: string | null;
-  settings: Record<string, any>;
-  rawHoldings?: HoldingsResponse | null;
-  betaData?: unknown;
-  lastUpdate?: string;
-  storage?: StorageLike;
-}
+export type {
+  BackendOrchestratorOptions,
+  BackendContext,
+} from "./backendOrchestratorTypes";
 
 // ── BackendOrchestrator ──────────────────────────────────────────────────────
-
-const DEFAULT_BETA_RECALC_INTERVAL_MS = 7_200_000;
-
-function normalizeSymbolsUnique(symbols: unknown[]): string[] {
-  const next: string[] = [];
-  const seen = new Set<string>();
-  for (const item of symbols) {
-    const symbol = typeof item === "string" ? item.toUpperCase().trim() : "";
-    if (!symbol || seen.has(symbol)) continue;
-    seen.add(symbol);
-    next.push(symbol);
-  }
-  return next;
-}
 
 export class BackendOrchestrator {
   readonly eventBus: TypedEventBus<BackendEvents>;
@@ -117,7 +74,7 @@ export class BackendOrchestrator {
   private fetchBalancesTask: (() => Promise<any>) | null = null;
   private fetchQuotesTask: (() => Promise<any>) | null = null;
   private readonly phaseManager: PhaseManager;
-  private readonly sourceOverrides = new Map<PhaseSourceKey, SchedulerOverride>();
+  private readonly sourceOverrideManager: SourceOverrideManager;
 
   constructor(ctx: BackendContext, options: BackendOrchestratorOptions = {}) {
     this.ctx = ctx;
@@ -259,6 +216,17 @@ export class BackendOrchestrator {
         this.eventBus.emit("phaseChange", phase);
       },
     });
+
+    this.sourceOverrideManager = new SourceOverrideManager({
+      scheduler: this.scheduler,
+      streamerBridge: this.streamerBridge,
+      overnightBridge: this.overnightBridge,
+      getAuthToken: () => this.ctx.authToken,
+      getCustomerId: () => this.ctx.customerId ?? null,
+      reregisterHoldings: () => this.reregisterHoldings(),
+      reregisterQuotes: () => this.reregisterQuotes(),
+      reregisterBalances: () => this.reregisterBalances(),
+    });
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -388,98 +356,21 @@ export class BackendOrchestrator {
   // ── Settings ─────────────────────────────────────────────────────────────
 
   updateSettings(newSettings: Record<string, any>): void {
-    if (newSettings.warningRulesJson !== undefined) {
-      this.holdingsDataService.setWarningRulesJson(
-        newSettings.warningRulesJson ?? null,
-      );
-    }
-
-    if (newSettings.isHoldingsRefreshing !== undefined) {
-      if (newSettings.isHoldingsRefreshing === false) {
-        this.scheduler.pauseSource("holdings");
-      } else if (this.scheduler.hasSource("holdings")) {
-        this.scheduler.resumeSource("holdings");
-      } else {
-        this.reregisterHoldings();
-      }
-    }
-
-    if (newSettings.isQuotesRefreshing !== undefined) {
-      if (newSettings.isQuotesRefreshing === false) {
-        this.scheduler.pauseSource("quotes");
-      } else if (this.scheduler.hasSource("quotes")) {
-        this.scheduler.resumeSource("quotes");
-      } else {
-        this.reregisterQuotes();
-      }
-    }
-
-    if (newSettings.holdingsRefreshInterval !== undefined) {
-      this.scheduler.updateInterval(
-        "holdings",
-        newSettings.holdingsRefreshInterval || 10000,
-      );
-    }
-
-    if (newSettings.quotesRefreshInterval !== undefined) {
-      this.scheduler.updateInterval(
-        "quotes",
-        newSettings.quotesRefreshInterval || 15000,
-      );
-    }
-
-    if (newSettings.enableBalances !== undefined) {
-      if (newSettings.enableBalances === false) {
-        this.scheduler.pauseSource("balances");
-      } else if (this.scheduler.hasSource("balances")) {
-        this.scheduler.resumeSource("balances");
-      } else {
-        this.reregisterBalances();
-      }
-    }
-
-    if (newSettings.balancesRefreshInterval !== undefined) {
-      this.scheduler.updateInterval(
-        "balances",
-        newSettings.balancesRefreshInterval || 1000,
-      );
-    }
-
-    if (newSettings.enableStreamer !== undefined) {
-      // Only honour streamer enable requests in phases that use the streamer
-      if (
-        !this.phaseManager.usesStreamer() &&
-        newSettings.enableStreamer !== false
-      ) {
-        this.logger.info(
-          "enableStreamer requested but current phase does not use streamer — deferring",
-          { phase: this.phaseManager.getPhase() },
-        );
-      } else {
-        this.streamerBridge.setEnabled(newSettings.enableStreamer !== false);
-        if (newSettings.enableStreamer === false) {
-          this.streamerBridge.teardown();
-        } else {
-          this.streamerBridge.reconnect(
-            this.ctx.authToken,
-            this.ctx.customerId ?? null,
-          );
-        }
-      }
-    }
-
-    if (newSettings.enableOvernightPrice !== undefined) {
-      this.overnightBridge.setEnabled(
-        newSettings.enableOvernightPrice !== false,
-      );
-    }
-
-    if (newSettings.betaRefreshIntervalMs !== undefined) {
-      this.scheduler.updateInterval(
-        "beta-recalc",
-        newSettings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS,
-      );
-    }
+    routeSettingsUpdate(
+      {
+        ctx: this.ctx,
+        holdingsDataService: this.holdingsDataService,
+        scheduler: this.scheduler,
+        streamerBridge: this.streamerBridge,
+        overnightBridge: this.overnightBridge,
+        phaseManager: this.phaseManager,
+        logger: this.logger,
+        reregisterHoldings: () => this.reregisterHoldings(),
+        reregisterQuotes: () => this.reregisterQuotes(),
+        reregisterBalances: () => this.reregisterBalances(),
+      },
+      newSettings,
+    );
   }
 
   // ── Convenience getters ──────────────────────────────────────────────────
@@ -507,94 +398,24 @@ export class BackendOrchestrator {
   // ── Phase override API (in-memory only, not persisted) ──────────────────
 
   setSourceOverride(key: PhaseSourceKey, state: SchedulerOverride): void {
-    if (state === "auto") {
-      this.sourceOverrides.delete(key);
-    } else {
-      this.sourceOverrides.set(key, state);
-    }
-    this.applySourceOverrides(this.phaseManager.getPhase());
+    this.sourceOverrideManager.setOverride(key, state);
+    this.sourceOverrideManager.applySourceOverrides(this.phaseManager.getPhase());
   }
 
   getSourceOverride(key: PhaseSourceKey): SchedulerOverride {
-    return this.sourceOverrides.get(key) ?? "auto";
+    return this.sourceOverrideManager.getOverride(key);
   }
 
   getSourceOverrides(): ReadonlyMap<PhaseSourceKey, SchedulerOverride> {
-    return this.sourceOverrides;
+    return this.sourceOverrideManager.getAll();
   }
 
   getCurrentPhase(): OrchestratorPhase {
     return this.phaseManager.getPhase();
   }
 
-  /** Apply active overrides on top of whatever applyPhaseConfig just set. */
   private applySourceOverrides(phase: OrchestratorPhase): void {
-    for (const [key, override] of this.sourceOverrides) {
-      const defaultOn = getPhaseSourceDefault(phase, key);
-      const wantOn = override === "forceOn";
-      const wantOff = override === "forceOff";
-
-      if (wantOn && !defaultOn) {
-        // Force-enable a source that the phase would normally disable
-        this.forceSourceOn(key);
-      } else if (wantOff && defaultOn) {
-        // Force-disable a source that the phase would normally enable
-        this.forceSourceOff(key);
-      }
-      // If override aligns with default, no action needed (phase already set it)
-    }
-  }
-
-  private forceSourceOn(key: PhaseSourceKey): void {
-    switch (key) {
-      case "holdings":
-        if (this.scheduler.hasSource("holdings"))
-          this.scheduler.resumeSource("holdings");
-        else this.reregisterHoldings();
-        break;
-      case "quotes":
-        if (this.scheduler.hasSource("quotes"))
-          this.scheduler.resumeSource("quotes");
-        else this.reregisterQuotes();
-        break;
-      case "balances":
-        if (this.scheduler.hasSource("balances"))
-          this.scheduler.resumeSource("balances");
-        else this.reregisterBalances();
-        break;
-      case "streamer":
-        this.streamerBridge.setEnabled(true);
-        this.streamerBridge.reconnect(
-          this.ctx.authToken,
-          this.ctx.customerId ?? null,
-        );
-        break;
-      case "overnight":
-        this.overnightBridge.setEnabled(true);
-        break;
-      // sparkline is handled by the frontend store, not here
-    }
-  }
-
-  private forceSourceOff(key: PhaseSourceKey): void {
-    switch (key) {
-      case "holdings":
-        this.scheduler.pauseSource("holdings");
-        break;
-      case "quotes":
-        this.scheduler.pauseSource("quotes");
-        break;
-      case "balances":
-        this.scheduler.pauseSource("balances");
-        break;
-      case "streamer":
-        this.streamerBridge.setEnabled(false);
-        this.streamerBridge.disconnect();
-        break;
-      case "overnight":
-        this.overnightBridge.setEnabled(false);
-        break;
-    }
+    this.sourceOverrideManager.applySourceOverrides(phase);
   }
 
   // ── Manual triggers ──────────────────────────────────────────────────────
