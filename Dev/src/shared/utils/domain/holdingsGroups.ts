@@ -1,4 +1,4 @@
-import type { HoldingsGroup, HoldingsRow } from "../types/holdings";
+import type { HoldingsGroup, HoldingsRow } from "../../types/holdings";
 
 function normalizeSymbol(value: unknown): string | null {
   if (typeof value !== "string") return null;
