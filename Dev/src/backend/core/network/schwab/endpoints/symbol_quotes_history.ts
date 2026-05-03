@@ -1,5 +1,5 @@
-import { generateUUID } from "shared/utils/uuid";
-import { throw401, withTokenRefresh } from "./httpUtils";
+import { generateUUID } from "shared/utils/data/uuid";
+import { throw401, withTokenRefresh } from "../infra/httpUtils";
 
 export type SchwabPeriod =
   | "day"

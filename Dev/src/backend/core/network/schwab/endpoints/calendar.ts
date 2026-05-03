@@ -1,12 +1,12 @@
-import { fetchMarkitToken } from "./auth";
-import { gmGetWithHeaders } from "../yahoo/httpUtils";
+import { fetchMarkitToken } from "../infra/auth";
+import { gmGetWithHeaders } from "../../yahoo/httpUtils";
 import {
   parseCalendarHtml,
   parseRatingChangesHtml,
   type CalendarEvent,
   type CalendarEventType,
   type RatingChange,
-} from "./parsing/calendarParser";
+} from "../parsing/calendarParser";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("network");

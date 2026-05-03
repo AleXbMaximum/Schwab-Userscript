@@ -1,57 +1,49 @@
-import { generateUUID } from "shared/utils/uuid";
-import { throw401, withTokenRefresh } from "./httpUtils";
+import { generateUUID } from "shared/utils/data/uuid";
+import { throw401, withTokenRefresh } from "../infra/httpUtils";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("network");
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type IndicesHistoryPeriod =
-  | "day"
-  | "week"
-  | "OneMonth"
-  | "ThreeMonth"
-  | "SixMonth"
-  | "OneYear";
+export type MoverRankingType = "MostActive" | "PctGainers" | "PctLosers";
 
-export type IndicesHistoryRegion = "americas" | "europe" | "asia";
-
-export interface IndexLastQuote {
-  name: string;
+export interface CompanyMover {
   symbol: string;
-  value: number;
-  changePercent: number;
-  marketStatus: string;
-}
-
-export interface IndexHistoryPoint {
-  value: number;
-  dateTime: string;
-}
-
-export interface IndexQuoteHistory {
-  lastQuote: IndexLastQuote;
-  quoteHistory: IndexHistoryPoint[];
-}
-
-export interface IndicesHistoryResponse {
-  quotesHistory: IndexQuoteHistory[];
+  companyName: string;
+  priceLast: number;
+  priceChangePercent: number;
+  volume: number;
+  priceLow52Week: number;
+  priceHigh52Week: number;
 }
 
 // ── Fetcher ───────────────────────────────────────────────────────────────────
 
-const INDICES_HISTORY_URL =
-  "https://ausgateway.schwab.com/api/is.ResearchExperience/v1/markets/indices/history";
+const COMPANY_MOVERS_URL =
+  "https://ausgateway.schwab.com/api/is.ResearchExperience/v1/companymovers";
 
-export function fetchIndicesHistory(
+export function fetchCompanyMovers(
   token?: string | null,
-  params?: { region?: IndicesHistoryRegion; period?: IndicesHistoryPeriod },
-): Promise<IndicesHistoryResponse> {
-  const region = params?.region ?? "americas";
-  const period = params?.period ?? "day";
-  const span = log.span("fetchIndicesHistory", { region, period });
+  params?: {
+    exchange?: string;
+    rankingType?: MoverRankingType;
+    sector?: string;
+  },
+): Promise<CompanyMover[]> {
+  const exchange = params?.exchange ?? "all";
+  const rankingType = params?.rankingType ?? "MostActive";
+  const sector = params?.sector ?? "all";
+  const span = log.span("fetchCompanyMovers", {
+    exchange,
+    rankingType,
+    sector,
+  });
 
-  const url = `${INDICES_HISTORY_URL}?region=${encodeURIComponent(region)}&period=${encodeURIComponent(period)}`;
+  const url =
+    `${COMPANY_MOVERS_URL}?exchange=${encodeURIComponent(exchange)}` +
+    `&rankingType=${encodeURIComponent(rankingType)}` +
+    `&sector=${encodeURIComponent(sector)}`;
 
   const doRequest = async (bearerToken: string): Promise<unknown> => {
     const response = await fetch(url, {
@@ -66,7 +58,6 @@ export function fetchIndicesHistory(
         "schwab-client-channel": "IO",
         "schwab-env": "PROD",
         "schwab-environment": "PROD",
-        "schwab-resource-version": "2",
       },
     });
 
@@ -79,10 +70,9 @@ export function fetchIndicesHistory(
 
   return withTokenRefresh(doRequest, token)
     .then((data: unknown) => {
-      const payload = data as IndicesHistoryResponse;
-      const count = payload?.quotesHistory?.length ?? 0;
-      span.end("ok", { indexCount: count }, "debug");
-      return payload;
+      const items = (Array.isArray(data) ? data : []) as CompanyMover[];
+      span.end("ok", { moverCount: items.length }, "debug");
+      return items;
     })
     .catch((err) => {
       span.end(

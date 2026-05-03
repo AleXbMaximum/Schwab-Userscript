@@ -1,7 +1,7 @@
-import { generateUUID } from "shared/utils/uuid";
-import { throw401, withTokenRefresh } from "./httpUtils";
-import { fetchMarkitToken } from "./auth";
-import { gmGetWithHeaders } from "../yahoo/httpUtils";
+import { generateUUID } from "shared/utils/data/uuid";
+import { throw401, withTokenRefresh } from "../infra/httpUtils";
+import { fetchMarkitToken } from "../infra/auth";
+import { gmGetWithHeaders } from "../../yahoo/httpUtils";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("network");
