@@ -18625,6 +18625,259 @@ class SourceOverrideManager {
     }
   }
 }
+;// ./src/backend/core/network/schwab/endpoints/balances.ts
+
+
+
+const balances_log = logService.namespace("network");
+function toNum(v) {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function normalizeBalancesSnapshot(raw) {
+  const acct = raw.brokerageAccountList?.[0];
+  if (!acct) {
+    return emptyBalancesSnapshot();
+  }
+  const inv = acct.investments;
+  const funds = acct.fundsAvailable;
+  const margin = acct.marginsInfo;
+  const opts = acct.optionDetails;
+  const rate = acct.marginInterestRate;
+  return {
+    ts: Date.now(),
+    dayChangeDollar: toNum(acct.dayChange),
+    dayChangePercent: toNum(acct.dayChangePercent) / 100,
+    accountValue: toNum(acct.total),
+    marketValue: toNum(acct.marketValue),
+    cashInvestments: toNum(acct.cashInvestments?.total),
+    marginBalance: toNum(acct.cashInvestments?.marginBalance),
+    securitiesMarketValue: toNum(inv?.securitiesMarketValue),
+    optionsMarketValue: toNum(inv?.optionsMarketValue),
+    securityLongValue: toNum(inv?.securityLong?.total),
+    securityShortValue: toNum(inv?.securityShort?.total),
+    optionsLongValue: toNum(inv?.optionsLong?.total),
+    optionsShortValue: toNum(inv?.optionsShort?.total),
+    dayBuyPower: toNum(funds?.tradeFunds?.dayBuyPower),
+    settledFunds: toNum(funds?.tradeFunds?.settled),
+    cashBorrowing: toNum(funds?.tradeFunds?.cashBorrowing),
+    sma: toNum(funds?.tradeFunds?.sma),
+    marginEquity: toNum(margin?.marginEquity),
+    equityPercent: toNum(margin?.equityPercent),
+    optionRequirement: toNum(opts?.optionRequirement),
+    mtdInterestOwed: toNum(margin?.mtdInterestOwed),
+    marginRate: toNum(rate?.baseRate),
+    withdrawable: toNum(funds?.withdrawFunds?.cashBorrowing)
+  };
+}
+function emptyBalancesSnapshot() {
+  return {
+    ts: Date.now(),
+    dayChangeDollar: 0,
+    dayChangePercent: 0,
+    accountValue: 0,
+    marketValue: 0,
+    cashInvestments: 0,
+    marginBalance: 0,
+    securitiesMarketValue: 0,
+    optionsMarketValue: 0,
+    securityLongValue: 0,
+    securityShortValue: 0,
+    optionsLongValue: 0,
+    optionsShortValue: 0,
+    dayBuyPower: 0,
+    settledFunds: 0,
+    cashBorrowing: 0,
+    sma: 0,
+    marginEquity: 0,
+    equityPercent: 0,
+    optionRequirement: 0,
+    mtdInterestOwed: 0,
+    marginRate: 0,
+    withdrawable: 0
+  };
+}
+function fetchBalances(token, accountId) {
+  const span = balances_log.span("fetchBalances", {
+    accountId
+  });
+  const url = "https://ausgateway.schwab.com/api/is.Balances/V1/Balances/balances/brokerage?selectionType=S3";
+  const doRequest = async bearerToken => {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + bearerToken,
+        correlatorid: generateUUID(),
+        "schwab-client-correlid": generateUUID(),
+        "schwab-client-ids": accountId,
+        "schwab-client-appid": "AD00008376",
+        "schwab-clientapp-name": "Balances",
+        "schwab-channelcode": "IO",
+        "schwab-client-channel": "IO",
+        "schwab-env": "DEFAULT",
+        "schwab-environment": "PROD",
+        "schwab-resource-version": "1",
+        pragma: "no-cache"
+      }
+    });
+    if (response.status === 401) {
+      await throw401(response);
+    }
+    return response.json();
+  };
+  return withTokenRefresh(doRequest, token).then(raw => {
+    const snapshot = normalizeBalancesSnapshot(raw);
+    span.end("ok", {
+      accountValue: snapshot.accountValue
+    }, "debug");
+    return snapshot;
+  }).catch(err => {
+    span.end("error", {
+      error: err?.message ?? String(err)
+    }, "error");
+    throw err;
+  });
+}
+;// ./src/backend/pipeline/orchestration/pollingOrchestrator.ts
+
+
+
+
+function computeHoldingsNextFetchAt(ctx, holdingsInterval) {
+  const hasStored = !!ctx.rawHoldings;
+  const lastUpdateStr = ctx.lastUpdate;
+  const lastUpdateMs = typeof lastUpdateStr === "string" ? Date.parse(lastUpdateStr) : NaN;
+  if (!hasStored) return Date.now();
+  if (Number.isFinite(lastUpdateMs)) {
+    return Math.max(lastUpdateMs + holdingsInterval, Date.now());
+  }
+  return Date.now() + holdingsInterval;
+}
+function collectRebalanceTargetSymbols(ctx) {
+  const settings = ctx.settings || {};
+  const targets = settings.rebalanceTargets;
+  if (!targets || typeof targets !== "object") return [];
+  return normalizeSymbolsUnique(Object.keys(targets));
+}
+function setupPolling(deps) {
+  const {
+    ctx,
+    scheduler,
+    phaseManager,
+    betaManager,
+    holdingsDataService,
+    eventBus,
+    persistor,
+    logger,
+    fetchHoldingsTask,
+    setFetchQuotesTask,
+    setFetchBalancesTask,
+    getLatestFrame,
+    setLatestFrame,
+    warmupForOvernight,
+    withLatestBeta
+  } = deps;
+  const settings = ctx.settings || {};
+  const holdingsInterval = settings.holdingsRefreshInterval || 10000;
+  const quotesInterval = settings.quotesRefreshInterval || 15000;
+  const holdingsNextFetchAt = computeHoldingsNextFetchAt(ctx, holdingsInterval);
+  const holdingsDelay = Math.max(0, holdingsNextFetchAt - Date.now());
+  const shouldPoll = phaseManager.usesPolling();
+  if (settings.isHoldingsRefreshing !== false) {
+    scheduler.register({
+      key: "holdings",
+      intervalMs: holdingsInterval,
+      initialDelayMs: shouldPoll ? holdingsDelay : undefined,
+      fetcher: fetchHoldingsTask
+    });
+  } else if (shouldPoll && fetchHoldingsTask) {
+    fetchHoldingsTask();
+  }
+  const fetchQuotesTask = () => {
+    const holdingSymbols = holdingsDataService.getTrackedSymbols();
+    const rebalanceTargetSymbols = collectRebalanceTargetSymbols(ctx);
+    const allSymbols = normalizeSymbolsUnique([...INDEX_SYMBOLS_ARRAY, ...holdingSymbols, ...betaManager.getExtraBetaTickers(), ...rebalanceTargetSymbols]);
+    return fetchQuotes(allSymbols, ctx.authToken).then(data => {
+      holdingsDataService.ingestQuotes(data);
+      return data;
+    });
+  };
+  setFetchQuotesTask(fetchQuotesTask);
+  if (settings.isQuotesRefreshing !== false) {
+    scheduler.register({
+      key: "quotes",
+      intervalMs: quotesInterval,
+      fetcher: fetchQuotesTask
+    });
+  } else if (shouldPoll) {
+    fetchQuotesTask();
+  }
+  const balancesInterval = settings.balancesRefreshInterval || 1000;
+  const fetchBalancesTask = () => {
+    return fetchBalances(ctx.authToken, ctx.accountId).then(snapshot => {
+      eventBus.emit("balances", snapshot);
+      return snapshot;
+    });
+  };
+  setFetchBalancesTask(fetchBalancesTask);
+  if (shouldPoll) {
+    scheduler.register({
+      key: "balances",
+      intervalMs: balancesInterval,
+      initialDelayMs: 2000,
+      fetcher: fetchBalancesTask
+    });
+  } else {
+    fetchBalancesTask();
+  }
+  if (!shouldPoll) {
+    scheduler.pauseSource("holdings");
+    scheduler.pauseSource("quotes");
+    scheduler.pauseSource("balances");
+    if (phaseManager.getPhase() === "overnight") {
+      warmupForOvernight();
+    }
+  }
+  const betaInterval = settings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS;
+  scheduler.register({
+    key: "beta-recalc",
+    intervalMs: betaInterval,
+    initialDelayMs: 5000,
+    fetcher: async () => {
+      const opening = getLatestFrame();
+      const byUnderlying = opening?.derived?.byUnderlying;
+      const holdingSymbols = byUnderlying ? Object.keys(byUnderlying).filter(s => !s.startsWith("$") && s.length > 0 && !s.includes(" ")) : [];
+      return betaManager.computeAll(holdingSymbols);
+    },
+    onUpdate: result => {
+      betaManager.applyComputationResults(result);
+      persistor.persistBetaData(betaManager.serializeForStorage());
+      const currentFrame = getLatestFrame();
+      if (currentFrame?.derived) {
+        betaManager.enrichDerivedState(currentFrame.derived, null);
+        const betaChangeToken = {
+          rawVersion: currentFrame.changeToken?.rawVersion ?? 0,
+          derivedVersion: (currentFrame.changeToken?.derivedVersion ?? 0) + 1,
+          touchedHoldingsKeys: [],
+          touchedUnderlyingKeys: Object.keys(currentFrame.derived.byUnderlying ?? {}),
+          fullRebuild: true
+        };
+        const updatedFrame = {
+          ...withLatestBeta(currentFrame),
+          changeToken: betaChangeToken
+        };
+        setLatestFrame(updatedFrame);
+        eventBus.emit("holdings:frame", updatedFrame);
+      }
+    },
+    onError: err => {
+      logger.error("betaRecalcFailed", {
+        error: err.message
+      });
+    }
+  });
+}
 ;// ./src/backend/pipeline/orchestration/settingsRouter.ts
 
 function routeSettingsUpdate(deps, newSettings) {
@@ -18701,6 +18954,7 @@ function routeSettingsUpdate(deps, newSettings) {
   }
 }
 ;// ./src/backend/pipeline/orchestration/BackendOrchestrator.ts
+
 
 
 
@@ -19042,7 +19296,7 @@ class BackendOrchestrator {
   // ── Internal: polling setup ──────────────────────────────────────────────
 
   setupPolling() {
-    runSetupPolling({
+    setupPolling({
       ctx: this.ctx,
       scheduler: this.scheduler,
       phaseManager: this.phaseManager,

@@ -1,5 +1,5 @@
 import type{ HoldingsResponse } from "../../../shared/types/holdings";
-import type{ ChangeToken, DerivedState, HoldingsFrame } from "../../../shared/types/derived";
+import type{ DerivedState, HoldingsFrame } from "../../../shared/types/derived";
 import type{ StreamerLike } from "../../../shared/types/streamer";
 import type { Logger } from "../../../shared/log/Logger";
 import { logService } from "../../../shared/log/core/LogService";
@@ -22,8 +22,6 @@ import { OvernightBridge } from "../bridges/OvernightBridge";
 import { NewsLifecycleCoordinator } from "../../services/news/NewsLifecycleCoordinator";
 
 import { BetaService } from "../beta/BetaService";
-import type { AllBenchmarkBetaData } from "../beta/betaHorizons";
-import type { ThreeFactorBundle } from "../../computation/beta/types";
 import {
   chartDataService,
   type ChartDataService,
@@ -32,21 +30,18 @@ import {
   fetchHoldings,
   fetchDualHoldings,
 } from "../../core/network/schwab/endpoints/holdings";
-import { fetchQuotes } from "../../core/network/schwab/endpoints/quotes";
-import { fetchBalances } from "../../core/network/schwab/endpoints/balances";
 import { PhaseManager, type PhaseSourceKey } from "./PhaseManager";
 import type { OrchestratorPhase } from "../../../shared/utils/time";
 import type { SchedulerOverride } from "../../../shared/types/core";
-import { INDEX_SYMBOLS_ARRAY } from "../indexSymbols";
 
 import {
   type BackendOrchestratorOptions,
   type BackendContext,
   type StorageLike,
   DEFAULT_BETA_RECALC_INTERVAL_MS,
-  normalizeSymbolsUnique,
 } from "./backendOrchestratorTypes";
 import { SourceOverrideManager } from "./sourceOverrideManager";
+import { setupPolling as runSetupPolling } from "./pollingOrchestrator";
 import { routeSettingsUpdate } from "./settingsRouter";
 
 export type {
@@ -460,137 +455,28 @@ export class BackendOrchestrator {
   // ── Internal: polling setup ──────────────────────────────────────────────
 
   private setupPolling(): void {
-    const settings = this.ctx.settings || {};
-    const holdingsInterval = settings.holdingsRefreshInterval || 10000;
-    const quotesInterval = settings.quotesRefreshInterval || 15000;
-
-    // ── Holdings ─────────────────────────────────────────────────────────
-    // fetchHoldingsTask is already configured by phaseManager.init()
-    const holdingsNextFetchAt =
-      this.computeHoldingsNextFetchAt(holdingsInterval);
-    const holdingsDelay = Math.max(0, holdingsNextFetchAt - Date.now());
-    const shouldPoll = this.phaseManager.usesPolling();
-
-    if (settings.isHoldingsRefreshing !== false) {
-      this.scheduler.register({
-        key: "holdings",
-        intervalMs: holdingsInterval,
-        initialDelayMs: shouldPoll ? holdingsDelay : undefined,
-        fetcher: this.fetchHoldingsTask,
-      });
-    } else if (shouldPoll) {
-      this.fetchHoldingsTask();
-    }
-
-    // ── Quotes ───────────────────────────────────────────────────────────
-    this.fetchQuotesTask = () => {
-      const holdingSymbols = this.holdingsDataService.getTrackedSymbols();
-      const rebalanceTargetSymbols = this.collectRebalanceTargetSymbols();
-      const allSymbols = normalizeSymbolsUnique([
-        ...INDEX_SYMBOLS_ARRAY,
-        ...holdingSymbols,
-        ...this.betaManager.getExtraBetaTickers(),
-        ...rebalanceTargetSymbols,
-      ]);
-      return fetchQuotes(allSymbols, this.ctx.authToken).then((data: any) => {
-        this.holdingsDataService.ingestQuotes(data);
-        return data;
-      });
-    };
-
-    if (settings.isQuotesRefreshing !== false) {
-      this.scheduler.register({
-        key: "quotes",
-        intervalMs: quotesInterval,
-        fetcher: this.fetchQuotesTask,
-      });
-    } else if (shouldPoll) {
-      this.fetchQuotesTask();
-    }
-
-    // ── Balances (high-frequency 1/s) ─────────────────────────────────
-    const balancesInterval = settings.balancesRefreshInterval || 1000;
-    this.fetchBalancesTask = () => {
-      return fetchBalances(this.ctx.authToken, this.ctx.accountId!).then(
-        (snapshot) => {
-          this.eventBus.emit("balances", snapshot);
-          return snapshot;
-        },
-      );
-    };
-
-    if (shouldPoll) {
-      this.scheduler.register({
-        key: "balances",
-        intervalMs: balancesInterval,
-        initialDelayMs: 2000,
-        fetcher: this.fetchBalancesTask,
-      });
-    } else {
-      this.fetchBalancesTask();
-    }
-
-    // ── Phase-specific initial actions ────────────────────────────────
-    if (!shouldPoll) {
-      // Pause sources registered above (overnight / closed)
-      this.scheduler.pauseSource("holdings");
-      this.scheduler.pauseSource("quotes");
-      this.scheduler.pauseSource("balances");
-
-      if (this.phaseManager.getPhase() === "overnight") {
-        this.warmupForOvernight();
-      }
-    }
-
-    // ── Beta recalculation ───────────────────────────────────────────────
-    const betaInterval =
-      settings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS;
-    this.scheduler.register({
-      key: "beta-recalc",
-      intervalMs: betaInterval,
-      initialDelayMs: 5000,
-      fetcher: async () => {
-        const opening = this.latestFrame;
-        const byUnderlying = opening?.derived?.byUnderlying;
-        const holdingSymbols = byUnderlying
-          ? Object.keys(byUnderlying).filter(
-              (s: string) =>
-                !s.startsWith("$") && s.length > 0 && !s.includes(" "),
-            )
-          : [];
-        return this.betaManager.computeAll(holdingSymbols);
+    runSetupPolling({
+      ctx: this.ctx,
+      scheduler: this.scheduler,
+      phaseManager: this.phaseManager,
+      betaManager: this.betaManager,
+      holdingsDataService: this.holdingsDataService,
+      eventBus: this.eventBus,
+      persistor: this.persistor,
+      logger: this.logger,
+      fetchHoldingsTask: this.fetchHoldingsTask,
+      setFetchQuotesTask: (task) => {
+        this.fetchQuotesTask = task;
       },
-      onUpdate: (result: {
-        allResults: AllBenchmarkBetaData;
-        threeFactorResults: Map<string, ThreeFactorBundle>;
-      }) => {
-        this.betaManager.applyComputationResults(result);
-        this.persistor.persistBetaData(this.betaManager.serializeForStorage());
-
-        // Re-enrich derived state and re-emit opening with a synthetic ChangeToken
-        // so downstream consumers (table reconciliation, UI) detect the beta update.
-        if (this.latestFrame?.derived) {
-          this.betaManager.enrichDerivedState(this.latestFrame.derived, null);
-          const betaChangeToken: ChangeToken = {
-            rawVersion: this.latestFrame.changeToken?.rawVersion ?? 0,
-            derivedVersion:
-              (this.latestFrame.changeToken?.derivedVersion ?? 0) + 1,
-            touchedHoldingsKeys: [],
-            touchedUnderlyingKeys: Object.keys(
-              this.latestFrame.derived.byUnderlying ?? {},
-            ),
-            fullRebuild: true,
-          };
-          this.latestFrame = {
-            ...this.withLatestBeta(this.latestFrame),
-            changeToken: betaChangeToken,
-          };
-          this.eventBus.emit("holdings:frame", this.latestFrame);
-        }
+      setFetchBalancesTask: (task) => {
+        this.fetchBalancesTask = task;
       },
-      onError: (err: Error) => {
-        this.logger.error("betaRecalcFailed", { error: err.message });
+      getLatestFrame: () => this.latestFrame,
+      setLatestFrame: (frame) => {
+        this.latestFrame = frame;
       },
+      warmupForOvernight: () => this.warmupForOvernight(),
+      withLatestBeta: (data) => this.withLatestBeta(data),
     });
   }
 
@@ -599,25 +485,6 @@ export class BackendOrchestrator {
   private withLatestBeta(data: HoldingsFrame): HoldingsFrame {
     if (!data || !this.betaManager.latestBetaData) return data;
     return { ...data, beta: this.betaManager.latestBetaData } as any;
-  }
-
-  private computeHoldingsNextFetchAt(holdingsInterval: number): number {
-    const hasStored = !!this.ctx.rawHoldings;
-    const lastUpdateStr = this.ctx.lastUpdate;
-    const lastUpdateMs =
-      typeof lastUpdateStr === "string" ? Date.parse(lastUpdateStr) : NaN;
-    if (!hasStored) return Date.now();
-    if (Number.isFinite(lastUpdateMs)) {
-      return Math.max(lastUpdateMs + holdingsInterval, Date.now());
-    }
-    return Date.now() + holdingsInterval;
-  }
-
-  private collectRebalanceTargetSymbols(): string[] {
-    const settings = this.ctx.settings || {};
-    const targets = settings.rebalanceTargets;
-    if (!targets || typeof targets !== "object") return [];
-    return normalizeSymbolsUnique(Object.keys(targets));
   }
 
   private ingestHoldingsAndDispatchSymbols(
