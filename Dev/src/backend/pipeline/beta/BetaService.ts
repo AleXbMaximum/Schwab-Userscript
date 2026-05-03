@@ -1,9 +1,8 @@
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 import type {
   TickerBetaBundle,
   BetaResult,
   RollingBetaPoint,
-  RollingBetaOptions,
   ThreeFactorBetaResult,
   ThreeFactorBundle,
 } from "../../computation/beta/types";
@@ -13,125 +12,48 @@ import {
 } from "../../computation/beta/threeFactor";
 import { computeLogReturns } from "../../computation/beta/singleFactor";
 import type { ChartDataService } from "backend/core/network/chart/ChartDataService";
-import type { ChartInterval } from "../../../shared/utils/chartDataTypes";
 import { computeWorkerPool } from "../../computation/workers/ComputeWorkerPool";
 import { logService } from "../../../shared/log/core/LogService";
-import { runConcurrentQueue } from "../../../shared/utils/concurrency";
+import { runConcurrentQueue } from "../../../shared/utils/async/concurrency";
+import {
+  DEFAULT_BENCHMARK,
+  HORIZONS,
+  computeAcrossHorizons,
+  type HorizonKey,
+  type RollingConfig,
+  type RollingMode,
+  type RollingProgressStage,
+  type RollingProgressEvent,
+  type RollingComputationOptions,
+  type AllBenchmarkBetaData,
+  type StockFetchProgress,
+} from "./betaHorizons";
+import { BetaBarCache } from "./BetaBarCache";
+import {
+  computeRollingForTicker as computeRollingForTickerImpl,
+  computeRollingForAll as computeRollingForAllImpl,
+} from "./rollingBeta";
+
+export type {
+  RollingMode,
+  RollingProgressStage,
+  RollingProgressEvent,
+  RollingComputationOptions,
+  AllBenchmarkBetaData,
+};
 
 const log = logService.namespace("compute");
-
-const DEFAULT_BENCHMARK = "$SPX";
-
-// ── Public types ────────────────────────────────────────────────────────────
-
-export type RollingMode = "intraday" | "daily";
-export type RollingProgressStage =
-  | "start"
-  | "market_fetch"
-  | "stock_fetch"
-  | "compute"
-  | "complete"
-  | "error";
-
-export type RollingProgressEvent = {
-  mode: RollingMode;
-  stage: RollingProgressStage;
-  message: string;
-  completed: number;
-  total: number;
-  percent: number;
-  elapsedMs: number;
-  symbol?: string;
-  bars?: number;
-  points?: number;
-  error?: string;
-};
-
-export type RollingComputationOptions = {
-  concurrency?: number;
-  marketSymbol?: string;
-  onProgress?: (event: RollingProgressEvent) => void;
-};
-
-/** benchmark → symbol → bundle */
-export type AllBenchmarkBetaData = Map<string, Map<string, TickerBetaBundle>>;
 
 export type UnifiedBetaResult = {
   singleFactor: AllBenchmarkBetaData;
   threeFactor: Map<string, ThreeFactorBundle>;
 };
 
-// ── Internal config types ───────────────────────────────────────────────────
-
-type HorizonConfig = {
-  key: "ultraShort" | "week" | "short" | "medium" | "long";
-  label: string;
-  days: number;
-  interval: string;
-};
-
-type HorizonKey = HorizonConfig["key"];
-
-const HORIZONS: HorizonConfig[] = [
-  { key: "ultraShort", label: "1D", days: 5, interval: "5m" },
-  { key: "week", label: "1W", days: 12, interval: "5m" },
-  { key: "short", label: "1M", days: 35, interval: "15m" },
-  { key: "medium", label: "6M", days: 200, interval: "1h" },
-  { key: "long", label: "2Y", days: 760, interval: "1d" },
-];
-
-type RollingConfig = {
-  lookbackDays: number;
-  interval: string;
-  windowBars: number;
-  rolling: RollingBetaOptions;
-};
-
-type StockFetchProgress = {
-  symbol: string;
-  bars: number;
-  error?: string;
-};
-
-// ── Shared horizon loop helper ──────────────────────────────────────────────
-
-/** Compute a per-horizon result across all horizons in parallel, catching errors per horizon. */
-async function computeAcrossHorizons<T>(
-  symbol: string,
-  computeOne: (horizon: HorizonConfig) => Promise<T | null>,
-  logTag: string,
-): Promise<Record<HorizonKey, T | null>> {
-  const entries = await Promise.all(
-    HORIZONS.map(async (horizon) => {
-      try {
-        return [horizon.key, await computeOne(horizon)] as const;
-      } catch (err) {
-        log.warn(logTag, {
-          symbol,
-          horizon: horizon.key,
-          error: (err as Error)?.message,
-        });
-        return [horizon.key, null] as const;
-      }
-    }),
-  );
-  return Object.fromEntries(entries) as Record<HorizonKey, T | null>;
-}
-
 // ── BetaService ─────────────────────────────────────────────────────────────
 
 export class BetaService {
-  private chartService: ChartDataService;
-
   // Fetch-dedup caches only (not result caches — BetaManager owns result state).
-  private marketBarsCache = new Map<
-    string,
-    { bars: OHLCVBar[]; fetchedAt: number }
-  >();
-  private stockBarsCache = new Map<
-    string,
-    { bars: OHLCVBar[]; fetchedAt: number }
-  >();
+  private barCache: BetaBarCache;
 
   /**
    * Lightweight session cache for on-demand single-ticker computations
@@ -141,12 +63,42 @@ export class BetaService {
    */
   private adHocBetaCache = new Map<string, TickerBetaBundle>();
 
-  private static readonly MARKET_CACHE_TTL = 4 * 60 * 60 * 1000;
-  private static readonly PERIOD_SAFETY_BUFFER_SECONDS = 3600;
-
   constructor(chartService: ChartDataService) {
-    this.chartService = chartService;
+    this.barCache = new BetaBarCache(chartService);
   }
+
+  private fetchBars = (
+    symbol: string,
+    lookbackDays: number,
+    interval: string,
+  ) => this.barCache.fetchBars(symbol, lookbackDays, interval);
+
+  private fetchMarketBars = (
+    lookbackDays: number,
+    interval: string,
+    marketSymbol = DEFAULT_BENCHMARK,
+  ) => this.barCache.fetchMarketBars(lookbackDays, interval, marketSymbol);
+
+  private fetchStockBars = (
+    symbol: string,
+    lookbackDays: number,
+    interval: string,
+  ) => this.barCache.fetchStockBars(symbol, lookbackDays, interval);
+
+  private fetchRollingStockBarsForAll = (
+    symbols: string[],
+    cfg: RollingConfig,
+    concurrency: number,
+    mode: RollingMode,
+    onSymbolFetched?: (progress: StockFetchProgress) => void,
+  ) =>
+    this.barCache.fetchRollingStockBarsForAll(
+      symbols,
+      cfg,
+      concurrency,
+      mode,
+      onSymbolFetched,
+    );
 
   // ── Ad-hoc cache access ─────────────────────────────────────────────────
 
@@ -324,7 +276,7 @@ export class BetaService {
         log.error("beta.unified.tickerFail", { symbol: sym, error: err.message }),
     );
 
-    this.stockBarsCache.clear();
+    this.barCache.clearStockBars();
 
     log.info("beta.unified.done", {
       symbols: symbols.length,
@@ -494,275 +446,35 @@ export class BetaService {
 
   /** Invalidate fetch-dedup caches and ad-hoc result cache. */
   invalidate(): void {
-    this.marketBarsCache.clear();
-    this.stockBarsCache.clear();
+    this.barCache.clear();
     this.adHocBetaCache.clear();
   }
 
-  // ── Rolling beta ────────────────────────────────────────────────────────
+  // ── Rolling beta (delegated to ./rollingBeta.ts) ────────────────────────
 
-  private static readonly ROLLING_CONFIGS: Record<RollingMode, RollingConfig> =
-    {
-      intraday: {
-        lookbackDays: 60,
-        interval: "5m",
-        windowBars: 78,
-        rolling: { minWindowPoints: 50, smoothingWindow: 78, samplingStep: 78 },
-      },
-      daily: {
-        lookbackDays: 730,
-        interval: "1h",
-        windowBars: 65,
-        rolling: { minWindowPoints: 50, smoothingWindow: 35, samplingStep: 35 },
-      },
-    };
-
-  async computeRollingForTicker(
+  computeRollingForTicker(
     symbol: string,
     mode: RollingMode,
     marketSymbol = DEFAULT_BENCHMARK,
   ): Promise<RollingBetaPoint[]> {
-    const cfg = BetaService.ROLLING_CONFIGS[mode];
-    const [stockBars, marketBars] = await Promise.all([
-      this.fetchBars(symbol, cfg.lookbackDays, cfg.interval),
-      this.fetchMarketBars(cfg.lookbackDays, cfg.interval, marketSymbol),
-    ]);
-    return computeWorkerPool.computeRollingBeta(
-      stockBars,
-      marketBars,
-      cfg.windowBars,
-      cfg.rolling,
+    return computeRollingForTickerImpl(
+      this.barCache,
+      symbol,
+      mode,
+      marketSymbol,
     );
   }
 
-  async computeRollingForAll(
+  computeRollingForAll(
     symbols: string[],
     mode: RollingMode,
     optionsOrConcurrency: number | RollingComputationOptions = 3,
   ): Promise<Map<string, RollingBetaPoint[]>> {
-    const opts: RollingComputationOptions =
-      typeof optionsOrConcurrency === "number"
-        ? { concurrency: optionsOrConcurrency }
-        : (optionsOrConcurrency ?? {});
-    const concurrency = opts.concurrency ?? 3;
-    const marketSymbol = opts.marketSymbol ?? DEFAULT_BENCHMARK;
-    const onProgress = opts.onProgress;
-    log.info("beta.rolling.start", { count: symbols.length, mode, marketSymbol });
-    const cfg = BetaService.ROLLING_CONFIGS[mode];
-    const results = new Map<string, RollingBetaPoint[]>();
-    const startedAt = Date.now();
-    const totalSteps = Math.max(1, symbols.length * 2 + 1);
-    let completedSteps = 0;
-    let stockFetchDone = 0;
-    let computeDone = 0;
-
-    const emitProgress = (
-      stage: RollingProgressStage,
-      message: string,
-      extra?: Partial<
-        Pick<RollingProgressEvent, "symbol" | "bars" | "points" | "error">
-      >,
-    ) => {
-      if (!onProgress) return;
-      const percent =
-        totalSteps > 0
-          ? Math.round(
-              (Math.min(completedSteps, totalSteps) / totalSteps) * 100,
-            )
-          : 0;
-      onProgress({
-        mode,
-        stage,
-        message,
-        completed: Math.min(completedSteps, totalSteps),
-        total: totalSteps,
-        percent,
-        elapsedMs: Date.now() - startedAt,
-        symbol: extra?.symbol,
-        bars: extra?.bars,
-        points: extra?.points,
-        error: extra?.error,
-      });
-    };
-
-    emitProgress(
-      "start",
-      `Starting rolling beta for ${symbols.length} symbols`,
-    );
-
-    // Step A: fetch market bars once.
-    let marketBars: OHLCVBar[] = [];
-    try {
-      marketBars = await this.fetchMarketBars(
-        cfg.lookbackDays,
-        cfg.interval,
-        marketSymbol,
-      );
-      completedSteps += 1;
-      emitProgress(
-        "market_fetch",
-        `Fetched ${marketSymbol} bars (${marketBars.length})`,
-        { bars: marketBars.length },
-      );
-    } catch (err) {
-      emitProgress("error", `Failed to fetch ${marketSymbol} bars`, {
-        error: (err as Error)?.message ?? "unknown error",
-      });
-      throw err;
-    }
-
-    // Step B: fetch all ticker bars.
-    const stockBarsBySymbol = await this.fetchRollingStockBarsForAll(
+    return computeRollingForAllImpl(
+      this.barCache,
       symbols,
-      cfg,
-      concurrency,
       mode,
-      (progress: StockFetchProgress) => {
-        stockFetchDone += 1;
-        completedSteps = 1 + stockFetchDone + computeDone;
-        const base = `Fetched ticker bars ${stockFetchDone}/${symbols.length}`;
-        emitProgress(
-          "stock_fetch",
-          progress.error ? `${base} (with errors)` : base,
-          {
-            symbol: progress.symbol,
-            bars: progress.bars,
-            error: progress.error,
-          },
-        );
-      },
-    );
-
-    // Step C: compute rolling beta per ticker.
-    for (const sym of symbols) {
-      try {
-        const stockBars = stockBarsBySymbol.get(sym) ?? [];
-        const points = await computeWorkerPool.computeRollingBeta(
-          stockBars,
-          marketBars,
-          cfg.windowBars,
-          cfg.rolling,
-        );
-        results.set(sym, points);
-        computeDone += 1;
-        completedSteps = 1 + stockFetchDone + computeDone;
-        emitProgress(
-          "compute",
-          `Computed rolling beta ${computeDone}/${symbols.length}`,
-          { symbol: sym, points: points.length },
-        );
-      } catch (err) {
-        log.warn("beta.rolling.fail", {
-          symbol: sym,
-          mode,
-          error: (err as Error)?.message,
-        });
-        results.set(sym, []);
-        computeDone += 1;
-        completedSteps = 1 + stockFetchDone + computeDone;
-        emitProgress(
-          "compute",
-          `Computed rolling beta ${computeDone}/${symbols.length} (with errors)`,
-          {
-            symbol: sym,
-            points: 0,
-            error: (err as Error)?.message ?? "unknown error",
-          },
-        );
-      }
-    }
-
-    completedSteps = totalSteps;
-    emitProgress(
-      "complete",
-      `Completed rolling beta for ${results.size} symbols`,
-    );
-    log.info("beta.rolling.done", { computed: results.size, mode });
-    return results;
-  }
-
-  // ── Private helpers ─────────────────────────────────────────────────────
-
-  private async fetchBars(
-    symbol: string,
-    lookbackDays: number,
-    interval: string,
-  ): Promise<OHLCVBar[]> {
-    const now = Math.floor(Date.now() / 1000);
-    const period1 =
-      now - lookbackDays * 86400 + BetaService.PERIOD_SAFETY_BUFFER_SECONDS;
-    const result = await this.chartService.fetch({
-      symbol,
-      interval: interval as ChartInterval,
-      window: { kind: "period", period1, period2: now },
-      includePrePost: false,
-    });
-    return result.bars;
-  }
-
-  private async fetchMarketBars(
-    lookbackDays: number,
-    interval: string,
-    marketSymbol = DEFAULT_BENCHMARK,
-  ): Promise<OHLCVBar[]> {
-    const cacheKey = `${marketSymbol}_${lookbackDays}_${interval}`;
-    const cached = this.marketBarsCache.get(cacheKey);
-    if (
-      cached &&
-      Date.now() - cached.fetchedAt < BetaService.MARKET_CACHE_TTL
-    ) {
-      return cached.bars;
-    }
-    const bars = await this.fetchBars(marketSymbol, lookbackDays, interval);
-    // Only cache non-empty results to avoid persisting transient fetch failures
-    if (bars.length > 0) {
-      this.marketBarsCache.set(cacheKey, { bars, fetchedAt: Date.now() });
-    }
-    return bars;
-  }
-
-  /** Stock bar cache shared across models within one recalc cycle. */
-  private async fetchStockBars(
-    symbol: string,
-    lookbackDays: number,
-    interval: string,
-  ): Promise<OHLCVBar[]> {
-    const cacheKey = `${symbol}_${lookbackDays}_${interval}`;
-    const cached = this.stockBarsCache.get(cacheKey);
-    if (
-      cached &&
-      Date.now() - cached.fetchedAt < BetaService.MARKET_CACHE_TTL
-    ) {
-      return cached.bars;
-    }
-    const bars = await this.fetchBars(symbol, lookbackDays, interval);
-    this.stockBarsCache.set(cacheKey, { bars, fetchedAt: Date.now() });
-    return bars;
-  }
-
-  private async fetchRollingStockBarsForAll(
-    symbols: string[],
-    cfg: RollingConfig,
-    concurrency: number,
-    mode: RollingMode,
-    onSymbolFetched?: (progress: StockFetchProgress) => void,
-  ): Promise<Map<string, OHLCVBar[]>> {
-    return runConcurrentQueue(
-      symbols,
-      async (sym) => {
-        const bars = await this.fetchBars(sym, cfg.lookbackDays, cfg.interval);
-        onSymbolFetched?.({ symbol: sym, bars: bars.length });
-        return bars;
-      },
-      concurrency,
-      (sym, err) => {
-        log.warn("beta.rolling.fetchFail", {
-          symbol: sym,
-          mode,
-          error: err.message,
-        });
-        onSymbolFetched?.({ symbol: sym, bars: 0, error: err.message });
-      },
+      optionsOrConcurrency,
     );
   }
 }

@@ -8,8 +8,8 @@ import {
 } from "../../computation/beta/types";
 import { BetaService, type AllBenchmarkBetaData } from "./BetaService";
 import { enrichDerivedStateWithBeta } from "../../computation/beta/betaEnrichment";
-import type { TypedEventBus } from "../../../shared/utils/TypedEventBus";
-import type { BackendEvents } from "../EventBus";
+import type { TypedEventBus } from "../../../shared/utils/state/TypedEventBus";
+import type { BackendEvents } from "../orchestration/EventBus";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
