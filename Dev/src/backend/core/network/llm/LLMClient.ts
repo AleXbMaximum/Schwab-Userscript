@@ -7,13 +7,13 @@ import type {
 import { supportsCustomTemperature } from "backend/services/ai/config/modelCatalog";
 import { logService } from "shared/log/core/LogService";
 import { parseSSEStream } from "./sseParser";
+import {
+  completeOpenAI,
+  streamOpenAI,
+  type OpenAIProviderContext,
+} from "./openaiProvider";
 
 const log = logService.namespace("ai");
-
-function isOpenAIReasoningModel(model: string): boolean {
-  const normalized = model.trim().toLowerCase();
-  return /^o\d/.test(normalized) || /^gpt-5($|[-.])/.test(normalized);
-}
 
 export type LLMClientConfig = {
   provider: AIProviderKind;
@@ -59,7 +59,7 @@ export class LLMClient {
         result = await this.completeAnthropic(options);
       else if (this.provider === "google")
         result = await this.completeGoogle(options);
-      else result = await this.completeOpenAI(options);
+      else result = await completeOpenAI(this.openAIContext(), options);
       span.end(
         "ok",
         { tokensUsed: result.tokensUsed, model: result.model },
@@ -86,11 +86,9 @@ export class LLMClient {
       model: this.model,
     });
     try {
-      if (this.provider === "anthropic")
-        yield* this.streamAnthropic(options);
-      else if (this.provider === "google")
-        yield* this.streamGemini(options);
-      else yield* this.streamOpenAI(options);
+      if (this.provider === "anthropic") yield* this.streamAnthropic(options);
+      else if (this.provider === "google") yield* this.streamGemini(options);
+      else yield* streamOpenAI(this.openAIContext(), options);
       span.end("ok", {}, "info");
     } catch (err) {
       span.end(
@@ -103,6 +101,23 @@ export class LLMClient {
         error: (err as Error)?.message ?? String(err),
       };
     }
+  }
+
+  // ── Provider context ─────────────────────────────────────────────────────
+
+  private openAIContext(): OpenAIProviderContext {
+    return {
+      apiKey: this.apiKey,
+      model: this.model,
+      maxTokens: this.maxTokens,
+      temperature: this.temperature,
+      openAIServiceTier: this.openAIServiceTier,
+      supportsCustomTemperature: this.supportsCustomTemperature,
+      fetchWithTimeout: (url, init, timeoutMs, providerName) =>
+        this.fetchWithTimeout(url, init, timeoutMs, providerName),
+      fetchStreaming: (url, init, signal, providerName, connectTimeoutMs) =>
+        this.fetchStreaming(url, init, signal, providerName, connectTimeoutMs),
+    };
   }
 
   // ── Fetch helpers ────────────────────────────────────────────────────────
@@ -143,7 +158,6 @@ export class LLMClient {
     connectTimeoutMs = 30_000,
   ): Promise<Response> {
     const controller = new AbortController();
-    // Combine caller signal with connection timeout
     const onAbort = () => controller.abort();
     signal?.addEventListener("abort", onAbort);
     const timeoutId = setTimeout(() => controller.abort(), connectTimeoutMs);
@@ -271,188 +285,7 @@ export class LLMClient {
     return { content: text, tokensUsed: tokens, model: this.model };
   }
 
-  private async completeOpenAI(
-    options: LLMRequestOptions,
-  ): Promise<LLMResponse> {
-    const isReasoning = isOpenAIReasoningModel(this.model);
-
-    const payload: Record<string, unknown> = {
-      model: this.model,
-      input: [
-        {
-          role: isReasoning ? "developer" : "system",
-          content: options.systemPrompt,
-        },
-        ...options.messages,
-      ],
-      max_output_tokens: options.maxTokens ?? this.maxTokens,
-    };
-    if (isReasoning) {
-      payload.reasoning = { effort: "medium", summary: "auto" };
-    }
-    if (!isReasoning && this.supportsCustomTemperature) {
-      payload.temperature = options.temperature ?? this.temperature;
-    }
-
-    const timeoutMs = this.openAIServiceTier === "flex" ? 600_000 : 180_000;
-    const response = await this.fetchWithTimeout(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      },
-      timeoutMs,
-      "OpenAI",
-    );
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(
-        `OpenAI API error ${response.status}: ${text.slice(0, 300)}`,
-      );
-    }
-
-    const parsed = (await response.json()) as {
-      output?: Array<{
-        type?: string;
-        content?: Array<{ type?: string; text?: string }>;
-      }>;
-      usage?: {
-        input_tokens?: number;
-        output_tokens?: number;
-        output_tokens_details?: {
-          reasoning_tokens?: number;
-        };
-      };
-      model?: string;
-      status?: string;
-    };
-
-    const outputMsg = parsed.output?.find((o) => o.type === "message");
-    const text =
-      outputMsg?.content
-        ?.filter((c) => c.type === "output_text")
-        .map((c) => c.text ?? "")
-        .join("") ?? "";
-    const inputTokens = parsed.usage?.input_tokens ?? 0;
-    const outputTokens = parsed.usage?.output_tokens ?? 0;
-    const reasoningTokens =
-      parsed.usage?.output_tokens_details?.reasoning_tokens;
-    const finishReason = parsed.status ?? undefined;
-    return {
-      content: text,
-      tokensUsed: inputTokens + outputTokens,
-      model: parsed.model ?? this.model,
-      ...(finishReason ? { finishReason } : {}),
-      ...(reasoningTokens != null ? { reasoningTokens } : {}),
-    };
-  }
-
   // ── Streaming providers ──────────────────────────────────────────────────
-
-  /**
-   * OpenAI streaming via the Responses API (/v1/responses).
-   * Uses Responses API for native web_search tool and reasoning.summary.
-   */
-  private async *streamOpenAI(
-    options: LLMRequestOptions,
-  ): AsyncGenerator<StreamChunk> {
-    const isReasoning = isOpenAIReasoningModel(this.model);
-
-    const payload: Record<string, unknown> = {
-      model: this.model,
-      stream: true,
-      input: [
-        {
-          role: isReasoning ? "developer" : "system",
-          content: options.systemPrompt,
-        },
-        ...options.messages,
-      ],
-      max_output_tokens: options.maxTokens ?? this.maxTokens,
-    };
-    if (options.webSearch) {
-      payload.tools = [{ type: "web_search" }];
-    }
-    if (isReasoning) {
-      payload.reasoning = { effort: "medium", summary: "auto" };
-    }
-    if (!isReasoning && this.supportsCustomTemperature) {
-      payload.temperature = options.temperature ?? this.temperature;
-    }
-
-    const response = await this.fetchStreaming(
-      "https://api.openai.com/v1/responses",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      },
-      options.signal,
-      "OpenAI",
-    );
-
-    for await (const data of parseSSEStream(response, options.signal)) {
-      let event: { type?: string; delta?: string; annotation?: Record<string, unknown>; response?: Record<string, unknown> };
-      try {
-        event = JSON.parse(data);
-      } catch {
-        continue;
-      }
-
-      const eventType = event.type;
-      if (eventType === "response.output_text.delta") {
-        yield { type: "text", delta: event.delta ?? "" };
-      } else if (eventType === "response.reasoning_summary_text.delta") {
-        yield { type: "thinking", delta: event.delta ?? "" };
-      } else if (eventType === "response.output_text.annotation.added") {
-        const ann = event.annotation as
-          | {
-              type?: string;
-              url?: string;
-              title?: string;
-              start_index?: number;
-              end_index?: number;
-            }
-          | undefined;
-        if (ann?.type === "url_citation" && ann.url) {
-          yield {
-            type: "annotation",
-            annotation: {
-              url: ann.url,
-              title: ann.title ?? "",
-              startIndex: ann.start_index ?? 0,
-              endIndex: ann.end_index ?? 0,
-            },
-          };
-        }
-      } else if (eventType === "response.completed") {
-        const usage = (event.response as Record<string, unknown>)
-          ?.usage as Record<string, unknown> | undefined;
-        const inputTokens = (usage?.input_tokens as number) ?? 0;
-        const outputTokens = (usage?.output_tokens as number) ?? 0;
-        const outputDetails = usage?.output_tokens_details as
-          | Record<string, unknown>
-          | undefined;
-        yield {
-          type: "done",
-          tokensUsed: inputTokens + outputTokens,
-          reasoningTokens: outputDetails?.reasoning_tokens as
-            | number
-            | undefined,
-          finishReason:
-            ((event.response as Record<string, unknown>)
-              ?.status as string) ?? undefined,
-        };
-      }
-    }
-  }
 
   /**
    * Anthropic streaming via /v1/messages with stream: true.
@@ -594,11 +427,10 @@ export class LLMClient {
 
     // Emit grounding citations after stream ends
     if (lastGroundingMetadata) {
-      const chunks = (
-        lastGroundingMetadata.groundingChunks as
+      const chunks =
+        (lastGroundingMetadata.groundingChunks as
           | Array<{ web?: { uri?: string; title?: string } }>
-          | undefined
-      ) ?? [];
+          | undefined) ?? [];
       for (const chunk of chunks) {
         if (chunk.web?.uri) {
           yield {
