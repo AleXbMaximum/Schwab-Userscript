@@ -18283,120 +18283,6 @@ class ChartDataService {
 
 /** Shared singleton instance for use across all consumers. */
 const chartDataService = new ChartDataService();
-;// ./src/backend/core/network/schwab/endpoints/balances.ts
-
-
-
-const balances_log = logService.namespace("network");
-function toNum(v) {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
-}
-function normalizeBalancesSnapshot(raw) {
-  const acct = raw.brokerageAccountList?.[0];
-  if (!acct) {
-    return emptyBalancesSnapshot();
-  }
-  const inv = acct.investments;
-  const funds = acct.fundsAvailable;
-  const margin = acct.marginsInfo;
-  const opts = acct.optionDetails;
-  const rate = acct.marginInterestRate;
-  return {
-    ts: Date.now(),
-    dayChangeDollar: toNum(acct.dayChange),
-    dayChangePercent: toNum(acct.dayChangePercent) / 100,
-    accountValue: toNum(acct.total),
-    marketValue: toNum(acct.marketValue),
-    cashInvestments: toNum(acct.cashInvestments?.total),
-    marginBalance: toNum(acct.cashInvestments?.marginBalance),
-    securitiesMarketValue: toNum(inv?.securitiesMarketValue),
-    optionsMarketValue: toNum(inv?.optionsMarketValue),
-    securityLongValue: toNum(inv?.securityLong?.total),
-    securityShortValue: toNum(inv?.securityShort?.total),
-    optionsLongValue: toNum(inv?.optionsLong?.total),
-    optionsShortValue: toNum(inv?.optionsShort?.total),
-    dayBuyPower: toNum(funds?.tradeFunds?.dayBuyPower),
-    settledFunds: toNum(funds?.tradeFunds?.settled),
-    cashBorrowing: toNum(funds?.tradeFunds?.cashBorrowing),
-    sma: toNum(funds?.tradeFunds?.sma),
-    marginEquity: toNum(margin?.marginEquity),
-    equityPercent: toNum(margin?.equityPercent),
-    optionRequirement: toNum(opts?.optionRequirement),
-    mtdInterestOwed: toNum(margin?.mtdInterestOwed),
-    marginRate: toNum(rate?.baseRate),
-    withdrawable: toNum(funds?.withdrawFunds?.cashBorrowing)
-  };
-}
-function emptyBalancesSnapshot() {
-  return {
-    ts: Date.now(),
-    dayChangeDollar: 0,
-    dayChangePercent: 0,
-    accountValue: 0,
-    marketValue: 0,
-    cashInvestments: 0,
-    marginBalance: 0,
-    securitiesMarketValue: 0,
-    optionsMarketValue: 0,
-    securityLongValue: 0,
-    securityShortValue: 0,
-    optionsLongValue: 0,
-    optionsShortValue: 0,
-    dayBuyPower: 0,
-    settledFunds: 0,
-    cashBorrowing: 0,
-    sma: 0,
-    marginEquity: 0,
-    equityPercent: 0,
-    optionRequirement: 0,
-    mtdInterestOwed: 0,
-    marginRate: 0,
-    withdrawable: 0
-  };
-}
-function fetchBalances(token, accountId) {
-  const span = balances_log.span("fetchBalances", {
-    accountId
-  });
-  const url = "https://ausgateway.schwab.com/api/is.Balances/V1/Balances/balances/brokerage?selectionType=S3";
-  const doRequest = async bearerToken => {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + bearerToken,
-        correlatorid: generateUUID(),
-        "schwab-client-correlid": generateUUID(),
-        "schwab-client-ids": accountId,
-        "schwab-client-appid": "AD00008376",
-        "schwab-clientapp-name": "Balances",
-        "schwab-channelcode": "IO",
-        "schwab-client-channel": "IO",
-        "schwab-env": "DEFAULT",
-        "schwab-environment": "PROD",
-        "schwab-resource-version": "1",
-        pragma: "no-cache"
-      }
-    });
-    if (response.status === 401) {
-      await throw401(response);
-    }
-    return response.json();
-  };
-  return withTokenRefresh(doRequest, token).then(raw => {
-    const snapshot = normalizeBalancesSnapshot(raw);
-    span.end("ok", {
-      accountValue: snapshot.accountValue
-    }, "debug");
-    return snapshot;
-  }).catch(err => {
-    span.end("error", {
-      error: err?.message ?? String(err)
-    }, "error");
-    throw err;
-  });
-}
 ;// ./src/backend/pipeline/orchestration/PhaseManager.ts
 
 
@@ -18739,9 +18625,82 @@ class SourceOverrideManager {
     }
   }
 }
+;// ./src/backend/pipeline/orchestration/settingsRouter.ts
+
+function routeSettingsUpdate(deps, newSettings) {
+  const {
+    ctx,
+    holdingsDataService,
+    scheduler,
+    streamerBridge,
+    overnightBridge,
+    phaseManager,
+    logger,
+    reregisterHoldings,
+    reregisterQuotes,
+    reregisterBalances
+  } = deps;
+  if (newSettings.warningRulesJson !== undefined) {
+    holdingsDataService.setWarningRulesJson(newSettings.warningRulesJson ?? null);
+  }
+  if (newSettings.isHoldingsRefreshing !== undefined) {
+    if (newSettings.isHoldingsRefreshing === false) {
+      scheduler.pauseSource("holdings");
+    } else if (scheduler.hasSource("holdings")) {
+      scheduler.resumeSource("holdings");
+    } else {
+      reregisterHoldings();
+    }
+  }
+  if (newSettings.isQuotesRefreshing !== undefined) {
+    if (newSettings.isQuotesRefreshing === false) {
+      scheduler.pauseSource("quotes");
+    } else if (scheduler.hasSource("quotes")) {
+      scheduler.resumeSource("quotes");
+    } else {
+      reregisterQuotes();
+    }
+  }
+  if (newSettings.holdingsRefreshInterval !== undefined) {
+    scheduler.updateInterval("holdings", newSettings.holdingsRefreshInterval || 10000);
+  }
+  if (newSettings.quotesRefreshInterval !== undefined) {
+    scheduler.updateInterval("quotes", newSettings.quotesRefreshInterval || 15000);
+  }
+  if (newSettings.enableBalances !== undefined) {
+    if (newSettings.enableBalances === false) {
+      scheduler.pauseSource("balances");
+    } else if (scheduler.hasSource("balances")) {
+      scheduler.resumeSource("balances");
+    } else {
+      reregisterBalances();
+    }
+  }
+  if (newSettings.balancesRefreshInterval !== undefined) {
+    scheduler.updateInterval("balances", newSettings.balancesRefreshInterval || 1000);
+  }
+  if (newSettings.enableStreamer !== undefined) {
+    if (!phaseManager.usesStreamer() && newSettings.enableStreamer !== false) {
+      logger.info("enableStreamer requested but current phase does not use streamer — deferring", {
+        phase: phaseManager.getPhase()
+      });
+    } else {
+      streamerBridge.setEnabled(newSettings.enableStreamer !== false);
+      if (newSettings.enableStreamer === false) {
+        streamerBridge.teardown();
+      } else {
+        streamerBridge.reconnect(ctx.authToken, ctx.customerId ?? null);
+      }
+    }
+  }
+  if (newSettings.enableOvernightPrice !== undefined) {
+    overnightBridge.setEnabled(newSettings.enableOvernightPrice !== false);
+  }
+  if (newSettings.betaRefreshIntervalMs !== undefined) {
+    scheduler.updateInterval("beta-recalc", newSettings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS);
+  }
+}
 ;// ./src/backend/pipeline/orchestration/BackendOrchestrator.ts
-
-
 
 
 
@@ -18997,66 +18956,18 @@ class BackendOrchestrator {
   // ── Settings ─────────────────────────────────────────────────────────────
 
   updateSettings(newSettings) {
-    if (newSettings.warningRulesJson !== undefined) {
-      this.holdingsDataService.setWarningRulesJson(newSettings.warningRulesJson ?? null);
-    }
-    if (newSettings.isHoldingsRefreshing !== undefined) {
-      if (newSettings.isHoldingsRefreshing === false) {
-        this.scheduler.pauseSource("holdings");
-      } else if (this.scheduler.hasSource("holdings")) {
-        this.scheduler.resumeSource("holdings");
-      } else {
-        this.reregisterHoldings();
-      }
-    }
-    if (newSettings.isQuotesRefreshing !== undefined) {
-      if (newSettings.isQuotesRefreshing === false) {
-        this.scheduler.pauseSource("quotes");
-      } else if (this.scheduler.hasSource("quotes")) {
-        this.scheduler.resumeSource("quotes");
-      } else {
-        this.reregisterQuotes();
-      }
-    }
-    if (newSettings.holdingsRefreshInterval !== undefined) {
-      this.scheduler.updateInterval("holdings", newSettings.holdingsRefreshInterval || 10000);
-    }
-    if (newSettings.quotesRefreshInterval !== undefined) {
-      this.scheduler.updateInterval("quotes", newSettings.quotesRefreshInterval || 15000);
-    }
-    if (newSettings.enableBalances !== undefined) {
-      if (newSettings.enableBalances === false) {
-        this.scheduler.pauseSource("balances");
-      } else if (this.scheduler.hasSource("balances")) {
-        this.scheduler.resumeSource("balances");
-      } else {
-        this.reregisterBalances();
-      }
-    }
-    if (newSettings.balancesRefreshInterval !== undefined) {
-      this.scheduler.updateInterval("balances", newSettings.balancesRefreshInterval || 1000);
-    }
-    if (newSettings.enableStreamer !== undefined) {
-      // Only honour streamer enable requests in phases that use the streamer
-      if (!this.phaseManager.usesStreamer() && newSettings.enableStreamer !== false) {
-        this.logger.info("enableStreamer requested but current phase does not use streamer — deferring", {
-          phase: this.phaseManager.getPhase()
-        });
-      } else {
-        this.streamerBridge.setEnabled(newSettings.enableStreamer !== false);
-        if (newSettings.enableStreamer === false) {
-          this.streamerBridge.teardown();
-        } else {
-          this.streamerBridge.reconnect(this.ctx.authToken, this.ctx.customerId ?? null);
-        }
-      }
-    }
-    if (newSettings.enableOvernightPrice !== undefined) {
-      this.overnightBridge.setEnabled(newSettings.enableOvernightPrice !== false);
-    }
-    if (newSettings.betaRefreshIntervalMs !== undefined) {
-      this.scheduler.updateInterval("beta-recalc", newSettings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS);
-    }
+    routeSettingsUpdate({
+      ctx: this.ctx,
+      holdingsDataService: this.holdingsDataService,
+      scheduler: this.scheduler,
+      streamerBridge: this.streamerBridge,
+      overnightBridge: this.overnightBridge,
+      phaseManager: this.phaseManager,
+      logger: this.logger,
+      reregisterHoldings: () => this.reregisterHoldings(),
+      reregisterQuotes: () => this.reregisterQuotes(),
+      reregisterBalances: () => this.reregisterBalances()
+    }, newSettings);
   }
 
   // ── Convenience getters ──────────────────────────────────────────────────
@@ -19131,115 +19042,28 @@ class BackendOrchestrator {
   // ── Internal: polling setup ──────────────────────────────────────────────
 
   setupPolling() {
-    const settings = this.ctx.settings || {};
-    const holdingsInterval = settings.holdingsRefreshInterval || 10000;
-    const quotesInterval = settings.quotesRefreshInterval || 15000;
-
-    // ── Holdings ─────────────────────────────────────────────────────────
-    // fetchHoldingsTask is already configured by phaseManager.init()
-    const holdingsNextFetchAt = this.computeHoldingsNextFetchAt(holdingsInterval);
-    const holdingsDelay = Math.max(0, holdingsNextFetchAt - Date.now());
-    const shouldPoll = this.phaseManager.usesPolling();
-    if (settings.isHoldingsRefreshing !== false) {
-      this.scheduler.register({
-        key: "holdings",
-        intervalMs: holdingsInterval,
-        initialDelayMs: shouldPoll ? holdingsDelay : undefined,
-        fetcher: this.fetchHoldingsTask
-      });
-    } else if (shouldPoll) {
-      this.fetchHoldingsTask();
-    }
-
-    // ── Quotes ───────────────────────────────────────────────────────────
-    this.fetchQuotesTask = () => {
-      const holdingSymbols = this.holdingsDataService.getTrackedSymbols();
-      const rebalanceTargetSymbols = this.collectRebalanceTargetSymbols();
-      const allSymbols = normalizeSymbolsUnique([...INDEX_SYMBOLS_ARRAY, ...holdingSymbols, ...this.betaManager.getExtraBetaTickers(), ...rebalanceTargetSymbols]);
-      return fetchQuotes(allSymbols, this.ctx.authToken).then(data => {
-        this.holdingsDataService.ingestQuotes(data);
-        return data;
-      });
-    };
-    if (settings.isQuotesRefreshing !== false) {
-      this.scheduler.register({
-        key: "quotes",
-        intervalMs: quotesInterval,
-        fetcher: this.fetchQuotesTask
-      });
-    } else if (shouldPoll) {
-      this.fetchQuotesTask();
-    }
-
-    // ── Balances (high-frequency 1/s) ─────────────────────────────────
-    const balancesInterval = settings.balancesRefreshInterval || 1000;
-    this.fetchBalancesTask = () => {
-      return fetchBalances(this.ctx.authToken, this.ctx.accountId).then(snapshot => {
-        this.eventBus.emit("balances", snapshot);
-        return snapshot;
-      });
-    };
-    if (shouldPoll) {
-      this.scheduler.register({
-        key: "balances",
-        intervalMs: balancesInterval,
-        initialDelayMs: 2000,
-        fetcher: this.fetchBalancesTask
-      });
-    } else {
-      this.fetchBalancesTask();
-    }
-
-    // ── Phase-specific initial actions ────────────────────────────────
-    if (!shouldPoll) {
-      // Pause sources registered above (overnight / closed)
-      this.scheduler.pauseSource("holdings");
-      this.scheduler.pauseSource("quotes");
-      this.scheduler.pauseSource("balances");
-      if (this.phaseManager.getPhase() === "overnight") {
-        this.warmupForOvernight();
-      }
-    }
-
-    // ── Beta recalculation ───────────────────────────────────────────────
-    const betaInterval = settings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS;
-    this.scheduler.register({
-      key: "beta-recalc",
-      intervalMs: betaInterval,
-      initialDelayMs: 5000,
-      fetcher: async () => {
-        const opening = this.latestFrame;
-        const byUnderlying = opening?.derived?.byUnderlying;
-        const holdingSymbols = byUnderlying ? Object.keys(byUnderlying).filter(s => !s.startsWith("$") && s.length > 0 && !s.includes(" ")) : [];
-        return this.betaManager.computeAll(holdingSymbols);
+    runSetupPolling({
+      ctx: this.ctx,
+      scheduler: this.scheduler,
+      phaseManager: this.phaseManager,
+      betaManager: this.betaManager,
+      holdingsDataService: this.holdingsDataService,
+      eventBus: this.eventBus,
+      persistor: this.persistor,
+      logger: this.logger,
+      fetchHoldingsTask: this.fetchHoldingsTask,
+      setFetchQuotesTask: task => {
+        this.fetchQuotesTask = task;
       },
-      onUpdate: result => {
-        this.betaManager.applyComputationResults(result);
-        this.persistor.persistBetaData(this.betaManager.serializeForStorage());
-
-        // Re-enrich derived state and re-emit opening with a synthetic ChangeToken
-        // so downstream consumers (table reconciliation, UI) detect the beta update.
-        if (this.latestFrame?.derived) {
-          this.betaManager.enrichDerivedState(this.latestFrame.derived, null);
-          const betaChangeToken = {
-            rawVersion: this.latestFrame.changeToken?.rawVersion ?? 0,
-            derivedVersion: (this.latestFrame.changeToken?.derivedVersion ?? 0) + 1,
-            touchedHoldingsKeys: [],
-            touchedUnderlyingKeys: Object.keys(this.latestFrame.derived.byUnderlying ?? {}),
-            fullRebuild: true
-          };
-          this.latestFrame = {
-            ...this.withLatestBeta(this.latestFrame),
-            changeToken: betaChangeToken
-          };
-          this.eventBus.emit("holdings:frame", this.latestFrame);
-        }
+      setFetchBalancesTask: task => {
+        this.fetchBalancesTask = task;
       },
-      onError: err => {
-        this.logger.error("betaRecalcFailed", {
-          error: err.message
-        });
-      }
+      getLatestFrame: () => this.latestFrame,
+      setLatestFrame: frame => {
+        this.latestFrame = frame;
+      },
+      warmupForOvernight: () => this.warmupForOvernight(),
+      withLatestBeta: data => this.withLatestBeta(data)
     });
   }
 
@@ -19251,22 +19075,6 @@ class BackendOrchestrator {
       ...data,
       beta: this.betaManager.latestBetaData
     };
-  }
-  computeHoldingsNextFetchAt(holdingsInterval) {
-    const hasStored = !!this.ctx.rawHoldings;
-    const lastUpdateStr = this.ctx.lastUpdate;
-    const lastUpdateMs = typeof lastUpdateStr === "string" ? Date.parse(lastUpdateStr) : NaN;
-    if (!hasStored) return Date.now();
-    if (Number.isFinite(lastUpdateMs)) {
-      return Math.max(lastUpdateMs + holdingsInterval, Date.now());
-    }
-    return Date.now() + holdingsInterval;
-  }
-  collectRebalanceTargetSymbols() {
-    const settings = this.ctx.settings || {};
-    const targets = settings.rebalanceTargets;
-    if (!targets || typeof targets !== "object") return [];
-    return normalizeSymbolsUnique(Object.keys(targets));
   }
   ingestHoldingsAndDispatchSymbols(holdings, options = {}) {
     if (options.persist !== false) {
@@ -62717,7 +62525,450 @@ function formatScaleLabel(value) {
   if (Number.isInteger(value)) return String(value);
   return Math.abs(value) < 10 ? value.toFixed(2) : value.toFixed(1);
 }
+;// ./src/frontend/charts/types/heatmapRenderer.ts
+
+
+
+
+const HEATMAP_CELL_GAP = 1;
+const HEATMAP_CELL_RADIUS = 2;
+function normalizeCellValue(c, value) {
+  const {
+    options,
+    minValue,
+    maxValue
+  } = c;
+  if (options.colorScale === "diverging") {
+    if (!Number.isFinite(value)) return 0;
+    const rawMin = Number.isFinite(options.colorRangeMin) ? options.colorRangeMin : minValue;
+    const rawMax = Number.isFinite(options.colorRangeMax) ? options.colorRangeMax : maxValue;
+    const minBound = Math.min(rawMin, 0);
+    const maxBound = Math.max(rawMax, 0);
+    if (value >= 0) {
+      const positiveDenom = maxBound > 0 ? maxBound : Math.max(Math.abs(maxValue), 1);
+      return clamp(value / positiveDenom, 0, 1);
+    }
+    const negativeDenom = minBound < 0 ? Math.abs(minBound) : Math.max(Math.abs(minValue), 1);
+    return clamp(value / negativeDenom, -1, 0);
+  }
+  return numeric_normalize(value, minValue, maxValue);
+}
+function getTextColorForNormalized(normalizedValue) {
+  return Math.abs(normalizedValue) > 0.5 ? "#fff" : "#000";
+}
+function formatCompactValue(value) {
+  return formatCompactDollar(value, {
+    sign: true
+  });
+}
+function renderHeatmap(c) {
+  const {
+    ctx,
+    canvas,
+    options,
+    totalGridWidth,
+    gridStartY,
+    rowLabelWidth
+  } = c;
+  const {
+    rows,
+    columns,
+    data,
+    cellWidth,
+    cellHeight,
+    showValues,
+    valueFormatter
+  } = options;
+  const dpr = window.devicePixelRatio || 1;
+  const canvasW = canvas.width / dpr;
+  const canvasH = canvas.height / dpr;
+  ctx.save();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, canvasW, canvasH);
+  const startX = rowLabelWidth;
+  const startY = gridStartY;
+  const gap = HEATMAP_CELL_GAP;
+  const rad = HEATMAP_CELL_RADIUS;
+  const gridW = totalGridWidth;
+  const gridH = rows.length * cellHeight;
+  ctx.fillStyle = c.gridBg;
+  heatmapInterpolation_traceRoundRect(ctx, startX, startY, gridW, gridH, 4);
+  ctx.fill();
+  ctx.fillStyle = CHART_COLORS.textSecondary;
+  ctx.font = CHART_FONTS.heatmapLight;
+  if (options.rotateColumnLabels) {
+    for (let col = 0; col < columns.length; col++) {
+      const centerX = startX + c.colX(col) + c.colW(col) / 2;
+      ctx.save();
+      ctx.translate(centerX, startY - 6);
+      ctx.rotate(-Math.PI / 4);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(columns[col], 0, 0);
+      ctx.restore();
+    }
+  } else {
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    const minLabelSpacing = 60;
+    let lastLabelX = -Infinity;
+    for (let col = 0; col < columns.length; col++) {
+      const centerX = startX + c.colX(col) + c.colW(col) / 2;
+      if (centerX - lastLabelX < minLabelSpacing && col !== 0 && col !== columns.length - 1) continue;
+      ctx.fillText(columns[col], centerX, startY - 6);
+      lastLabelX = centerX;
+    }
+  }
+  for (let row = 0; row < rows.length; row++) {
+    for (let col = 0; col < columns.length; col++) {
+      const value = data[row][col];
+      const cw = c.colW(col);
+      const x = startX + c.colX(col);
+      const y = startY + row * cellHeight;
+      const normalizedValue = normalizeCellValue(c, value);
+      const color = getHeatmapColor(normalizedValue);
+      ctx.fillStyle = color;
+      heatmapInterpolation_traceRoundRect(ctx, x + gap, y + gap, cw - gap * 2, cellHeight - gap * 2, rad);
+      ctx.fill();
+      if (showValues) {
+        ctx.fillStyle = getTextColorForNormalized(normalizedValue);
+        ctx.font = CHART_FONTS.heatmap;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const displayValue = Math.abs(value) > 1000 ? formatCompactValue(value) : valueFormatter(value);
+        ctx.fillText(displayValue, x + cw / 2, y + cellHeight / 2);
+      }
+    }
+  }
+  const hCol = options.highlightCol;
+  if (hCol >= 0 && hCol < columns.length) {
+    const hcw = c.colW(hCol);
+    const hx = startX + c.colX(hCol) + hcw / 2;
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 122, 255, 0.06)";
+    ctx.fillRect(startX + c.colX(hCol), startY, hcw, rows.length * cellHeight);
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(0, 122, 255, 0.5)";
+    ctx.beginPath();
+    ctx.moveTo(hx, startY);
+    ctx.lineTo(hx, startY + rows.length * cellHeight);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = CHART_COLORS.info;
+    ctx.font = CHART_FONTS.axisBold;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(options.highlightColLabel, hx, startY - 20);
+    ctx.beginPath();
+    ctx.moveTo(hx - 4, startY - 18);
+    ctx.lineTo(hx + 4, startY - 18);
+    ctx.lineTo(hx, startY - 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  const hRow = options.highlightRow;
+  if (hRow >= 0 && hRow < rows.length) {
+    const hy = startY + hRow * cellHeight + cellHeight / 2;
+    ctx.save();
+    ctx.fillStyle = "rgba(0, 122, 255, 0.06)";
+    ctx.fillRect(startX, startY + hRow * cellHeight, totalGridWidth, cellHeight);
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(0, 122, 255, 0.5)";
+    ctx.beginPath();
+    ctx.moveTo(startX, hy);
+    ctx.lineTo(startX + totalGridWidth, hy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+  const summaryRowData = options.summaryRow;
+  if (summaryRowData.length > 0) {
+    const rowGap = 8;
+    const summaryRowY = startY + rows.length * cellHeight + rowGap;
+    let rowAbsMax = 0;
+    for (const v of summaryRowData) {
+      if (Number.isFinite(v)) rowAbsMax = Math.max(rowAbsMax, Math.abs(v));
+    }
+    for (let col = 0; col < columns.length && col < summaryRowData.length; col++) {
+      const value = summaryRowData[col];
+      const cw = c.colW(col);
+      const x = startX + c.colX(col);
+      const norm = rowAbsMax > 0 ? clamp(value / rowAbsMax, -1, 1) : 0;
+      const color = getHeatmapColor(norm);
+      ctx.fillStyle = color;
+      heatmapInterpolation_traceRoundRect(ctx, x + gap, summaryRowY + gap, cw - gap * 2, cellHeight - gap * 2, rad);
+      ctx.fill();
+      if (options.summaryRowShowValues) {
+        ctx.fillStyle = getTextColorForNormalized(norm);
+        ctx.font = CHART_FONTS.axisSemibold;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(formatCompactValue(value), x + cw / 2, summaryRowY + cellHeight / 2);
+      }
+    }
+  }
+  const summary = options.summaryColumn;
+  if (summary.length > 0 && options.drawSummaryColumn) {
+    const gapWidth = 8;
+    const summaryX = startX + totalGridWidth + gapWidth;
+    ctx.fillStyle = CHART_COLORS.textSecondary;
+    ctx.font = CHART_FONTS.heatmap;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(options.summaryColumnLabel, summaryX + cellWidth / 2, startY - 6);
+    let sumAbsMax = 0;
+    for (const v of summary) {
+      if (Number.isFinite(v)) sumAbsMax = Math.max(sumAbsMax, Math.abs(v));
+    }
+    for (let row = 0; row < rows.length && row < summary.length; row++) {
+      const value = summary[row];
+      const x = summaryX;
+      const y = startY + row * cellHeight;
+      const norm = sumAbsMax > 0 ? clamp(value / sumAbsMax, -1, 1) : 0;
+      const color = getHeatmapColor(norm);
+      ctx.fillStyle = color;
+      heatmapInterpolation_traceRoundRect(ctx, x + gap, y + gap, cellWidth - gap * 2, cellHeight - gap * 2, rad);
+      ctx.fill();
+      ctx.fillStyle = getTextColorForNormalized(norm);
+      ctx.font = CHART_FONTS.heatmap;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const displayValue = Math.abs(value) > 1000 ? formatCompactValue(value) : options.valueFormatter(value);
+      ctx.fillText(displayValue, x + cellWidth / 2, y + cellHeight / 2);
+    }
+  }
+  c.drawSpotLine(startX, startY);
+  if (options.drawRowLabels) {
+    ctx.fillStyle = CHART_COLORS.textPrimary;
+    ctx.font = CHART_FONTS.rowLabel;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (let row = 0; row < rows.length; row++) {
+      const y = startY + row * cellHeight + cellHeight / 2;
+      ctx.fillText(rows[row], startX - 10, y);
+    }
+  }
+  if (options.showColorScale) {
+    c.drawColorScale();
+  }
+  c.setBaseImageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
+  ctx.restore();
+  c.renderHoverOnly();
+}
+;// ./src/frontend/charts/types/heatmapDecorations.ts
+
+
+
+function drawColorScale(c) {
+  const {
+    ctx,
+    options,
+    minValue,
+    maxValue,
+    rowLabelWidth,
+    totalGridWidth,
+    gridStartY
+  } = c;
+  const {
+    rows,
+    cellHeight
+  } = options;
+  const gridRight = rowLabelWidth + totalGridWidth;
+  const scaleWidth = Math.min(200, gridRight - rowLabelWidth);
+  const scaleHeight = 10;
+  const isTop = options.colorScalePosition === "top";
+  let scaleX;
+  let scaleY;
+  if (isTop) {
+    scaleX = rowLabelWidth;
+    scaleY = 6;
+  } else {
+    const hasSummaryRow = options.summaryRow.length > 0;
+    const summaryRowExtra = hasSummaryRow ? cellHeight + 8 : 0;
+    const gridBottom = gridStartY + rows.length * cellHeight + summaryRowExtra;
+    scaleX = gridRight - scaleWidth;
+    scaleY = gridBottom + 10;
+  }
+  const gradient = ctx.createLinearGradient(scaleX, 0, scaleX + scaleWidth, 0);
+  gradient.addColorStop(0, CHART_COLORS.heatmapScale[0]);
+  gradient.addColorStop(0.25, CHART_COLORS.heatmapScale[1]);
+  gradient.addColorStop(0.5, CHART_COLORS.heatmapScale[2]);
+  gradient.addColorStop(0.75, CHART_COLORS.heatmapScale[3]);
+  gradient.addColorStop(1, CHART_COLORS.heatmapScale[4]);
+  ctx.fillStyle = gradient;
+  heatmapInterpolation_traceRoundRect(ctx, scaleX, scaleY, scaleWidth, scaleHeight, scaleHeight / 2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+  ctx.lineWidth = 0.5;
+  heatmapInterpolation_traceRoundRect(ctx, scaleX, scaleY, scaleWidth, scaleHeight, scaleHeight / 2);
+  ctx.stroke();
+  const rawMin = Number.isFinite(options.colorRangeMin) ? options.colorRangeMin : minValue;
+  const rawMax = Number.isFinite(options.colorRangeMax) ? options.colorRangeMax : maxValue;
+  const labelY = scaleY + scaleHeight + 12;
+  ctx.font = CHART_FONTS.labelSmall;
+  ctx.fillStyle = CHART_COLORS.textSecondary;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText(formatScaleLabel(rawMin), scaleX, labelY);
+  ctx.textAlign = "center";
+  ctx.fillText("0", scaleX + scaleWidth / 2, labelY);
+  ctx.textAlign = "right";
+  ctx.fillText(formatScaleLabel(rawMax), scaleX + scaleWidth, labelY);
+}
+function drawSpotLine(c) {
+  const {
+    ctx,
+    options,
+    startX,
+    startY,
+    colX,
+    colW
+  } = c;
+  const spots = options.spotPrices;
+  const colVals = options.columnNumericValues;
+  const rowVals = options.rowNumericValues;
+  const {
+    rows,
+    columns,
+    cellWidth,
+    cellHeight
+  } = options;
+  if (spots.length === 0) return;
+  const pathPoints = [];
+  if (rowVals.length > 0) {
+    for (let col = 0; col < columns.length && col < spots.length; col++) {
+      const spot = spots[col];
+      if (!Number.isFinite(spot) || spot <= 0) continue;
+      const y = c.interpolateSpotY(spot, rowVals, startY, cellHeight);
+      if (y == null) continue;
+      pathPoints.push({
+        x: startX + colX(col) + colW(col) / 2,
+        y
+      });
+    }
+  } else if (colVals.length > 0) {
+    for (let row = 0; row < rows.length && row < spots.length; row++) {
+      const spot = spots[row];
+      if (!Number.isFinite(spot) || spot <= 0) continue;
+      const x = c.interpolateSpotX(spot, colVals, startX, cellWidth);
+      if (x == null) continue;
+      pathPoints.push({
+        x,
+        y: startY + row * cellHeight + cellHeight / 2
+      });
+    }
+  } else {
+    return;
+  }
+  if (pathPoints.length < 2) return;
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  withShadow(ctx, {
+    color: "rgba(0, 122, 255, 0.45)",
+    blur: 10
+  }, () => {
+    ctx.beginPath();
+    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+    for (let i = 1; i < pathPoints.length; i++) {
+      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
+    }
+    ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
+    ctx.lineWidth = 6;
+    ctx.stroke();
+  });
+  ctx.beginPath();
+  ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+  for (let i = 1; i < pathPoints.length; i++) {
+    ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
+  }
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  ctx.lineWidth = 3.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+  for (let i = 1; i < pathPoints.length; i++) {
+    ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
+  }
+  ctx.strokeStyle = CHART_COLORS.info;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  for (const pt of pathPoints) {
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+    withShadow(ctx, {
+      color: "rgba(0, 122, 255, 0.5)",
+      blur: 6
+    }, () => {
+      ctx.fillStyle = CHART_COLORS.info;
+      ctx.fill();
+    });
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+;// ./src/frontend/charts/types/heatmapTooltip.ts
+
+
+function positionHeatmapTooltip(tooltip, clientX, clientY) {
+  const tooltipRect = tooltip.getBoundingClientRect();
+  let left = clientX + 10;
+  let top = clientY + 10;
+  if (left + tooltipRect.width > window.innerWidth) {
+    left = clientX - tooltipRect.width - 10;
+  }
+  if (top + tooltipRect.height > window.innerHeight) {
+    top = clientY - tooltipRect.height - 10;
+  }
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+  tooltip.style.display = "block";
+}
+function showCellTooltip(tooltip, options, maxValue, clientX, clientY, cell) {
+  if (!tooltip) return;
+  const {
+    rows,
+    columns,
+    valueFormatter,
+    tooltipFormatter
+  } = options;
+  const value = options.data[cell.row][cell.col];
+  const rowLabel = rows[cell.row];
+  const colLabel = columns[cell.col];
+  if (tooltipFormatter) {
+    tooltip.innerHTML = tooltipFormatter(rowLabel, colLabel, value);
+  } else {
+    tooltip.innerHTML = `
+                <div style="font-weight: 600; margin-bottom: 4px;">${rowLabel} × ${colLabel}</div>
+                <div style="color: ${value >= 0 ? CHART_COLORS.success : CHART_COLORS.danger};">
+                    Expected P&L: ${valueFormatter(value)}
+                </div>
+                <div style="font-size: 11px; color: ${CHART_COLORS.textSecondary}; margin-top: 4px;">
+                    ${formatPct(maxValue > 0 ? value / maxValue : 0)} of max scenario
+                </div>
+            `;
+  }
+  positionHeatmapTooltip(tooltip, clientX, clientY);
+}
+function showSummaryRowTooltipImpl(tooltip, options, formatCompactValue, clientX, clientY, col) {
+  if (!tooltip) return;
+  const value = options.summaryRow[col];
+  const timeLabel = options.columns[col];
+  tooltip.innerHTML = `<div style="font-weight: 600; margin-bottom: 2px;">${timeLabel}</div>` + `<div>Σ GEX: ${formatCompactValue(value)}</div>`;
+  positionHeatmapTooltip(tooltip, clientX, clientY);
+}
+function hideHeatmapTooltip(tooltip) {
+  if (tooltip) {
+    tooltip.style.display = "none";
+  }
+}
 ;// ./src/frontend/charts/types/HeatmapChart.ts
+
 
 
 
@@ -62749,8 +63000,6 @@ class HeatmapChart {
   get colHeaderHeight() {
     return this.options.rotateColumnLabels ? 90 : 50;
   }
-  static CELL_GAP = 1;
-  static CELL_RADIUS = 2;
   // Theme-aware grid background — getter so each draw resolves the current theme.
   get gridBg() {
     return isDarkTheme() ? "rgba(255, 255, 255, 0.035)" : "rgba(0, 0, 0, 0.035)";
@@ -62973,8 +63222,8 @@ class HeatmapChart {
     } = this.options;
     const startX = this.rowLabelW;
     const startY = this.gridStartY;
-    const gap = HeatmapChart.CELL_GAP;
-    const rad = HeatmapChart.CELL_RADIUS;
+    const gap = HEATMAP_CELL_GAP;
+    const rad = HEATMAP_CELL_RADIUS;
     if (this.hoveredCell) {
       const {
         row,
@@ -62989,7 +63238,7 @@ class HeatmapChart {
       }, () => {
         this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
         this.ctx.lineWidth = 2;
-        this.traceRoundRect(x + gap, y + gap, cw - gap * 2, cellHeight - gap * 2, rad);
+        heatmapInterpolation_traceRoundRect(this.ctx, x + gap, y + gap, cw - gap * 2, cellHeight - gap * 2, rad);
         this.ctx.stroke();
       });
     }
@@ -63004,7 +63253,7 @@ class HeatmapChart {
       }, () => {
         this.ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
         this.ctx.lineWidth = 2;
-        this.traceRoundRect(x + gap, summaryRowY + gap, cw - gap * 2, cellHeight - gap * 2, rad);
+        heatmapInterpolation_traceRoundRect(this.ctx, x + gap, summaryRowY + gap, cw - gap * 2, cellHeight - gap * 2, rad);
         this.ctx.stroke();
       });
     }
@@ -63061,453 +63310,62 @@ class HeatmapChart {
     return null;
   }
   positionTooltip(clientX, clientY) {
-    if (!this.tooltip) return;
-    const tooltipRect = this.tooltip.getBoundingClientRect();
-    let left = clientX + 10;
-    let top = clientY + 10;
-    if (left + tooltipRect.width > window.innerWidth) {
-      left = clientX - tooltipRect.width - 10;
-    }
-    if (top + tooltipRect.height > window.innerHeight) {
-      top = clientY - tooltipRect.height - 10;
-    }
-    this.tooltip.style.left = `${left}px`;
-    this.tooltip.style.top = `${top}px`;
-    this.tooltip.style.display = "block";
+    if (this.tooltip) positionHeatmapTooltip(this.tooltip, clientX, clientY);
   }
   showTooltip(x, y, cell) {
-    if (!this.tooltip) return;
-    const {
-      rows,
-      columns,
-      valueFormatter,
-      tooltipFormatter
-    } = this.options;
-    const value = this.options.data[cell.row][cell.col];
-    const rowLabel = rows[cell.row];
-    const colLabel = columns[cell.col];
-    if (tooltipFormatter) {
-      this.tooltip.innerHTML = tooltipFormatter(rowLabel, colLabel, value);
-    } else {
-      this.tooltip.innerHTML = `
-                <div style="font-weight: 600; margin-bottom: 4px;">${rowLabel} × ${colLabel}</div>
-                <div style="color: ${value >= 0 ? CHART_COLORS.success : CHART_COLORS.danger};">
-                    Expected P&L: ${valueFormatter(value)}
-                </div>
-                <div style="font-size: 11px; color: ${CHART_COLORS.textSecondary}; margin-top: 4px;">
-                    ${formatPct(this.maxValue > 0 ? value / this.maxValue : 0)} of max scenario
-                </div>
-            `;
-    }
-    this.positionTooltip(x, y);
+    showCellTooltip(this.tooltip, this.options, this.maxValue, x, y, cell);
   }
   showSummaryRowTooltip(clientX, clientY, col) {
-    if (!this.tooltip) return;
-    const value = this.options.summaryRow[col];
-    const timeLabel = this.options.columns[col];
-    this.tooltip.innerHTML = `<div style="font-weight: 600; margin-bottom: 2px;">${timeLabel}</div>` + `<div>\u03A3 GEX: ${this.formatCompactValue(value)}</div>`;
-    this.positionTooltip(clientX, clientY);
+    showSummaryRowTooltipImpl(this.tooltip, this.options, v => formatCompactDollar(v, {
+      sign: true
+    }), clientX, clientY, col);
   }
   hideTooltip() {
-    if (this.tooltip) {
-      this.tooltip.style.display = "none";
-    }
+    hideHeatmapTooltip(this.tooltip);
   }
   render() {
-    const {
-      ctx
-    } = this;
-    const {
-      rows,
-      columns,
-      data,
-      cellWidth,
-      cellHeight,
-      showValues,
-      valueFormatter
-    } = this.options;
-    const dpr = window.devicePixelRatio || 1;
-    const canvasW = this.canvas.width / dpr;
-    const canvasH = this.canvas.height / dpr;
-    ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, canvasW, canvasH);
-    const rowLabelWidth = this.rowLabelW;
-    const startX = rowLabelWidth;
-    const startY = this.gridStartY;
-    const gap = HeatmapChart.CELL_GAP;
-    const rad = HeatmapChart.CELL_RADIUS;
-
-    // Grid background so cell gaps are visible
-    const gridW = this.totalGridWidth;
-    const gridH = rows.length * cellHeight;
-    ctx.fillStyle = this.gridBg;
-    this.traceRoundRect(startX, startY, gridW, gridH, 4);
-    ctx.fill();
-
-    // Column header labels
-    ctx.fillStyle = CHART_COLORS.textSecondary;
-    ctx.font = CHART_FONTS.heatmapLight;
-    if (this.options.rotateColumnLabels) {
-      // textAlign 'left' + rotate(-π/4): text starts at grid edge, extends upward-right
-      for (let col = 0; col < columns.length; col++) {
-        const centerX = startX + this.colX(col) + this.colW(col) / 2;
-        ctx.save();
-        ctx.translate(centerX, startY - 6);
-        ctx.rotate(-Math.PI / 4);
-        ctx.textAlign = "left";
-        ctx.textBaseline = "bottom";
-        ctx.fillText(columns[col], 0, 0);
-        ctx.restore();
-      }
-    } else {
-      // Horizontal with adaptive spacing for variable widths
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      const minLabelSpacing = 60;
-      let lastLabelX = -Infinity;
-      for (let col = 0; col < columns.length; col++) {
-        const centerX = startX + this.colX(col) + this.colW(col) / 2;
-        if (centerX - lastLabelX < minLabelSpacing && col !== 0 && col !== columns.length - 1) continue;
-        ctx.fillText(columns[col], centerX, startY - 6);
-        lastLabelX = centerX;
-      }
-    }
-    for (let row = 0; row < rows.length; row++) {
-      for (let col = 0; col < columns.length; col++) {
-        const value = data[row][col];
-        const cw = this.colW(col);
-        const x = startX + this.colX(col);
-        const y = startY + row * cellHeight;
-        const normalizedValue = this.normalizeValue(value);
-        const color = getHeatmapColor(normalizedValue);
-        ctx.fillStyle = color;
-        this.traceRoundRect(x + gap, y + gap, cw - gap * 2, cellHeight - gap * 2, rad);
-        ctx.fill();
-        if (showValues) {
-          ctx.fillStyle = this.getTextColor(normalizedValue);
-          ctx.font = CHART_FONTS.heatmap;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          const displayValue = Math.abs(value) > 1000 ? this.formatCompactValue(value) : valueFormatter(value);
-          ctx.fillText(displayValue, x + cw / 2, y + cellHeight / 2);
-        }
-      }
-    }
-    const hCol = this.options.highlightCol;
-    if (hCol >= 0 && hCol < columns.length) {
-      const hcw = this.colW(hCol);
-      const hx = startX + this.colX(hCol) + hcw / 2;
-      ctx.save();
-      // Subtle column highlight strip
-      ctx.fillStyle = "rgba(0, 122, 255, 0.06)";
-      ctx.fillRect(startX + this.colX(hCol), startY, hcw, rows.length * cellHeight);
-      ctx.setLineDash([6, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(0, 122, 255, 0.5)";
-      ctx.beginPath();
-      ctx.moveTo(hx, startY);
-      ctx.lineTo(hx, startY + rows.length * cellHeight);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      // Label pill
-      ctx.fillStyle = CHART_COLORS.info;
-      ctx.font = CHART_FONTS.axisBold;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillText(this.options.highlightColLabel, hx, startY - 20);
-      ctx.beginPath();
-      ctx.moveTo(hx - 4, startY - 18);
-      ctx.lineTo(hx + 4, startY - 18);
-      ctx.lineTo(hx, startY - 12);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    }
-    const hRow = this.options.highlightRow;
-    if (hRow >= 0 && hRow < rows.length) {
-      const hy = startY + hRow * cellHeight + cellHeight / 2;
-      ctx.save();
-      // Subtle row highlight strip
-      ctx.fillStyle = "rgba(0, 122, 255, 0.06)";
-      ctx.fillRect(startX, startY + hRow * cellHeight, this.totalGridWidth, cellHeight);
-      ctx.setLineDash([6, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = "rgba(0, 122, 255, 0.5)";
-      ctx.beginPath();
-      ctx.moveTo(startX, hy);
-      ctx.lineTo(startX + this.totalGridWidth, hy);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-    }
-    const summaryRowData = this.options.summaryRow;
-    if (summaryRowData.length > 0) {
-      const rowGap = 8;
-      const summaryRowY = startY + rows.length * cellHeight + rowGap;
-      let rowAbsMax = 0;
-      for (const v of summaryRowData) {
-        if (Number.isFinite(v)) rowAbsMax = Math.max(rowAbsMax, Math.abs(v));
-      }
-      for (let col = 0; col < columns.length && col < summaryRowData.length; col++) {
-        const value = summaryRowData[col];
-        const cw = this.colW(col);
-        const x = startX + this.colX(col);
-        const norm = rowAbsMax > 0 ? clamp(value / rowAbsMax, -1, 1) : 0;
-        const color = getHeatmapColor(norm);
-        ctx.fillStyle = color;
-        this.traceRoundRect(x + gap, summaryRowY + gap, cw - gap * 2, cellHeight - gap * 2, rad);
-        ctx.fill();
-        if (this.options.summaryRowShowValues) {
-          ctx.fillStyle = this.getTextColor(norm);
-          ctx.font = CHART_FONTS.axisSemibold;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(this.formatCompactValue(value), x + cw / 2, summaryRowY + cellHeight / 2);
-        }
-      }
-    }
-    const summary = this.options.summaryColumn;
-    if (summary.length > 0 && this.options.drawSummaryColumn) {
-      const gapWidth = 8;
-      const summaryX = startX + this.totalGridWidth + gapWidth;
-      ctx.fillStyle = CHART_COLORS.textSecondary;
-      ctx.font = CHART_FONTS.heatmap;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
-      ctx.fillText(this.options.summaryColumnLabel, summaryX + cellWidth / 2, startY - 6);
-      let sumAbsMax = 0;
-      for (const v of summary) {
-        if (Number.isFinite(v)) sumAbsMax = Math.max(sumAbsMax, Math.abs(v));
-      }
-      for (let row = 0; row < rows.length && row < summary.length; row++) {
-        const value = summary[row];
-        const x = summaryX;
-        const y = startY + row * cellHeight;
-        const norm = sumAbsMax > 0 ? clamp(value / sumAbsMax, -1, 1) : 0;
-        const color = getHeatmapColor(norm);
-        ctx.fillStyle = color;
-        this.traceRoundRect(x + gap, y + gap, cellWidth - gap * 2, cellHeight - gap * 2, rad);
-        ctx.fill();
-        ctx.fillStyle = this.getTextColor(norm);
-        ctx.font = CHART_FONTS.heatmap;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const displayValue = Math.abs(value) > 1000 ? this.formatCompactValue(value) : this.options.valueFormatter(value);
-        ctx.fillText(displayValue, x + cellWidth / 2, y + cellHeight / 2);
-      }
-    }
-    this.drawSpotLine(startX, startY);
-    if (this.options.drawRowLabels) {
-      ctx.fillStyle = CHART_COLORS.textPrimary;
-      ctx.font = CHART_FONTS.rowLabel;
-      ctx.textAlign = "right";
-      ctx.textBaseline = "middle";
-      for (let row = 0; row < rows.length; row++) {
-        const y = startY + row * cellHeight + cellHeight / 2;
-        ctx.fillText(rows[row], startX - 10, y);
-      }
-    }
-    if (this.options.showColorScale) {
-      this.drawColorScale();
-    }
-
-    // Cache the base image for fast hover-only redraws
-    this.baseImageData = ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
-    ctx.restore();
-
-    // Draw initial hover highlight if present
-    this.renderHoverOnly();
-  }
-  normalizeValue(value) {
-    if (this.options.colorScale === "diverging") {
-      if (!Number.isFinite(value)) return 0;
-      const rawMin = Number.isFinite(this.options.colorRangeMin) ? this.options.colorRangeMin : this.minValue;
-      const rawMax = Number.isFinite(this.options.colorRangeMax) ? this.options.colorRangeMax : this.maxValue;
-      const minBound = Math.min(rawMin, 0);
-      const maxBound = Math.max(rawMax, 0);
-      if (value >= 0) {
-        const positiveDenom = maxBound > 0 ? maxBound : Math.max(Math.abs(this.maxValue), 1);
-        return clamp(value / positiveDenom, 0, 1);
-      }
-      const negativeDenom = minBound < 0 ? Math.abs(minBound) : Math.max(Math.abs(this.minValue), 1);
-      return clamp(value / negativeDenom, -1, 0);
-    } else {
-      return numeric_normalize(value, this.minValue, this.maxValue);
-    }
-  }
-  getTextColor(normalizedValue) {
-    const brightness = Math.abs(normalizedValue);
-    return brightness > 0.5 ? "#fff" : "#000";
-  }
-  formatCompactValue(value) {
-    return formatCompactDollar(value, {
-      sign: true
+    renderHeatmap({
+      canvas: this.canvas,
+      ctx: this.ctx,
+      options: this.options,
+      minValue: this.minValue,
+      maxValue: this.maxValue,
+      totalGridWidth: this.totalGridWidth,
+      gridStartY: this.gridStartY,
+      rowLabelWidth: this.rowLabelW,
+      colX: col => this.colX(col),
+      colW: col => this.colW(col),
+      gridBg: this.gridBg,
+      setBaseImageData: data => {
+        this.baseImageData = data;
+      },
+      renderHoverOnly: () => this.renderHoverOnly(),
+      drawSpotLine: (sx, sy) => this.drawSpotLine(sx, sy),
+      drawColorScale: () => this.drawColorScale()
     });
-  }
-  traceRoundRect(x, y, w, h, r) {
-    heatmapInterpolation_traceRoundRect(this.ctx, x, y, w, h, r);
   }
   drawColorScale() {
-    const {
-      ctx
-    } = this;
-    const {
-      rows,
-      cellHeight
-    } = this.options;
-    const rowLabelWidth = this.rowLabelW;
-    const gridRight = rowLabelWidth + this.totalGridWidth;
-    const scaleWidth = Math.min(200, gridRight - rowLabelWidth);
-    const scaleHeight = 10;
-    const isTop = this.options.colorScalePosition === "top";
-    let scaleX;
-    let scaleY;
-    if (isTop) {
-      scaleX = rowLabelWidth;
-      scaleY = 6;
-    } else {
-      const hasSummaryRow = this.options.summaryRow.length > 0;
-      const summaryRowExtra = hasSummaryRow ? cellHeight + 8 : 0;
-      const gridBottom = this.gridStartY + rows.length * cellHeight + summaryRowExtra;
-      scaleX = gridRight - scaleWidth;
-      scaleY = gridBottom + 10;
-    }
-
-    // Gradient bar
-    const gradient = ctx.createLinearGradient(scaleX, 0, scaleX + scaleWidth, 0);
-    gradient.addColorStop(0, CHART_COLORS.heatmapScale[0]);
-    gradient.addColorStop(0.25, CHART_COLORS.heatmapScale[1]);
-    gradient.addColorStop(0.5, CHART_COLORS.heatmapScale[2]);
-    gradient.addColorStop(0.75, CHART_COLORS.heatmapScale[3]);
-    gradient.addColorStop(1, CHART_COLORS.heatmapScale[4]);
-    ctx.fillStyle = gradient;
-    this.traceRoundRect(scaleX, scaleY, scaleWidth, scaleHeight, scaleHeight / 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-    ctx.lineWidth = 0.5;
-    this.traceRoundRect(scaleX, scaleY, scaleWidth, scaleHeight, scaleHeight / 2);
-    ctx.stroke();
-
-    // Value labels
-    const rawMin = Number.isFinite(this.options.colorRangeMin) ? this.options.colorRangeMin : this.minValue;
-    const rawMax = Number.isFinite(this.options.colorRangeMax) ? this.options.colorRangeMax : this.maxValue;
-    const labelY = scaleY + scaleHeight + 12;
-    ctx.font = CHART_FONTS.labelSmall;
-    ctx.fillStyle = CHART_COLORS.textSecondary;
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(this.formatScaleLabel(rawMin), scaleX, labelY);
-    ctx.textAlign = "center";
-    ctx.fillText("0", scaleX + scaleWidth / 2, labelY);
-    ctx.textAlign = "right";
-    ctx.fillText(this.formatScaleLabel(rawMax), scaleX + scaleWidth, labelY);
-  }
-  formatScaleLabel(value) {
-    return formatScaleLabel(value);
+    drawColorScale({
+      ctx: this.ctx,
+      options: this.options,
+      minValue: this.minValue,
+      maxValue: this.maxValue,
+      rowLabelWidth: this.rowLabelW,
+      totalGridWidth: this.totalGridWidth,
+      gridStartY: this.gridStartY
+    });
   }
   drawSpotLine(startX, startY) {
-    const {
-      ctx
-    } = this;
-    const spots = this.options.spotPrices;
-    const colVals = this.options.columnNumericValues;
-    const rowVals = this.options.rowNumericValues;
-    const {
-      rows,
-      columns,
-      cellWidth,
-      cellHeight
-    } = this.options;
-    if (spots.length === 0) return;
-    const pathPoints = [];
-    if (rowVals.length > 0) {
-      for (let col = 0; col < columns.length && col < spots.length; col++) {
-        const spot = spots[col];
-        if (!Number.isFinite(spot) || spot <= 0) continue;
-        const y = this.interpolateSpotY(spot, rowVals, startY, cellHeight);
-        if (y == null) continue;
-        pathPoints.push({
-          x: startX + this.colX(col) + this.colW(col) / 2,
-          y
-        });
-      }
-    } else if (colVals.length > 0) {
-      for (let row = 0; row < rows.length && row < spots.length; row++) {
-        const spot = spots[row];
-        if (!Number.isFinite(spot) || spot <= 0) continue;
-        const x = this.interpolateSpotX(spot, colVals, startX, cellWidth);
-        if (x == null) continue;
-        pathPoints.push({
-          x,
-          y: startY + row * cellHeight + cellHeight / 2
-        });
-      }
-    } else {
-      return;
-    }
-    if (pathPoints.length < 2) return;
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-
-    // Pass 1: soft glow
-    withShadow(ctx, {
-      color: "rgba(0, 122, 255, 0.45)",
-      blur: 10
-    }, () => {
-      ctx.beginPath();
-      ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-      for (let i = 1; i < pathPoints.length; i++) {
-        ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-      }
-      ctx.strokeStyle = "rgba(0, 122, 255, 0.25)";
-      ctx.lineWidth = 6;
-      ctx.stroke();
+    drawSpotLine({
+      ctx: this.ctx,
+      options: this.options,
+      startX,
+      startY,
+      colX: col => this.colX(col),
+      colW: col => this.colW(col),
+      interpolateSpotX: (value, colValues, sx, _cw) => interpolateSpotX(value, colValues, sx, col => this.colX(col), col => this.colW(col)),
+      interpolateSpotY: (value, rowValues, sy, ch) => interpolateSpotY(value, rowValues, sy, ch)
     });
-
-    // Pass 2: white outline
-    ctx.beginPath();
-    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-    for (let i = 1; i < pathPoints.length; i++) {
-      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-    }
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.lineWidth = 3.5;
-    ctx.stroke();
-
-    // Pass 3: main blue line
-    ctx.beginPath();
-    ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
-    for (let i = 1; i < pathPoints.length; i++) {
-      ctx.lineTo(pathPoints[i].x, pathPoints[i].y);
-    }
-    ctx.strokeStyle = CHART_COLORS.info;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    // Dots with glow
-    for (const pt of pathPoints) {
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
-      withShadow(ctx, {
-        color: "rgba(0, 122, 255, 0.5)",
-        blur: 6
-      }, () => {
-        ctx.fillStyle = CHART_COLORS.info;
-        ctx.fill();
-      });
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-  interpolateSpotX(value, colValues, startX, _cellWidth) {
-    return interpolateSpotX(value, colValues, startX, col => this.colX(col), col => this.colW(col));
-  }
-  interpolateSpotY(value, rowValues, startY, cellHeight) {
-    return interpolateSpotY(value, rowValues, startY, cellHeight);
   }
   update(newData, newRows, newColumns, extra) {
     this.options.data = newData;
@@ -63925,7 +63783,7 @@ function selectGexMatrix(data, type) {
       return data.netMatrix;
   }
 }
-function formatCompactValue(value) {
+function gexHeatmapUtils_formatCompactValue(value) {
   return formatCompactDollar(value, {
     sign: true,
     dollar: false
@@ -63934,7 +63792,7 @@ function formatCompactValue(value) {
 function formatScaleValue(value) {
   if (!isFinite(value)) return "--";
   const absValue = Math.abs(value);
-  if (absValue >= 1_000) return formatCompactValue(value);
+  if (absValue >= 1_000) return gexHeatmapUtils_formatCompactValue(value);
   if (absValue >= 100) return `${value >= 0 ? "+" : ""}${value.toFixed(0)}`;
   if (absValue >= 10) return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
@@ -64285,7 +64143,7 @@ function renderGexHeatmap(data) {
       });
     }
     drawRowLabels(rowLabelCanvas, strikeLabels, rowCount, atmRow, summaryRow.length > 0);
-    drawSummaryColumn(summaryCanvas, summaryColumn, rowCount, effectiveCellWidth, formatCompactValue, grandTotal);
+    drawSummaryColumn(summaryCanvas, summaryColumn, rowCount, effectiveCellWidth, gexHeatmapUtils_formatCompactValue, grandTotal);
     requestAnimationFrame(() => {
       // Skip scroll positioning when using proportional widths (fits container)
       if (columnWidths) return;
