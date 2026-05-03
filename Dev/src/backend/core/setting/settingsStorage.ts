@@ -1,5 +1,5 @@
-import { deepClone } from "shared/utils/deepClone";
-import { isEqual } from "shared/utils/equality";
+import { deepClone } from "shared/utils/data/deepClone";
+import { isEqual } from "shared/utils/data/equality";
 import { STORAGE_CONFIG, getStorageKeys } from "./config/storageConfig";
 import {
   createStateMapping,
@@ -8,9 +8,9 @@ import {
 } from "./config/stateMapping";
 import { coerceToType } from "./validation";
 import { createPersistenceLayer } from "./persistence";
-import { createEventEmitter } from "shared/utils/eventEmitter";
+import { createEventEmitter } from "shared/utils/state/eventEmitter";
 import { logService } from "shared/log/core/LogService";
-import { normalizeNumbersDeepInPlace } from "shared/utils/numberNormalizer";
+import { normalizeNumbersDeepInPlace } from "shared/utils/format/numberNormalizer";
 import type { KVStore } from "../db/core/KVStore";
 
 const PREFIX = "state";

@@ -1,5 +1,5 @@
 import type { AIDebateIntensity, AIProviderKind } from "shared/types/core";
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 import type {
   FundamentalsData,
   NewsItem,
@@ -7,7 +7,7 @@ import type {
   CashFlowData,
   IncomeStatementData,
   InsiderTransaction,
-} from "shared/marketDataTypes";
+} from "shared/types/marketData";
 import type { BarronsDataBundle } from "../../core/network/barrons/types";
 
 // ── Agent roles ───────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import type{ Settings } from "shared/types/core";
-import { DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER } from "shared/holdingsTableColumns";
+import { DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER } from "shared/types/holdingsTableColumns";
 
 export interface StorageConfigEntry {
   important: boolean;

@@ -14,12 +14,12 @@ import type {
   IncomeStatementData,
   InsiderTransaction,
   NewsItem,
-} from "shared/marketDataTypes";
+} from "shared/types/marketData";
 import type {
   BarronsDataBundle,
   BarronsFinancialStatement,
 } from "../../../core/network/barrons/types";
-import { formatCompactDollar, formatPct } from "shared/utils/formatters";
+import { formatCompactDollar, formatPct } from "shared/utils/format/formatters";
 
 // ── Primitive formatters ─────────────────────────────────────────────────────
 

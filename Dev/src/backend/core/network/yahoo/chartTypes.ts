@@ -2,7 +2,7 @@ import type {
   OHLCVBar,
   YahooDividendEvent,
   YahooSplitEvent,
-} from "shared/utils/chartDataTypes";
+} from "shared/types/chartData";
 
 /** Parameters for the upgraded Yahoo v8 chart fetch */
 export type YahooChartParams = {

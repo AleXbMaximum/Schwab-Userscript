@@ -4,12 +4,12 @@ import type {
   RebalanceTargets,
   Settings,
 } from "../types/core";
-import { DEFAULT_NEWS_REFRESH_INTERVALS } from "../../backend/services/news/NewsService";
+import { DEFAULT_NEWS_REFRESH_INTERVALS } from "./newsRefreshDefaults";
 import {
   DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER,
   normalizeHoldingsTableViewModes,
   normalizeHoldingsTableActiveViewModeId,
-} from "../holdingsTableColumns";
+} from "../types/holdingsTableColumns";
 
 export const defaultSettings: Settings = {
   refreshInterval: 1000,
@@ -55,67 +55,13 @@ const VALID_ANCHOR_MODES = new Set<RebalanceAnchorMode>([
   "deltaDollarPct",
   "betaPct",
 ]);
-const OLD_MODE_SET = new Set<string>([
-  "deltaDollarPct",
-  "betaPct",
-  "shares",
-  "deltaDollar",
-  "gamma",
-  "theta",
-  "vega",
-]);
-const ANCHOR_PRIORITY: RebalanceAnchorMode[] = [
-  "shares",
-  "deltaDollar",
-  "deltaDollarPct",
-  "betaPct",
-];
 
 export const normalizeRebalanceTargets = (
   raw: unknown,
 ): RebalanceTargets | undefined => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const obj = raw as Record<string, unknown>;
-  const topKeys = Object.keys(obj);
-  if (topKeys.length === 0) return undefined;
 
-  // Detect old format: top-level keys are mode IDs
-  const isOldFormat = topKeys.some((k) => OLD_MODE_SET.has(k));
-
-  if (isOldFormat) {
-    // Migrate: old { mode: { underlyingKey: value } } → new { underlyingKey: { anchor, value } }
-    const result: RebalanceTargets = {};
-    for (const anchorMode of ANCHOR_PRIORITY) {
-      const modeTargets = obj[anchorMode];
-      if (
-        !modeTargets ||
-        typeof modeTargets !== "object" ||
-        Array.isArray(modeTargets)
-      )
-        continue;
-      for (const [key, val] of Object.entries(
-        modeTargets as Record<string, unknown>,
-      )) {
-        const num = Number(val);
-        if (
-          typeof key !== "string" ||
-          key.length === 0 ||
-          !Number.isFinite(num)
-        )
-          continue;
-        // First anchor mode wins for a given underlying
-        if (!result[key]) {
-          result[key] = {
-            anchor: anchorMode,
-            value: Math.round(num * 100) / 100,
-          };
-        }
-      }
-    }
-    return Object.keys(result).length > 0 ? result : undefined;
-  }
-
-  // New format: { underlyingKey: { anchor, value } }
   const result: RebalanceTargets = {};
   for (const [key, entry] of Object.entries(obj)) {
     if (typeof key !== "string" || key.length === 0) continue;

@@ -1,7 +1,7 @@
 import type{ OptionsChainsResponse } from "shared/types/options";
 import type { OptionCaptureExpiryMetricsRow } from "backend/core/db/capture/optionMonitorTypes";
 import type { GexGammaSource } from "../../types";
-import { requestDateFromExpiryLabel } from "shared/utils/optionsExpiries";
+import { requestDateFromExpiryLabel } from "shared/utils/domain/optionsExpiries";
 import {
   computeSummaryMetrics,
   computeStateVector,

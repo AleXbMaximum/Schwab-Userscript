@@ -6,7 +6,7 @@ import type {
   IncomeStatementData,
   InsiderTransaction,
   NewsItem,
-} from "shared/marketDataTypes";
+} from "shared/types/marketData";
 import type { BarronsDataBundle } from "../../../core/network/barrons/types";
 import { computeTechnicalIndicators } from "./technicals";
 import { backfillFundamentalsFromBarrons } from "./dataPreprocessing";

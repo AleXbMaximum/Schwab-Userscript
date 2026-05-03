@@ -1,5 +1,5 @@
 import type { DataQualityFlags, MarketDataBundle } from "../types";
-import type { FundamentalsData } from "shared/marketDataTypes";
+import type { FundamentalsData } from "shared/types/marketData";
 import type { BarronsDataBundle } from "../../../core/network/barrons/types";
 
 // ── Barrons → Fundamentals Backfill ─────────────────────────────────────────

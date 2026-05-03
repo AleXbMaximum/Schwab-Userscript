@@ -1,4 +1,4 @@
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 import { mean as mathMean } from "../../../shared/utils/math/statistics";
 import { logService } from "../../../shared/log/core/LogService";
 import type { BetaHorizon, ThreeFactorBetaResult } from "./types";

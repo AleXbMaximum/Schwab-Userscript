@@ -30,3 +30,20 @@ export function safeDiv(
   if (den === 0) return fallback;
   return num / den;
 }
+
+/**
+ * Sum of finite values; returns `null` when no finite values are present.
+ * Skips `null` / `undefined` / non-finite entries.
+ */
+export function sumFinite(
+  values: ReadonlyArray<number | null | undefined>,
+): number | null {
+  let total = 0;
+  let found = false;
+  for (const v of values) {
+    if (v == null || !Number.isFinite(v)) continue;
+    total += v;
+    found = true;
+  }
+  return found ? total : null;
+}

@@ -1,4 +1,4 @@
-import { logService } from "../log/core/LogService";
+import { logService } from "../../log/core/LogService";
 
 const log = logService.namespace("storage");
 

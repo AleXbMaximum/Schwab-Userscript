@@ -4,7 +4,7 @@ import type {
   FundamentalsData,
   IncomeStatementData,
   InsiderTransaction,
-} from "shared/marketDataTypes";
+} from "shared/types/marketData";
 import { gmGet } from "./httpUtils";
 import { logService } from "shared/log/core/LogService";
 

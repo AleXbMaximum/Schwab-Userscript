@@ -1,5 +1,5 @@
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
-import type { SchwabChartBar } from "../symbol_quotes_history";
+import type { OHLCVBar } from "shared/types/chartData";
+import type { SchwabChartBar } from "../endpoints/symbol_quotes_history";
 
 /**
  * Convert SchwabChartBar[] to the unified OHLCVBar[] format.

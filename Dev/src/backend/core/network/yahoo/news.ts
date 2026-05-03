@@ -1,4 +1,4 @@
-import type { NewsItem } from "shared/marketDataTypes";
+import type { NewsItem } from "shared/types/marketData";
 import { gmGet } from "./httpUtils";
 import { logService } from "shared/log/core/LogService";
 

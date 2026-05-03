@@ -1,5 +1,5 @@
-import type{ HoldingsRow } from "../types/holdings";
-import type{ HoldingsKey, InstrumentKind, UnderlyingKey } from "../types/derived";
+import type{ HoldingsRow } from "../../types/holdings";
+import type{ HoldingsKey, InstrumentKind, UnderlyingKey } from "../../types/derived";
 
 export const DEFAULT_OPTION_MULTIPLIER = 100;
 

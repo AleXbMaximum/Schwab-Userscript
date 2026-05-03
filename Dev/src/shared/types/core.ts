@@ -1,4 +1,4 @@
-import type { HoldingsTableViewMode } from "../holdingsTableColumns";
+import type { HoldingsTableViewMode } from "./holdingsTableColumns";
 import type { HoldingsResponse } from "./holdings";
 import type {
   StreamerLike,

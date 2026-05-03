@@ -1,4 +1,4 @@
-import type { OHLCVBar } from "shared/utils/chartDataTypes";
+import type { OHLCVBar } from "shared/types/chartData";
 import { logReturns as computeLogReturnsMath } from "../../../shared/utils/math/timeSeries";
 import {
   mean as mathMean,
