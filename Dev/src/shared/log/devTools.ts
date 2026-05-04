@@ -1,6 +1,4 @@
-import { configManager } from "./config/ConfigManager";
-import { logService } from "./core/LogService";
-import { LOG_CONFIG } from "./config/LogConfig";
+import { configManager, logService, LOG_CONFIG } from "./core/LogService";
 
 /**
  * Runtime log control exposed on `window.__alexquantLog`.
