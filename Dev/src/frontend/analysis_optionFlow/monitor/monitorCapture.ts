@@ -6,8 +6,10 @@
 import { logService } from "shared/log/core/LogService";
 import {
   APP_TIMEZONE,
+  formatHourMinuteCT,
   parseSchwabEtTimestampToUtcIso,
 } from "shared/utils/time";
+import { generateUUID } from "shared/utils/data/uuid";
 import type{ OptionsChainsResponse } from "shared/types/options";
 import { openAlexQuantDB } from "backend/core/db/core/AlexQuantDB";
 import { MonitorCaptureStore } from "backend/core/db/capture/MonitorCaptureStore";
@@ -18,7 +20,6 @@ import {
 import { CaptureStrikeStore } from "backend/core/db/capture/CaptureStrikeStore";
 import { CaptureStrikeAggregateStore } from "backend/core/db/capture/CaptureStrikeAggregateStore";
 import { CaptureLabelStore } from "backend/core/db/capture/CaptureLabelStore";
-import { buildMetaRow } from "backend/computation/options/monitor/etl/MetaETL";
 import { type ExpirySelectionContext } from "backend/computation/options/monitor/etl/ExpiryMetricsETL";
 import { computeWorkerPool } from "backend/computation/workers/ComputeWorkerPool";
 import { buildStrikeLegsRows } from "backend/computation/options/monitor/StrikeLegs";
@@ -168,6 +169,34 @@ export function buildFallbackOptionCapture(
   };
 }
 
+function buildMetaRow(
+  response: OptionsChainsResponse,
+  symbol: string,
+  capturedAtUtc: string,
+): OptionCaptureMetaRow {
+  const dataTimestamp =
+    (response.currentDateTime
+      ? parseSchwabEtTimestampToUtcIso(response.currentDateTime)
+      : null) ?? capturedAtUtc;
+  const marketTimeCT =
+    formatHourMinuteCT(dataTimestamp) ||
+    formatHourMinuteCT(capturedAtUtc) ||
+    "00:00";
+  return {
+    openingId: generateUUID(),
+    symbol,
+    capturedAtUtc,
+    marketTimeCt: marketTimeCT,
+    dataTimestamp,
+    underlyingPrice: response.underlyingPrice,
+    interestRate: response.interestRate,
+    dividendYield: response.dividendYield,
+    contractMultiplier: response.contractMultiplier,
+    expirationsCount: response.expirations.length,
+    isDelayed: response.isDelayed,
+  };
+}
+
 /**
  * Build an OptionCapture from a live OptionsChainsResponse.
  * ETL computation is offloaded to the ComputeWorker (falls back to main thread).
@@ -181,13 +210,9 @@ export async function buildOptionCapture(
 ): Promise<OptionCapture | null> {
   if (!response.expirations.length) return null;
 
-  const dataTimestampUtc =
-    (response.currentDateTime
-      ? parseSchwabEtTimestampToUtcIso(response.currentDateTime)
-      : null) ?? capturedAtUtc;
+  const meta = buildMetaRow(response, symbol, capturedAtUtc);
 
   try {
-    const meta = buildMetaRow(response, symbol, capturedAtUtc);
     const expiryRows = await computeWorkerPool.buildExpiryMetrics(
       response,
       meta.openingId,
@@ -201,7 +226,7 @@ export async function buildOptionCapture(
         symbol,
         response,
         capturedAtUtc,
-        dataTimestampUtc,
+        meta.dataTimestamp,
       )
     );
   } catch (err) {
@@ -213,7 +238,7 @@ export async function buildOptionCapture(
       symbol,
       response,
       capturedAtUtc,
-      dataTimestampUtc,
+      meta.dataTimestamp,
     );
   }
 }

@@ -1,10 +1,7 @@
 import type{ PortfolioAgg, UnderlyingAggRow } from "../../../shared/types/derived";
 import type{ RiskLimits } from "../../../shared/types/core";
 import { isFiniteNumber } from "../../../shared/utils/math/guards";
-import {
-  computeTotalUPnlUp1PctDol,
-  computeTotalUPnlDn1PctDol,
-} from "./aggregateHelpers";
+import { sumByField } from "./aggregateHelpers";
 import type { ConcentrationItem, ScenarioItem, LimitBreach } from "./types";
 
 export function computeUsedMargin(
@@ -116,8 +113,8 @@ export function calculateScenarios(
 ): ScenarioItem[] {
   const scenarios: ScenarioItem[] = [];
 
-  const uPnlUp1Pct = computeTotalUPnlUp1PctDol(byUnderlying);
-  const uPnlDn1Pct = computeTotalUPnlDn1PctDol(byUnderlying);
+  const uPnlUp1Pct = sumByField(byUnderlying, (r) => r?.uPnlUp1PctDol);
+  const uPnlDn1Pct = sumByField(byUnderlying, (r) => r?.uPnlDn1PctDol);
 
   const marketMoves = [5, 2, 1, 0, -1, -2, -5];
   for (const move of marketMoves) {

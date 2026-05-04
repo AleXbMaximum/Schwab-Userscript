@@ -25,53 +25,10 @@ import { logService } from "../../../shared/log/core/LogService";
 
 const log = logService.namespace("worker");
 
-type TaskStats = {
-  workerCalls: number;
-  fallbackCalls: number;
-  totalWorkerMs: number;
-};
-
 class ComputeWorkerPool {
   private worker: WorkerHandle | null = null;
   private supported: boolean | null = null;
   private initialized = false;
-  private stats = new Map<string, TaskStats>();
-
-  private recordWorker(task: string, elapsedMs: number): void {
-    const s = this.stats.get(task) ?? {
-      workerCalls: 0,
-      fallbackCalls: 0,
-      totalWorkerMs: 0,
-    };
-    s.workerCalls += 1;
-    s.totalWorkerMs += elapsedMs;
-    this.stats.set(task, s);
-    if (s.workerCalls === 1) {
-      log.info("worker.task.done", { task, elapsedMs: Math.round(elapsedMs) });
-    }
-  }
-
-  private recordFallback(task: string): void {
-    const s = this.stats.get(task) ?? {
-      workerCalls: 0,
-      fallbackCalls: 0,
-      totalWorkerMs: 0,
-    };
-    s.fallbackCalls += 1;
-    this.stats.set(task, s);
-  }
-
-  getStats(): Record<string, TaskStats & { avgWorkerMs: number }> {
-    const result: Record<string, TaskStats & { avgWorkerMs: number }> = {};
-    for (const [task, s] of this.stats) {
-      result[task] = {
-        ...s,
-        avgWorkerMs:
-          s.workerCalls > 0 ? Math.round(s.totalWorkerMs / s.workerCalls) : 0,
-      };
-    }
-    return result;
-  }
 
   get isAvailable(): boolean {
     if (this.supported === null) {
@@ -110,26 +67,28 @@ class ComputeWorkerPool {
     }
   }
 
-  async parseHoldings(rawJson: unknown): Promise<HoldingsResponse> {
-    if (!this.ensureWorker()) {
-      this.recordFallback("parseHoldings");
-      return parseHoldingsResponse(rawJson);
-    }
-
-    const t0 = performance.now();
+  private async runOrFallback<T>(
+    task: string,
+    payload: Record<string, unknown>,
+    fallback: () => T | Promise<T>,
+    fallbackLogKey: string,
+  ): Promise<T> {
+    if (!this.ensureWorker()) return fallback();
     try {
-      const result = (await this.worker!.run("parseHoldings", {
-        rawJson,
-      })) as HoldingsResponse;
-      this.recordWorker("parseHoldings", performance.now() - t0);
-      return result;
+      return (await this.worker!.run(task, payload)) as T;
     } catch (err) {
-      log.debug("holdings.parse.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("parseHoldings");
-      return parseHoldingsResponse(rawJson);
+      log.debug(fallbackLogKey, { error: (err as Error)?.message });
+      return fallback();
     }
+  }
+
+  async parseHoldings(rawJson: unknown): Promise<HoldingsResponse> {
+    return this.runOrFallback(
+      "parseHoldings",
+      { rawJson },
+      () => parseHoldingsResponse(rawJson),
+      "holdings.parse.fallback",
+    );
   }
 
   async processOptionsChain(
@@ -141,7 +100,6 @@ class ComputeWorkerPool {
     parsed: OptionsChainsResponse;
     etlRows: OptionCaptureExpiryMetricsRow[];
   }> {
-    // Convert Map to plain object for structured clone transfer
     const selCtx = selectionContext
       ? {
           mode: selectionContext.mode,
@@ -150,46 +108,21 @@ class ComputeWorkerPool {
             : undefined,
         }
       : undefined;
-
-    if (!this.ensureWorker()) {
-      this.recordFallback("processOptionsChain");
-      const parsed = parseOptionChainsResponse(rawJson);
-      const etlRows = buildExpiryMetricsRows(
-        parsed,
-        openingId,
-        symbol,
-        selectionContext,
-      );
-      return { parsed, etlRows };
-    }
-
-    const t0 = performance.now();
-    try {
-      const result = (await this.worker!.run("processOptionsChain", {
-        rawJson,
-        openingId,
-        symbol,
-        selectionContext: selCtx,
-      })) as {
-        parsed: OptionsChainsResponse;
-        etlRows: OptionCaptureExpiryMetricsRow[];
-      };
-      this.recordWorker("processOptionsChain", performance.now() - t0);
-      return result;
-    } catch (err) {
-      log.debug("optionsChain.process.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("processOptionsChain");
-      const parsed = parseOptionChainsResponse(rawJson);
-      const etlRows = buildExpiryMetricsRows(
-        parsed,
-        openingId,
-        symbol,
-        selectionContext,
-      );
-      return { parsed, etlRows };
-    }
+    return this.runOrFallback(
+      "processOptionsChain",
+      { rawJson, openingId, symbol, selectionContext: selCtx },
+      () => {
+        const parsed = parseOptionChainsResponse(rawJson);
+        const etlRows = buildExpiryMetricsRows(
+          parsed,
+          openingId,
+          symbol,
+          selectionContext,
+        );
+        return { parsed, etlRows };
+      },
+      "optionsChain.process.fallback",
+    );
   }
 
   async buildExpiryMetrics(
@@ -206,83 +139,36 @@ class ComputeWorkerPool {
             : undefined,
         }
       : undefined;
-
-    if (!this.ensureWorker()) {
-      this.recordFallback("buildExpiryMetrics");
-      return buildExpiryMetricsRows(
-        parsedResponse,
-        openingId,
-        symbol,
-        selectionContext,
-      );
-    }
-
-    const t0 = performance.now();
-    try {
-      const result = (await this.worker!.run("buildExpiryMetrics", {
-        parsedResponse,
-        openingId,
-        symbol,
-        selectionContext: selCtx,
-      })) as OptionCaptureExpiryMetricsRow[];
-      this.recordWorker("buildExpiryMetrics", performance.now() - t0);
-      return result;
-    } catch (err) {
-      log.debug("expiryMetrics.build.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("buildExpiryMetrics");
-      return buildExpiryMetricsRows(
-        parsedResponse,
-        openingId,
-        symbol,
-        selectionContext,
-      );
-    }
+    return this.runOrFallback(
+      "buildExpiryMetrics",
+      { parsedResponse, openingId, symbol, selectionContext: selCtx },
+      () =>
+        buildExpiryMetricsRows(
+          parsedResponse,
+          openingId,
+          symbol,
+          selectionContext,
+        ),
+      "expiryMetrics.build.fallback",
+    );
   }
 
   async parseOptionsChain(rawJson: unknown): Promise<OptionsChainsResponse> {
-    if (!this.ensureWorker()) {
-      this.recordFallback("parseOptionsChain");
-      return parseOptionChainsResponse(rawJson);
-    }
-
-    const t0 = performance.now();
-    try {
-      const result = (await this.worker!.run("parseOptionsChain", {
-        rawJson,
-      })) as OptionsChainsResponse;
-      this.recordWorker("parseOptionsChain", performance.now() - t0);
-      return result;
-    } catch (err) {
-      log.debug("optionsChain.parse.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("parseOptionsChain");
-      return parseOptionChainsResponse(rawJson);
-    }
+    return this.runOrFallback(
+      "parseOptionsChain",
+      { rawJson },
+      () => parseOptionChainsResponse(rawJson),
+      "optionsChain.parse.fallback",
+    );
   }
 
   async parseQuotes(rawJson: unknown): Promise<QuotesResponse> {
-    if (!this.ensureWorker()) {
-      this.recordFallback("parseQuotes");
-      return parseQuotesResponse(rawJson);
-    }
-
-    const t0 = performance.now();
-    try {
-      const result = (await this.worker!.run("parseQuotes", {
-        rawJson,
-      })) as QuotesResponse;
-      this.recordWorker("parseQuotes", performance.now() - t0);
-      return result;
-    } catch (err) {
-      log.debug("quotes.parse.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("parseQuotes");
-      return parseQuotesResponse(rawJson);
-    }
+    return this.runOrFallback(
+      "parseQuotes",
+      { rawJson },
+      () => parseQuotesResponse(rawJson),
+      "quotes.parse.fallback",
+    );
   }
 
   async computeBeta(
@@ -290,43 +176,22 @@ class ComputeWorkerPool {
     marketBars: OHLCVBar[],
     horizon: BetaHorizon,
   ): Promise<BetaResult | null> {
-    if (!this.ensureWorker()) {
-      this.recordFallback("computeBeta");
-      const { stockCloses, marketCloses } = alignBarsByDate(
-        stockBars,
-        marketBars,
-      );
-      return computeBetaMain(
-        computeLogReturns(stockCloses),
-        computeLogReturns(marketCloses),
-        horizon,
-      );
-    }
-
-    const t0 = performance.now();
-    try {
-      const result = (await this.worker!.run("computeBeta", {
-        stockBars,
-        marketBars,
-        horizon,
-      })) as BetaResult | null;
-      this.recordWorker("computeBeta", performance.now() - t0);
-      return result;
-    } catch (err) {
-      log.debug("beta.compute.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("computeBeta");
-      const { stockCloses, marketCloses } = alignBarsByDate(
-        stockBars,
-        marketBars,
-      );
-      return computeBetaMain(
-        computeLogReturns(stockCloses),
-        computeLogReturns(marketCloses),
-        horizon,
-      );
-    }
+    return this.runOrFallback(
+      "computeBeta",
+      { stockBars, marketBars, horizon },
+      () => {
+        const { stockCloses, marketCloses } = alignBarsByDate(
+          stockBars,
+          marketBars,
+        );
+        return computeBetaMain(
+          computeLogReturns(stockCloses),
+          computeLogReturns(marketCloses),
+          horizon,
+        );
+      },
+      "beta.compute.fallback",
+    );
   }
 
   async computeRollingBeta(
@@ -335,28 +200,12 @@ class ComputeWorkerPool {
     windowSize: number,
     options?: RollingBetaOptions,
   ): Promise<RollingBetaPoint[]> {
-    if (!this.ensureWorker()) {
-      this.recordFallback("computeRollingBeta");
-      return computeRollingBetaMain(stockBars, marketBars, windowSize, options);
-    }
-
-    const t0 = performance.now();
-    try {
-      const result = (await this.worker!.run("computeRollingBeta", {
-        stockBars,
-        marketBars,
-        windowSize,
-        options,
-      })) as RollingBetaPoint[];
-      this.recordWorker("computeRollingBeta", performance.now() - t0);
-      return result;
-    } catch (err) {
-      log.debug("rollingBeta.compute.fallback", {
-        error: (err as Error)?.message,
-      });
-      this.recordFallback("computeRollingBeta");
-      return computeRollingBetaMain(stockBars, marketBars, windowSize, options);
-    }
+    return this.runOrFallback(
+      "computeRollingBeta",
+      { stockBars, marketBars, windowSize, options },
+      () => computeRollingBetaMain(stockBars, marketBars, windowSize, options),
+      "rollingBeta.compute.fallback",
+    );
   }
 
   destroy(): void {

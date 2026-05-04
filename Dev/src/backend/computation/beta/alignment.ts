@@ -37,31 +37,16 @@ export function isRegularSessionBar(date: string): boolean {
   );
 }
 
-export function sanitizeBars(bars: OHLCVBar[]): SanitizedBar[] {
-  const dedup = new Map<string, SanitizedBar>();
-  for (const bar of bars) {
-    if (!bar?.date) continue;
-    if (
-      typeof bar.close !== "number" ||
-      !Number.isFinite(bar.close) ||
-      bar.close <= 0
-    )
-      continue;
-    if (!isRegularSessionBar(bar.date)) continue;
-    dedup.set(bar.date, { date: bar.date, close: bar.close });
-  }
-  return Array.from(dedup.values()).sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
-}
-
 function normalizeBarDate(date: string): string {
   const tIdx = date.indexOf("T");
   if (tIdx < 0) return date;
   return date.slice(0, tIdx + 6);
 }
 
-export function sanitizeAndNormalizeBars(bars: OHLCVBar[]): SanitizedBar[] {
+function sanitize(
+  bars: OHLCVBar[],
+  normalizeKey: (date: string) => string,
+): SanitizedBar[] {
   const dedup = new Map<string, SanitizedBar>();
   for (const bar of bars) {
     if (!bar?.date) continue;
@@ -72,10 +57,20 @@ export function sanitizeAndNormalizeBars(bars: OHLCVBar[]): SanitizedBar[] {
     )
       continue;
     if (!isRegularSessionBar(bar.date)) continue;
-    const key = normalizeBarDate(bar.date);
+    const key = normalizeKey(bar.date);
     dedup.set(key, { date: key, close: bar.close });
   }
   return Array.from(dedup.values()).sort((a, b) =>
     a.date.localeCompare(b.date),
   );
+}
+
+const identity = (s: string): string => s;
+
+export function sanitizeBars(bars: OHLCVBar[]): SanitizedBar[] {
+  return sanitize(bars, identity);
+}
+
+export function sanitizeAndNormalizeBars(bars: OHLCVBar[]): SanitizedBar[] {
+  return sanitize(bars, normalizeBarDate);
 }

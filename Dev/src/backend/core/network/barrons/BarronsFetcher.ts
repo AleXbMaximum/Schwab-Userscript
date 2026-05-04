@@ -17,6 +17,17 @@ import {
 
 const log = logService.namespace("network");
 
+function cardDataPointsToRecord(
+  card: any | null | undefined,
+): Record<string, string> | null {
+  if (!card?.dataPoints) return null;
+  const obj: Record<string, string> = {};
+  for (const dp of card.dataPoints) {
+    obj[dp.key] = dp.value?.primaryValue ?? formattedValue(dp.value) ?? "";
+  }
+  return obj;
+}
+
 import type {
   BarronsAnalystSnapshot,
   BarronsCompanyDetails,
@@ -293,17 +304,10 @@ export async function fetchBarronsData(
   const basicTables = basicTablesFromBlocks.length
     ? basicTablesFromBlocks
     : basicTablesNamed;
-  const getTable = (name: string): Record<string, string> | null => {
-    const card = basicTables.find(
-      (c: any) => c.description?.toUpperCase() === name,
+  const getTable = (name: string): Record<string, string> | null =>
+    cardDataPointsToRecord(
+      basicTables.find((c: any) => c.description?.toUpperCase() === name),
     );
-    if (!card?.dataPoints) return null;
-    const obj: Record<string, string> = {};
-    for (const dp of card.dataPoints) {
-      obj[dp.key] = dp.value?.primaryValue ?? formattedValue(dp.value) ?? "";
-    }
-    return obj;
-  };
 
   const ratios: BarronsFinancialRatios = {
     valuation: getTable("VALUATION"),
