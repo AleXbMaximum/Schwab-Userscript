@@ -1,36 +1,33 @@
 import { STORES } from "../core/AlexQuantDB";
-import { txPromise, txComplete } from "../core/idbUtils";
+import { readTx, txPromise, writeTx } from "../core/idbUtils";
 import type { OptionCaptureStrikeAggregateRow } from "./optionMonitorTypes";
 
-export class CaptureStrikeAggregateStore {
-  private db: IDBDatabase;
+const STORE = STORES.STRIKE_AGGREGATES;
 
-  constructor(db: IDBDatabase) {
-    this.db = db;
-  }
+export class CaptureStrikeAggregateStore {
+  constructor(private db: IDBDatabase) {}
 
   async putBatch(rows: OptionCaptureStrikeAggregateRow[]): Promise<void> {
     if (rows.length === 0) return;
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readwrite");
-    const store = tx.objectStore(STORES.STRIKE_AGGREGATES);
-    for (const row of rows) store.put(row);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      for (const row of rows) s.put(row);
+    });
   }
 
   async getByOpeningId(
     openingId: string,
   ): Promise<OptionCaptureStrikeAggregateRow[]> {
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readonly");
-    const index = tx.objectStore(STORES.STRIKE_AGGREGATES).index("openingId");
-    return txPromise(index.getAll(openingId));
+    return readTx(this.db, STORE, (s) =>
+      s.index("openingId").getAll(openingId),
+    );
   }
 
   async getByOpeningIds(
     ids: string[],
   ): Promise<Map<string, OptionCaptureStrikeAggregateRow[]>> {
     if (ids.length === 0) return new Map();
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readonly");
-    const index = tx.objectStore(STORES.STRIKE_AGGREGATES).index("openingId");
+    const tx = this.db.transaction(STORE, "readonly");
+    const index = tx.objectStore(STORE).index("openingId");
     const results = await Promise.all(
       ids.map((id) => txPromise(index.getAll(id))),
     );
@@ -44,11 +41,8 @@ export class CaptureStrikeAggregateStore {
   async deleteByOpeningId(openingId: string): Promise<void> {
     const rows = await this.getByOpeningId(openingId);
     if (rows.length === 0) return;
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readwrite");
-    const store = tx.objectStore(STORES.STRIKE_AGGREGATES);
-    for (const row of rows) {
-      store.delete([row.openingId, row.strike]);
-    }
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      for (const row of rows) s.delete([row.openingId, row.strike]);
+    });
   }
 }
