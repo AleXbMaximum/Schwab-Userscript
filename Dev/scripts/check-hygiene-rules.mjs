@@ -18,7 +18,7 @@ const IGNORE_DIRS = new Set(["node_modules", ".dist", "dist", ".git"]);
 // Files where raw console.log is allowed (log infrastructure).
 const CONSOLE_EXCEPTION_ZONES = new Set([
   path.normalize("src/shared/log/devTools.ts"),
-  path.normalize("src/shared/log/core/LogFormatter.ts"),
+  path.normalize("src/shared/log/core/LogService.ts"),
 ]);
 
 // Frozen legacy *_renderPage exports — page entry points that pre-date the
