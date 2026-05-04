@@ -1,24 +1,22 @@
 import { STORES } from "../core/AlexQuantDB";
-import { txPromise, txComplete } from "../core/idbUtils";
+import { readTx, txPromise, writeTx } from "../core/idbUtils";
 import type { AIAnalysisRecord, MemoryEntry } from "backend/services/ai/types";
 
-export class MemoryStore {
-  private db: IDBDatabase;
+const STORE = STORES.AI_MEMORIES;
 
-  constructor(db: IDBDatabase) {
-    this.db = db;
-  }
+export class MemoryStore {
+  constructor(private db: IDBDatabase) {}
 
   async save(entry: MemoryEntry): Promise<void> {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readwrite");
-    tx.objectStore(STORES.AI_MEMORIES).put(entry);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      s.put(entry);
+    });
   }
 
   async getRecentForSymbol(symbol: string, limit = 5): Promise<MemoryEntry[]> {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readonly");
-    const index = tx.objectStore(STORES.AI_MEMORIES).index("symbol");
-    const entries = await txPromise<MemoryEntry[]>(index.getAll(symbol));
+    const entries = await readTx<MemoryEntry[]>(this.db, STORE, (s) =>
+      s.index("symbol").getAll(symbol),
+    );
     return entries.sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
   }
 
@@ -40,17 +38,17 @@ export class MemoryStore {
   }
 
   async clearForSymbol(symbol: string): Promise<void> {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readwrite");
-    const store = tx.objectStore(STORES.AI_MEMORIES);
-    const index = store.index("symbol");
-    const keys = await txPromise<IDBValidKey[]>(index.getAllKeys(symbol));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, async (s) => {
+      const keys = await txPromise<IDBValidKey[]>(
+        s.index("symbol").getAllKeys(symbol),
+      );
+      for (const key of keys) s.delete(key);
+    });
   }
 
   async clearAll(): Promise<void> {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readwrite");
-    tx.objectStore(STORES.AI_MEMORIES).clear();
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      s.clear();
+    });
   }
 }
