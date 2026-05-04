@@ -6,8 +6,10 @@ import {
   appendSettingsMatrixRow,
 } from "../../components/core/settingsFramework";
 import type{ AIModelProfile, AIProviderKind } from "shared/types/core";
-import { LLMClient } from "../../../backend/core/network/llm/LLMClient";
-import type { LLMClientConfig } from "../../../backend/core/network/llm/LLMClient";
+import {
+  createLLMClient,
+  type LLMClientConfig,
+} from "../../../backend/core/network/llm/LLMClient";
 import { BUILTIN_MODEL_OPTIONS } from "../../../backend/services/ai/config/modelCatalog";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -91,7 +93,7 @@ export function createConnectivitySection(opts: {
       return;
     }
     try {
-      const client = new LLMClient(testConfig);
+      const client = createLLMClient(testConfig);
       const start = Date.now();
       const resp = await client.complete({
         systemPrompt: "You are a test assistant.",
