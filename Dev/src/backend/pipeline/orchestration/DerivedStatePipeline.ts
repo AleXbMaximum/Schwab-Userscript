@@ -4,7 +4,11 @@ import { computeDerivedMetrics } from "../../computation/holdings/metrics/derive
 import type { HoldingsIndex } from "../ingestion/HoldingsIndexBuilder";
 import { UnderlyingAggregator } from "../../computation/holdings/aggregators/UnderlyingAggregator";
 import { PortfolioAggregator } from "../../computation/holdings/aggregators/PortfolioAggregator";
-import { ScenarioCalculator } from "../../computation/holdings/aggregators/ScenarioCalculator";
+import {
+  enrichWithScenarios,
+  refreshSummaryRowsFromUnderlyingAgg,
+  enrichWithConcentration,
+} from "../../computation/holdings/aggregators/ScenarioCalculator";
 import { HierarchyBuilder } from "../../computation/holdings/aggregators/HierarchyBuilder";
 import { normalizeNumbersDeepInPlace } from "../../../shared/utils/format/numberNormalizer";
 import { logService } from "../../../shared/log/core/LogService";
@@ -14,13 +18,11 @@ const log = logService.namespace("stats");
 export class DerivedStatePipeline {
   private underlyingAgg: UnderlyingAggregator;
   private portfolioAgg: PortfolioAggregator;
-  private scenarioCalc: ScenarioCalculator;
   private hierarchyBuilder: HierarchyBuilder;
 
   constructor() {
     this.underlyingAgg = new UnderlyingAggregator();
     this.portfolioAgg = new PortfolioAggregator();
-    this.scenarioCalc = new ScenarioCalculator();
     this.hierarchyBuilder = new HierarchyBuilder();
   }
 
@@ -58,7 +60,7 @@ export class DerivedStatePipeline {
       derivedState.byHoldingsKey,
     );
 
-    this.scenarioCalc.enrichWithScenarios(
+    enrichWithScenarios(
       holdingsIndex,
       derivedState.byHoldingsKey,
       derivedState.byUnderlying,
@@ -85,13 +87,13 @@ export class DerivedStatePipeline {
 
     // Single pass: propagates all underlyingAgg data (PnL + portfolio context)
     // to summary rows after all upstream mutations are complete.
-    this.scenarioCalc.refreshSummaryRowsFromUnderlyingAgg(
+    refreshSummaryRowsFromUnderlyingAgg(
       holdingsIndex,
       derivedState.byHoldingsKey,
       derivedState.byUnderlying,
     );
 
-    this.scenarioCalc.enrichWithConcentration(
+    enrichWithConcentration(
       holdingsIndex,
       derivedState.byHoldingsKey,
       derivedState.portfolioAgg,
@@ -154,7 +156,7 @@ export class DerivedStatePipeline {
 
       const derived = existingDerivedState.byHoldingsKey[holdingsKey];
 
-      this.scenarioCalc.enrichWithScenarios(
+      enrichWithScenarios(
         new Map([[holdingsKey, meta]]),
         { [holdingsKey]: derived },
         existingDerivedState.byUnderlying,
@@ -178,13 +180,13 @@ export class DerivedStatePipeline {
       existingDerivedState.portfolioAgg,
     );
 
-    this.scenarioCalc.refreshSummaryRowsFromUnderlyingAgg(
+    refreshSummaryRowsFromUnderlyingAgg(
       holdingsIndex,
       existingDerivedState.byHoldingsKey,
       existingDerivedState.byUnderlying,
     );
 
-    this.scenarioCalc.enrichWithConcentration(
+    enrichWithConcentration(
       holdingsIndex,
       existingDerivedState.byHoldingsKey,
       existingDerivedState.portfolioAgg,
