@@ -27,7 +27,280 @@ function generateUUID() {
     return v.toString(16);
   });
 }
-;// ./src/shared/log/core/LogClock.ts
+;// ./src/shared/utils/data/deepClone.ts
+const isPlainObject = value => value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+const cloneRegExp = value => {
+  if (!(value instanceof RegExp)) return null;
+  return new RegExp(value.source, value.flags);
+};
+const cloneDate = value => {
+  if (!(value instanceof Date)) return null;
+  return new Date(value.getTime());
+};
+const isCloneableObject = value => value !== null && typeof value === "object";
+const deepCloneInternal = (value, seen) => {
+  if (!isCloneableObject(value)) return value;
+  const cached = seen.get(value);
+  if (cached !== undefined) return cached;
+  if (Array.isArray(value)) {
+    const arr = [];
+    seen.set(value, arr);
+    for (const item of value) arr.push(deepCloneInternal(item, seen));
+    return arr;
+  }
+  const regexClone = cloneRegExp(value);
+  if (regexClone) return regexClone;
+  const dateClone = cloneDate(value);
+  if (dateClone) return dateClone;
+  if (isPlainObject(value)) {
+    const out = {};
+    seen.set(value, out);
+    for (const [k, v] of Object.entries(value)) out[k] = deepCloneInternal(v, seen);
+    return out;
+  }
+  const cloneFn = globalThis.structuredClone;
+  if (cloneFn instanceof Function) {
+    try {
+      return cloneFn(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+};
+const deepClone = value => {
+  const cloneFn = globalThis.structuredClone;
+  if (cloneFn instanceof Function) {
+    try {
+      return cloneFn(value);
+    } catch {}
+  }
+  return deepCloneInternal(value, new WeakMap());
+};
+;// ./src/shared/log/core/LogService.ts
+/**
+ * Consolidated logging core. All internal pieces in one place:
+ *  - Span status normalization
+ *  - Level normalization + filtering
+ *  - Namespace-level resolution (hierarchical)
+ *  - LogConfig defaults (INFO/DEBUG modes)
+ *  - LogClock (perf-based timestamps)
+ *  - LogFormatter (styled + plain console output)
+ *  - ConsoleOutput (gating + render)
+ *  - ConfigManager (mutable runtime config + presets)
+ *  - LogNamespace (per-namespace API: error/warn/info/debug/span/perf/throttle/count)
+ *  - LogService (singleton entry, exposes `logService`)
+ *
+ * Public exports kept stable for the 79 importers across the codebase:
+ *  - `logService` — main entry, callers do `logService.namespace("ai").info(...)`.
+ *  - `configManager`, `LOG_CONFIG` — used by devTools.
+ *  - Type re-exports (Logger interface lives in ../Logger.ts and is unchanged).
+ */
+
+
+
+// ── Span status ─────────────────────────────────────────────────────────────
+
+const SPAN_STATUS = Object.freeze({
+  SUCCESS: "success",
+  ERROR: "error",
+  FAILURE: "failure",
+  TIMEOUT: "timeout",
+  CANCELLED: "cancelled",
+  ABORTED: "aborted",
+  UNAVAILABLE: "unavailable"
+});
+function normalizeSpanStatus(status) {
+  if (!status || typeof status !== "string") return null;
+  const normalized = status.toLowerCase();
+  if (Object.values(SPAN_STATUS).includes(normalized)) {
+    return normalized;
+  }
+  switch (normalized) {
+    case "ok":
+      return SPAN_STATUS.SUCCESS;
+    case "fail":
+    case "failed":
+      return SPAN_STATUS.FAILURE;
+    case "timeouted":
+      return SPAN_STATUS.TIMEOUT;
+    case "not available":
+    case "unavailable":
+      return SPAN_STATUS.UNAVAILABLE;
+    default:
+      return null;
+  }
+}
+
+// ── Log levels ──────────────────────────────────────────────────────────────
+
+const LOG_LEVELS = ["error", "warn", "info", "debug"];
+const LEVEL_PRIORITY = Object.freeze(LOG_LEVELS.reduce((acc, level, index) => {
+  acc[level] = index;
+  return acc;
+}, Object.create(null)));
+const DISABLED_TOKENS = new Set(["disabled", "off"]);
+const NORMALIZED_ALIASES = Object.freeze({
+  all: "debug",
+  verbose: "debug",
+  trace: "debug"
+});
+function normalize(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  if (DISABLED_TOKENS.has(trimmed)) return "disabled";
+  if (LEVEL_PRIORITY[trimmed] !== undefined) {
+    return trimmed;
+  }
+  const aliased = NORMALIZED_ALIASES[trimmed];
+  if (aliased) return aliased;
+  return null;
+}
+const normalizeLevel = value => normalize(value);
+const isLevelEnabled = (threshold, level) => {
+  const normalizedLevel = normalize(level);
+  if (!normalizedLevel || normalizedLevel === "disabled") return false;
+  const normalizedThreshold = normalize(threshold);
+  if (!normalizedThreshold || normalizedThreshold === "disabled") return false;
+  const thresholdKey = NORMALIZED_ALIASES[normalizedThreshold] || normalizedThreshold;
+  return LEVEL_PRIORITY[normalizedLevel] <= LEVEL_PRIORITY[thresholdKey];
+};
+
+// ── Hierarchical namespace level resolution ─────────────────────────────────
+
+function resolveNamespaceLevel(namespace, levels, defaultLevel) {
+  if (namespace in levels) return levels[namespace];
+  let prefix = namespace;
+  while (true) {
+    const dot = prefix.lastIndexOf(".");
+    if (dot === -1) break;
+    prefix = prefix.substring(0, dot);
+    if (prefix in levels) return levels[prefix];
+  }
+  return defaultLevel;
+}
+
+// ── deepMerge (used by ConfigManager) ───────────────────────────────────────
+
+function deepMerge(target, source) {
+  if (!isPlainObject(target)) target = {};
+  if (!isPlainObject(source)) return deepClone(target);
+  const merged = {
+    ...target
+  };
+  Object.entries(source).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      merged[key] = value.map(item => deepClone(item));
+      return;
+    }
+    const regexClone = cloneRegExp(value);
+    if (regexClone) {
+      merged[key] = regexClone;
+      return;
+    }
+    if (isPlainObject(value)) {
+      merged[key] = deepMerge(merged[key], value);
+      return;
+    }
+    merged[key] = value;
+  });
+  return merged;
+}
+
+// ── Default log configuration ───────────────────────────────────────────────
+
+const NS_INFO = "info";
+const NS_OFF = "off";
+const INFO_MODE_LEVELS = {
+  main: NS_INFO,
+  network: NS_INFO,
+  storage: NS_INFO,
+  stats: NS_INFO,
+  telemetry: NS_INFO,
+  render: NS_INFO,
+  compute: NS_INFO,
+  ui: NS_INFO,
+  ai: NS_INFO,
+  auth: NS_INFO,
+  streamer: NS_INFO,
+  worker: NS_INFO,
+  risk: NS_INFO,
+  options: NS_INFO,
+  holdings: NS_INFO,
+  pipeline: NS_INFO,
+  chart: NS_INFO,
+  news: NS_INFO,
+  phase: NS_INFO,
+  "flow:hold": NS_OFF,
+  "flow:quote": NS_OFF,
+  "flow:strm": NS_OFF,
+  "flow:over": NS_OFF,
+  "flow:bal": NS_OFF
+};
+const DEBUG_MODE_LEVELS = Object.fromEntries(Object.keys(INFO_MODE_LEVELS).map(k => [k, "debug"]));
+const LOG_CONFIG = {
+  namespaceFiltering: {
+    console: {
+      ...INFO_MODE_LEVELS
+    },
+    notifications: {
+      ...INFO_MODE_LEVELS
+    }
+  },
+  console: {
+    enabled: true,
+    useColors: true,
+    showTime: true,
+    showDelta: true,
+    showTotal: false,
+    showObject: true,
+    alignNamespaces: true,
+    namespaceWidth: 10,
+    objectMaxLen: 2000,
+    redactKeys: [],
+    timeOrigin: "performance"
+  },
+  notifications: {
+    enabled: true,
+    rules: [{
+      ns: "main",
+      level: "off"
+    }],
+    behavior: {
+      duration: 3000,
+      durationByLevel: {
+        error: 5000,
+        warn: 4000,
+        info: 3000,
+        off: 2000
+      }
+    },
+    deduplication: {
+      enabled: true,
+      windowMs: 3000
+    },
+    rateLimit: {
+      enabled: false,
+      maxPerWindow: 5,
+      windowMs: 10000
+    },
+    batching: {
+      enabled: false,
+      windowMs: 2000
+    },
+    history: {
+      enabled: true,
+      maxSize: 50
+    },
+    telemetry: {
+      enabled: true
+    }
+  }
+};
+
+// ── Clock ───────────────────────────────────────────────────────────────────
+
 class LogClock {
   constructor() {
     this.hasPerformance = typeof performance !== "undefined" && !!performance.now;
@@ -61,246 +334,10 @@ class LogClock {
     const ms = String(d.getMilliseconds()).padStart(3, "0");
     return `${get("hour")}:${get("minute")}:${get("second")}.${ms}`;
   }
-  reset() {
-    this.t0 = this.now();
-    this.lastLog = this.t0;
-  }
 }
 const logClock = new LogClock();
-;// ./src/shared/log/spanStatus.ts
-const SPAN_STATUS = Object.freeze({
-  SUCCESS: "success",
-  ERROR: "error",
-  FAILURE: "failure",
-  TIMEOUT: "timeout",
-  CANCELLED: "cancelled",
-  ABORTED: "aborted",
-  UNAVAILABLE: "unavailable"
-});
-function normalizeSpanStatus(status) {
-  if (!status || typeof status !== "string") {
-    return null;
-  }
-  const normalized = status.toLowerCase();
-  if (Object.values(SPAN_STATUS).includes(normalized)) {
-    return normalized;
-  }
-  switch (normalized) {
-    case "ok":
-      return SPAN_STATUS.SUCCESS;
-    case "fail":
-    case "failed":
-      return SPAN_STATUS.FAILURE;
-    case "timeouted":
-      return SPAN_STATUS.TIMEOUT;
-    case "not available":
-    case "unavailable":
-      return SPAN_STATUS.UNAVAILABLE;
-    default:
-      return null;
-  }
-}
-;// ./src/shared/log/core/LogNamespace.ts
 
-class LogNamespace {
-  throttleMap = new Map();
-  countMap = new Map();
-  constructor(name, logService) {
-    this.name = name;
-    this.logService = logService;
-  }
-
-  /** Check if a given level would actually produce output for this namespace. */
-  levelEnabled(level) {
-    return this.logService.isLevelEnabled?.(this.name, level) ?? true;
-  }
-  error(operation, metadata = {}, options = {}) {
-    this.logService.log(this.name, operation, "error", metadata, options);
-  }
-  warn(operation, metadata = {}, options = {}) {
-    this.logService.log(this.name, operation, "warn", metadata, options);
-  }
-  info(operation, metadata = {}, options = {}) {
-    this.logService.log(this.name, operation, "info", metadata, options);
-  }
-  debug(operation, metadata = {}, options = {}) {
-    this.logService.log(this.name, operation, "debug", metadata, options);
-  }
-  trace(operation, metadata = {}, options = {}) {
-    this.logService.log(this.name, operation, "debug", metadata, options);
-  }
-  span(operation, metadata = {}) {
-    const startTime = this.logService.clock.now();
-    this.debug(`${operation}.start`, metadata);
-    return {
-      end: (statusOrMetadata, metadataOrLevel, level = "debug") => {
-        const endTime = this.logService.clock.now();
-        const duration = Math.round(endTime - startTime);
-        let status = null;
-        let meta = {};
-        let finalLevel = level;
-        if (typeof statusOrMetadata === "string") {
-          status = normalizeSpanStatus(statusOrMetadata) || statusOrMetadata;
-          if (metadataOrLevel && typeof metadataOrLevel === "object") {
-            meta = metadataOrLevel;
-          }
-          if (typeof metadataOrLevel === "string") {
-            finalLevel = metadataOrLevel;
-          } else if (typeof level === "string") {
-            finalLevel = level;
-          }
-        } else {
-          meta = statusOrMetadata || {};
-          if (metadataOrLevel && typeof metadataOrLevel === "string") {
-            finalLevel = metadataOrLevel;
-          }
-        }
-        const payload = {
-          ...meta,
-          durationMs: duration
-        };
-        if (status) {
-          payload.status = status;
-        }
-        this.logService.log(this.name, `${operation}.done`, finalLevel, payload);
-      }
-    };
-  }
-
-  /**
-   * Measure an operation's duration and auto-escalate log level based on thresholds.
-   * - Below warnThresholdMs: logs at 'debug'
-   * - Between warn and error thresholds: logs at 'info'
-   * - Above errorThresholdMs: logs at 'error'
-   *
-   * Usage:
-   *   const done = log.perf('renderTable');
-   *   // ... work ...
-   *   done({ rows: 150 });
-   */
-  perf(operation, opts = {}) {
-    const warnMs = opts.warnThresholdMs ?? 16;
-    const errorMs = opts.errorThresholdMs ?? 100;
-    const startTime = this.logService.clock.now();
-    return (metadata = {}) => {
-      const duration = Math.round(this.logService.clock.now() - startTime);
-      let level = "debug";
-      if (duration >= errorMs) level = "error";else if (duration >= warnMs) level = "info";
-      this.logService.log(this.name, `${operation}.perf`, level, {
-        ...metadata,
-        durationMs: duration
-      });
-    };
-  }
-
-  /**
-   * Rate-limited logging. Only emits once per intervalMs for the same operation.
-   * On the next allowed log, reports how many calls were skipped.
-   *
-   * Usage:
-   *   log.throttle('streamerTick', 2000, { price: 123.45 });
-   */
-  throttle(operation, intervalMs, metadata = {}, level = "debug") {
-    const now = this.logService.clock.now();
-    let state = this.throttleMap.get(operation);
-    if (!state) {
-      state = {
-        lastTime: 0,
-        skipped: 0
-      };
-      this.throttleMap.set(operation, state);
-    }
-    if (now - state.lastTime < intervalMs) {
-      state.skipped++;
-      return;
-    }
-    const payload = state.skipped > 0 ? {
-      ...metadata,
-      skipped: state.skipped
-    } : metadata;
-    state.lastTime = now;
-    state.skipped = 0;
-    this.logService.log(this.name, operation, level, payload);
-  }
-
-  /**
-   * Accumulate event counts and flush a summary periodically.
-   * Useful for high-frequency events where individual logs are noise.
-   *
-   * Usage:
-   *   log.count('rowsRendered', 5000);          // flush every 5s
-   *   log.count('rowsRendered', 5000, { page: 'portfolio' });
-   */
-  count(operation, flushIntervalMs = 5000, metadata = {}, level = "debug") {
-    let state = this.countMap.get(operation);
-    if (!state) {
-      state = {
-        count: 0,
-        firstTime: this.logService.clock.now(),
-        timerId: null
-      };
-      this.countMap.set(operation, state);
-    }
-    state.count++;
-    if (!state.timerId) {
-      state.timerId = setTimeout(() => {
-        const s = this.countMap.get(operation);
-        if (s && s.count > 0) {
-          const elapsed = Math.round(this.logService.clock.now() - s.firstTime);
-          this.logService.log(this.name, `${operation}.summary`, level, {
-            ...metadata,
-            count: s.count,
-            windowMs: elapsed
-          });
-          s.count = 0;
-          s.firstTime = this.logService.clock.now();
-        }
-        if (s) s.timerId = null;
-      }, flushIntervalMs);
-    }
-  }
-}
-;// ./src/shared/log/core/LogLevels.ts
-const LOG_LEVELS = ["error", "warn", "info", "debug"];
-const LEVEL_PRIORITY = Object.freeze(LOG_LEVELS.reduce((acc, level, index) => {
-  acc[level] = index;
-  return acc;
-}, Object.create(null)));
-const DISABLED_TOKENS = new Set(["disabled", "off"]);
-const NORMALIZED_ALIASES = Object.freeze({
-  all: "debug",
-  verbose: "debug",
-  trace: "debug"
-});
-const normalize = value => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return null;
-  if (DISABLED_TOKENS.has(trimmed)) {
-    return "disabled";
-  }
-  if (LEVEL_PRIORITY[trimmed] !== undefined) {
-    return trimmed;
-  }
-  const aliased = NORMALIZED_ALIASES[trimmed];
-  if (aliased) {
-    return aliased;
-  }
-  return null;
-};
-const normalizeLevel = value => normalize(value);
-const isLevelEnabled = (threshold, level) => {
-  const normalizedLevel = normalize(level);
-  if (!normalizedLevel || normalizedLevel === "disabled") return false;
-  const normalizedThreshold = normalize(threshold);
-  if (!normalizedThreshold || normalizedThreshold === "disabled") {
-    return false;
-  }
-  const thresholdKey = NORMALIZED_ALIASES[normalizedThreshold] || normalizedThreshold;
-  return LEVEL_PRIORITY[normalizedLevel] <= LEVEL_PRIORITY[thresholdKey];
-};
-;// ./src/shared/log/core/LogFormatter.ts
-
+// ── Formatter ───────────────────────────────────────────────────────────────
 
 const Colors = {
   namespace: {
@@ -363,15 +400,9 @@ class LogFormatter {
     styles.push(`color: ${nsColor}; font-weight: bold;`, paddedNs);
     if (this.config.showTime || this.config.showDelta || this.config.showTotal) {
       const timeParts = [];
-      if (this.config.showTime) {
-        timeParts.push(logClock.formatTime());
-      }
-      if (this.config.showTotal) {
-        timeParts.push(`${timing.total.toFixed(1)}ms`);
-      }
-      if (this.config.showDelta) {
-        timeParts.push(`+${timing.delta.toFixed(1)}ms`);
-      }
+      if (this.config.showTime) timeParts.push(logClock.formatTime());
+      if (this.config.showTotal) timeParts.push(`${timing.total.toFixed(1)}ms`);
+      if (this.config.showDelta) timeParts.push(`+${timing.delta.toFixed(1)}ms`);
       parts.push("%c[%s]");
       styles.push(`color: ${Colors.time};`, timeParts.join(" | "));
     }
@@ -391,33 +422,25 @@ class LogFormatter {
     }
     console.log(parts.join(" "), ...styles);
   }
-  outputPlain(namespace, operation, level, metadata, timing, options = {}) {
-    const line = this.formatPlain(namespace, operation, level, metadata, timing, options);
-    console.log(line);
-  }
-  formatPlain(namespace, operation, level, metadata, timing, _options = {}) {
+  outputPlain(namespace, operation, level, metadata, timing, _options = {}) {
     const paddedNs = this.padNamespace(namespace);
     const parts = [`[${paddedNs}]`];
     const canonicalLevel = normalizeLevel(level) || level;
     if (this.config.showTime || this.config.showDelta || this.config.showTotal) {
       const timeParts = [];
-      if (this.config.showTime) {
-        timeParts.push(logClock.formatTime());
-      }
+      if (this.config.showTime) timeParts.push(logClock.formatTime());
       if (this.config.showTotal && timing && typeof timing.total === "number") {
         timeParts.push(`${timing.total.toFixed(1)}ms`);
       }
       if (this.config.showDelta && timing && typeof timing.delta === "number") {
         timeParts.push(`+${timing.delta.toFixed(1)}ms`);
       }
-      if (timeParts.length > 0) {
-        parts.push(`[${timeParts.join(" | ")}]`);
-      }
+      if (timeParts.length > 0) parts.push(`[${timeParts.join(" | ")}]`);
     }
     parts.push(String(canonicalLevel || level).toUpperCase());
     if (operation) parts.push(operation);
     const dataStr = this.serializeMetadata(metadata);
-    return parts.join(" ") + dataStr;
+    console.log(parts.join(" ") + dataStr);
   }
   padNamespace(ns) {
     if (!this.config.alignNamespaces) return ns;
@@ -428,49 +451,18 @@ class LogFormatter {
       return "";
     }
     try {
-      const redacter = (k, v) => {
-        return this.config.redactKeys?.includes(k) ? "[REDACTED]" : v;
-      };
+      const redacter = (k, v) => this.config.redactKeys?.includes(k) ? "[REDACTED]" : v;
       let s = JSON.stringify(metadata, redacter);
       const maxLen = this.config.objectMaxLen || 2000;
-      if (s.length > maxLen) {
-        s = s.slice(0, maxLen) + "...";
-      }
+      if (s.length > maxLen) s = s.slice(0, maxLen) + "...";
       return " " + s;
     } catch {
       return " [unserializable]";
     }
   }
 }
-;// ./src/shared/log/core/resolveNamespaceLevel.ts
-/**
- * Hierarchical namespace level resolution.
- *
- * Given namespace "ui.trade.chart.stream", walks up the hierarchy:
- *   1. "ui.trade.chart.stream" (exact)
- *   2. "ui.trade.chart"        (parent)
- *   3. "ui.trade"              (grandparent)
- *   4. "ui"                    (root)
- *   5. defaultLevel            (fallback)
- *
- * First match wins. Allows enabling all `ui.trade.*` children without
- * enumerating each one. Falls back transparently for legacy flat names
- * (e.g., "main", "network") that contain no dots.
- */
-function resolveNamespaceLevel(namespace, levels, defaultLevel) {
-  if (namespace in levels) return levels[namespace];
-  let prefix = namespace;
-  while (true) {
-    const dot = prefix.lastIndexOf(".");
-    if (dot === -1) break;
-    prefix = prefix.substring(0, dot);
-    if (prefix in levels) return levels[prefix];
-  }
-  return defaultLevel;
-}
-;// ./src/shared/log/core/ConsoleOutput.ts
 
-
+// ── ConsoleOutput (gating + render) ─────────────────────────────────────────
 
 class ConsoleOutput {
   constructor(config) {
@@ -494,12 +486,6 @@ class ConsoleOutput {
     if (!isLevelEnabled(nsLevel, normalizedLevel)) return false;
     return true;
   }
-  render(namespace, operation, level, metadata, timing, options = {}) {
-    if (!this.shouldOutput(namespace, level, options)) return;
-    this.formatter.output(namespace, operation, level, metadata, timing, options);
-  }
-
-  /** Render without re-checking shouldOutput (caller already checked). */
   directRender(namespace, operation, level, metadata, timing, options = {}) {
     this.formatter.output(namespace, operation, level, metadata, timing, options);
   }
@@ -532,315 +518,7 @@ class ConsoleOutput {
   }
 }
 
-;// ./src/shared/log/core/NotificationOutput.ts
-
-
-class NotificationOutput {
-  constructor(config, notificationManager) {
-    this.config = {
-      ...config
-    };
-    this.manager = notificationManager;
-    this.namespaceLevels = {
-      ...(config.namespaceLevels || {})
-    };
-  }
-  shouldShow(namespace, level, options = {}) {
-    const notifyFlag = options.notification !== undefined ? options.notification : options.notify;
-    const normalizedLevel = normalizeLevel(level);
-    if (!normalizedLevel) return false;
-    if (notifyFlag === false) return false;
-    if (notifyFlag === true) return true;
-    if (!this.config.enabled) return false;
-    const nsLevel = resolveNamespaceLevel(namespace, this.namespaceLevels, this.config.defaultLevel);
-    if (!isLevelEnabled(nsLevel, normalizedLevel)) return false;
-    return true;
-  }
-  show(event) {
-    if (!this.shouldShow(event.namespace, event.level, event.options)) {
-      return false;
-    }
-    return this.manager.show(event);
-  }
-  updateConfig(newConfig) {
-    if (!newConfig) return;
-    const nextConfig = {
-      ...this.config,
-      ...newConfig
-    };
-    if ("namespaceLevels" in newConfig) {
-      this.namespaceLevels = {
-        ...(newConfig.namespaceLevels || {})
-      };
-    }
-    nextConfig.namespaceLevels = {
-      ...this.namespaceLevels
-    };
-    this.config = nextConfig;
-    if (this.manager?.updateConfig) {
-      this.manager.updateConfig(this.config);
-    }
-  }
-  getConfig() {
-    return {
-      ...this.config,
-      namespaceLevels: {
-        ...this.namespaceLevels
-      }
-    };
-  }
-  getTelemetry() {
-    return this.manager?.getTelemetry?.() || {};
-  }
-  resetTelemetry() {
-    return this.manager?.resetTelemetry?.();
-  }
-  getHistory(limit) {
-    return this.manager?.getHistory?.(limit) || [];
-  }
-  clearHistory() {
-    return this.manager?.clearHistory?.();
-  }
-  setHandler(fn) {
-    return this.manager?.setHandler?.(fn);
-  }
-}
-
-;// ./src/shared/log/config/LogConfig.ts
-/**
- * Default log configuration.
- *
- * Two operational modes:
- *   - INFO mode (daily): shows error / warn / info across all namespaces.
- *     High-frequency flow namespaces (flow:*) are off to reduce noise.
- *   - DEBUG mode: shows everything including debug-level messages.
- *     Activated at runtime via  window.__alexquantLog.debug()
- *
- * Namespace registry:
- *   main        - App bootstrap, lifecycle
- *   network     - HTTP requests, API calls
- *   storage     - IndexedDB, KV store
- *   stats       - Derived-state pipeline
- *   render      - Page rendering, view switches
- *   ui          - UI components, interactions
- *   ai          - AI analysis pipeline
- *   auth        - Authentication, token refresh
- *   streamer    - WebSocket streaming
- *   worker      - Web Worker pool
- *   compute     - General computation
- *   risk        - Risk metrics calculation
- *   options     - Options chain processing
- *   holdings    - Holdings aggregation, hierarchy
- *   pipeline    - Backend orchestrator, polling
- *   chart       - Chart data service
- *   news        - News fetching, lifecycle
- *   phase       - Phase transitions
- *   flow:hold   - Holdings ingestion flow (high-freq)
- *   flow:quote  - Quote ingestion flow (high-freq)
- *   flow:strm   - Streamer ingestion flow (high-freq)
- *   flow:over   - Overnight ingestion flow (high-freq)
- */
-
-const NS_INFO = "info";
-const NS_OFF = "off";
-
-/** Per-namespace level map for INFO mode (daily operation). */
-const INFO_MODE_LEVELS = {
-  main: NS_INFO,
-  network: NS_INFO,
-  storage: NS_INFO,
-  stats: NS_INFO,
-  telemetry: NS_INFO,
-  render: NS_INFO,
-  compute: NS_INFO,
-  ui: NS_INFO,
-  ai: NS_INFO,
-  auth: NS_INFO,
-  streamer: NS_INFO,
-  worker: NS_INFO,
-  risk: NS_INFO,
-  options: NS_INFO,
-  holdings: NS_INFO,
-  pipeline: NS_INFO,
-  chart: NS_INFO,
-  news: NS_INFO,
-  phase: NS_INFO,
-  "flow:hold": NS_OFF,
-  "flow:quote": NS_OFF,
-  "flow:strm": NS_OFF,
-  "flow:over": NS_OFF,
-  "flow:bal": NS_OFF
-};
-
-/** Per-namespace level map for DEBUG mode (verbose diagnostics). */
-const DEBUG_MODE_LEVELS = {
-  main: "debug",
-  network: "debug",
-  storage: "debug",
-  stats: "debug",
-  telemetry: "debug",
-  render: "debug",
-  compute: "debug",
-  ui: "debug",
-  ai: "debug",
-  auth: "debug",
-  streamer: "debug",
-  worker: "debug",
-  risk: "debug",
-  options: "debug",
-  holdings: "debug",
-  pipeline: "debug",
-  chart: "debug",
-  news: "debug",
-  phase: "debug",
-  "flow:hold": "debug",
-  "flow:quote": "debug",
-  "flow:strm": "debug",
-  "flow:over": "debug",
-  "flow:bal": "debug"
-};
-const LOG_CONFIG = {
-  namespaceFiltering: {
-    console: {
-      ...INFO_MODE_LEVELS
-    },
-    notifications: {
-      ...INFO_MODE_LEVELS
-    }
-  },
-  console: {
-    enabled: true,
-    useColors: true,
-    showTime: true,
-    showDelta: true,
-    showTotal: false,
-    showObject: true,
-    alignNamespaces: true,
-    namespaceWidth: 10,
-    objectMaxLen: 2000,
-    redactKeys: [],
-    timeOrigin: "performance"
-  },
-  notifications: {
-    enabled: true,
-    rules: [{
-      ns: "main",
-      level: "off"
-    }],
-    behavior: {
-      duration: 3000,
-      durationByLevel: {
-        error: 5000,
-        warn: 4000,
-        info: 3000,
-        off: 2000
-      }
-    },
-    deduplication: {
-      enabled: true,
-      windowMs: 3000
-    },
-    rateLimit: {
-      enabled: false,
-      maxPerWindow: 5,
-      windowMs: 10000
-    },
-    batching: {
-      enabled: false,
-      windowMs: 2000
-    },
-    history: {
-      enabled: true,
-      maxSize: 50
-    },
-    telemetry: {
-      enabled: true
-    }
-  }
-};
-;// ./src/shared/utils/data/deepClone.ts
-const isPlainObject = value => value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
-const cloneRegExp = value => {
-  if (!(value instanceof RegExp)) return null;
-  return new RegExp(value.source, value.flags);
-};
-const cloneDate = value => {
-  if (!(value instanceof Date)) return null;
-  return new Date(value.getTime());
-};
-const isCloneableObject = value => value !== null && typeof value === "object";
-const deepCloneInternal = (value, seen) => {
-  if (!isCloneableObject(value)) return value;
-  const cached = seen.get(value);
-  if (cached !== undefined) return cached;
-  if (Array.isArray(value)) {
-    const arr = [];
-    seen.set(value, arr);
-    for (const item of value) arr.push(deepCloneInternal(item, seen));
-    return arr;
-  }
-  const regexClone = cloneRegExp(value);
-  if (regexClone) return regexClone;
-  const dateClone = cloneDate(value);
-  if (dateClone) return dateClone;
-  if (isPlainObject(value)) {
-    const out = {};
-    seen.set(value, out);
-    for (const [k, v] of Object.entries(value)) out[k] = deepCloneInternal(v, seen);
-    return out;
-  }
-  const cloneFn = globalThis.structuredClone;
-  if (cloneFn instanceof Function) {
-    try {
-      return cloneFn(value);
-    } catch {
-      return value;
-    }
-  }
-  return value;
-};
-const deepClone = value => {
-  const cloneFn = globalThis.structuredClone;
-  if (cloneFn instanceof Function) {
-    try {
-      return cloneFn(value);
-    } catch {}
-  }
-  return deepCloneInternal(value, new WeakMap());
-};
-;// ./src/shared/log/utils/objectUtils.ts
-
-const deepMerge = (target, source) => {
-  if (!isPlainObject(target)) {
-    target = {};
-  }
-  if (!isPlainObject(source)) {
-    return deepClone(target);
-  }
-  const merged = {
-    ...target
-  };
-  Object.entries(source).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      merged[key] = value.map(item => deepClone(item));
-      return;
-    }
-    const regexClone = cloneRegExp(value);
-    if (regexClone) {
-      merged[key] = regexClone;
-      return;
-    }
-    if (isPlainObject(value)) {
-      merged[key] = deepMerge(merged[key], value);
-      return;
-    }
-    merged[key] = value;
-  });
-  return merged;
-};
-;// ./src/shared/log/config/ConfigManager.ts
-
-
+// ── ConfigManager (mutable runtime config + presets) ────────────────────────
 
 class ConfigManager {
   constructor(initialConfig = LOG_CONFIG) {
@@ -869,7 +547,9 @@ class ConfigManager {
       throw new TypeError("Callback must be a function");
     }
     this.listeners.add(callback);
-    return () => this.listeners.delete(callback);
+    return () => {
+      this.listeners.delete(callback);
+    };
   }
   notifyListeners(oldConfig, newConfig, changes) {
     this.listeners.forEach(listener => {
@@ -919,28 +599,148 @@ class ConfigManager {
         }
       }
     };
-
-    // Aliases
     presets.verbose = presets.debug;
     presets.normal = presets.info;
     const preset = presets[presetName];
-    if (preset) {
-      this.set(preset, `preset:${presetName}`);
-    }
+    if (preset) this.set(preset, `preset:${presetName}`);
   }
 }
 const configManager = new ConfigManager();
-;// ./src/shared/log/core/LogService.ts
 
+// ── LogNamespace (per-namespace API) ────────────────────────────────────────
 
+class LogNamespace {
+  throttleMap = new Map();
+  countMap = new Map();
+  constructor(name, svc) {
+    this.name = name;
+    this.svc = svc;
+  }
+  levelEnabled(level) {
+    return this.svc.isLevelEnabled(this.name, level);
+  }
+  error(operation, metadata = {}, options = {}) {
+    this.svc.log(this.name, operation, "error", metadata, options);
+  }
+  warn(operation, metadata = {}, options = {}) {
+    this.svc.log(this.name, operation, "warn", metadata, options);
+  }
+  info(operation, metadata = {}, options = {}) {
+    this.svc.log(this.name, operation, "info", metadata, options);
+  }
+  debug(operation, metadata = {}, options = {}) {
+    this.svc.log(this.name, operation, "debug", metadata, options);
+  }
+  trace(operation, metadata = {}, options = {}) {
+    this.svc.log(this.name, operation, "debug", metadata, options);
+  }
+  span(operation, metadata = {}) {
+    const startTime = this.svc.clock.now();
+    this.debug(`${operation}.start`, metadata);
+    return {
+      end: (statusOrMetadata, metadataOrLevel, level = "debug") => {
+        const endTime = this.svc.clock.now();
+        const duration = Math.round(endTime - startTime);
+        let status = null;
+        let meta = {};
+        let finalLevel = level;
+        if (typeof statusOrMetadata === "string") {
+          status = normalizeSpanStatus(statusOrMetadata) || statusOrMetadata;
+          if (metadataOrLevel && typeof metadataOrLevel === "object") {
+            meta = metadataOrLevel;
+          }
+          if (typeof metadataOrLevel === "string") {
+            finalLevel = metadataOrLevel;
+          } else if (typeof level === "string") {
+            finalLevel = level;
+          }
+        } else {
+          meta = statusOrMetadata || {};
+          if (metadataOrLevel && typeof metadataOrLevel === "string") {
+            finalLevel = metadataOrLevel;
+          }
+        }
+        const payload = {
+          ...meta,
+          durationMs: duration
+        };
+        if (status) payload.status = status;
+        this.svc.log(this.name, `${operation}.done`, finalLevel, payload);
+      }
+    };
+  }
+  perf(operation, opts = {}) {
+    const warnMs = opts.warnThresholdMs ?? 16;
+    const errorMs = opts.errorThresholdMs ?? 100;
+    const startTime = this.svc.clock.now();
+    return (metadata = {}) => {
+      const duration = Math.round(this.svc.clock.now() - startTime);
+      let level = "debug";
+      if (duration >= errorMs) level = "error";else if (duration >= warnMs) level = "info";
+      this.svc.log(this.name, `${operation}.perf`, level, {
+        ...metadata,
+        durationMs: duration
+      });
+    };
+  }
+  throttle(operation, intervalMs, metadata = {}, level = "debug") {
+    const now = this.svc.clock.now();
+    let state = this.throttleMap.get(operation);
+    if (!state) {
+      state = {
+        lastTime: 0,
+        skipped: 0
+      };
+      this.throttleMap.set(operation, state);
+    }
+    if (now - state.lastTime < intervalMs) {
+      state.skipped++;
+      return;
+    }
+    const payload = state.skipped > 0 ? {
+      ...metadata,
+      skipped: state.skipped
+    } : metadata;
+    state.lastTime = now;
+    state.skipped = 0;
+    this.svc.log(this.name, operation, level, payload);
+  }
+  count(operation, flushIntervalMs = 5000, metadata = {}, level = "debug") {
+    let state = this.countMap.get(operation);
+    if (!state) {
+      state = {
+        count: 0,
+        firstTime: this.svc.clock.now(),
+        timerId: null
+      };
+      this.countMap.set(operation, state);
+    }
+    state.count++;
+    if (!state.timerId) {
+      state.timerId = setTimeout(() => {
+        const s = this.countMap.get(operation);
+        if (s && s.count > 0) {
+          const elapsed = Math.round(this.svc.clock.now() - s.firstTime);
+          this.svc.log(this.name, `${operation}.summary`, level, {
+            ...metadata,
+            count: s.count,
+            windowMs: elapsed
+          });
+          s.count = 0;
+          s.firstTime = this.svc.clock.now();
+        }
+        if (s) s.timerId = null;
+      }, flushIntervalMs);
+    }
+  }
+}
 
-
-
+// ── LogService (singleton entry) ────────────────────────────────────────────
 
 class LogService {
+  namespaces = new Map();
   constructor(config = LOG_CONFIG) {
     this.clock = logClock;
-    this.namespaces = new Map();
     const consoleConfig = {
       enabled: config.console.enabled,
       useColors: config.console.useColors,
@@ -956,17 +756,7 @@ class LogService {
       namespaceLevels: config.namespaceFiltering?.console || {}
     };
     this.consoleOutput = new ConsoleOutput(consoleConfig);
-    const notificationConfig = {
-      enabled: config.notifications.enabled,
-      ...config.notifications,
-      namespaceLevels: config.namespaceFiltering?.notifications || {}
-    };
-    this.notificationConfig = notificationConfig;
-    this.notificationManager = null;
-    this.notificationOutput = null;
-    configManager.onChange(newConfig => {
-      this.updateConfig(newConfig);
-    });
+    configManager.onChange(newConfig => this.updateConfig(newConfig));
   }
   namespace(name) {
     if (!this.namespaces.has(name)) {
@@ -981,30 +771,13 @@ class LogService {
     return this.consoleOutput.shouldOutput(namespace, level);
   }
   log(namespace, operation, level, metadata = {}, options = {}) {
-    // Fast path: skip all work when neither console nor notifications will output
-    const consoleWill = this.consoleOutput.shouldOutput(namespace, level, options);
-    const notifyWill = this.notificationOutput?.shouldShow(namespace, level, options);
-    if (!consoleWill && !notifyWill) return;
+    if (!this.consoleOutput.shouldOutput(namespace, level, options)) return;
     const timing = this.clock.stamp();
-
-    // Resolve lazy metadata: if a function was passed, call it now
     const resolved = typeof metadata === "function" ? metadata() : metadata;
-    const normalizedOptions = this._normalizeOptions(options);
-    if (consoleWill) {
-      this.consoleOutput.directRender(namespace, operation, level, resolved, timing, normalizedOptions);
-    }
-    if (notifyWill) {
-      this.notificationOutput.show({
-        namespace,
-        operation,
-        level,
-        metadata: resolved,
-        options: normalizedOptions,
-        timing
-      });
-    }
+    const normalizedOptions = this.normalizeOptions(options);
+    this.consoleOutput.directRender(namespace, operation, level, resolved, timing, normalizedOptions);
   }
-  _normalizeOptions(options) {
+  normalizeOptions(options) {
     if (!options || typeof options !== "object") return {};
     const normalized = {
       ...options
@@ -1028,26 +801,6 @@ class LogService {
         namespaceLevels: newConfig.namespaceFiltering?.console || this.consoleOutput.getConfig().namespaceLevels
       };
       this.consoleOutput.updateConfig(consoleConfig);
-    }
-    if (newConfig.notifications || newConfig.namespaceFiltering?.notifications) {
-      this.notificationConfig = {
-        ...this.notificationConfig,
-        ...newConfig.notifications,
-        namespaceLevels: newConfig.namespaceFiltering?.notifications || this.notificationConfig.namespaceLevels
-      };
-      if (this.notificationOutput) {
-        this.notificationOutput.updateConfig(this.notificationConfig);
-      }
-      if (this.notificationManager?.updateConfig) {
-        this.notificationManager.updateConfig(this.notificationConfig);
-      }
-    }
-  }
-  setNotificationManager(manager) {
-    this.notificationManager = manager;
-    if (manager) {
-      this.notificationOutput = new NotificationOutput(this.notificationConfig, manager);
-      manager.updateConfig(this.notificationConfig);
     }
   }
 }
@@ -4116,37 +3869,31 @@ function isRegularSessionBar(date) {
   const hhmm = hour * 60 + minute;
   return hhmm >= REGULAR_SESSION_START_MINUTE && hhmm <= REGULAR_SESSION_END_MINUTE;
 }
-function sanitizeBars(bars) {
-  const dedup = new Map();
-  for (const bar of bars) {
-    if (!bar?.date) continue;
-    if (typeof bar.close !== "number" || !Number.isFinite(bar.close) || bar.close <= 0) continue;
-    if (!isRegularSessionBar(bar.date)) continue;
-    dedup.set(bar.date, {
-      date: bar.date,
-      close: bar.close
-    });
-  }
-  return Array.from(dedup.values()).sort((a, b) => a.date.localeCompare(b.date));
-}
 function normalizeBarDate(date) {
   const tIdx = date.indexOf("T");
   if (tIdx < 0) return date;
   return date.slice(0, tIdx + 6);
 }
-function sanitizeAndNormalizeBars(bars) {
+function sanitize(bars, normalizeKey) {
   const dedup = new Map();
   for (const bar of bars) {
     if (!bar?.date) continue;
     if (typeof bar.close !== "number" || !Number.isFinite(bar.close) || bar.close <= 0) continue;
     if (!isRegularSessionBar(bar.date)) continue;
-    const key = normalizeBarDate(bar.date);
+    const key = normalizeKey(bar.date);
     dedup.set(key, {
       date: key,
       close: bar.close
     });
   }
   return Array.from(dedup.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+const identity = s => s;
+function sanitizeBars(bars) {
+  return sanitize(bars, identity);
+}
+function sanitizeAndNormalizeBars(bars) {
+  return sanitize(bars, normalizeBarDate);
 }
 ;// ./src/backend/computation/beta/singleFactor.ts
 
@@ -5913,42 +5660,6 @@ class ComputeWorkerPool {
   worker = null;
   supported = null;
   initialized = false;
-  stats = new Map();
-  recordWorker(task, elapsedMs) {
-    const s = this.stats.get(task) ?? {
-      workerCalls: 0,
-      fallbackCalls: 0,
-      totalWorkerMs: 0
-    };
-    s.workerCalls += 1;
-    s.totalWorkerMs += elapsedMs;
-    this.stats.set(task, s);
-    if (s.workerCalls === 1) {
-      ComputeWorkerPool_log.info("worker.task.done", {
-        task,
-        elapsedMs: Math.round(elapsedMs)
-      });
-    }
-  }
-  recordFallback(task) {
-    const s = this.stats.get(task) ?? {
-      workerCalls: 0,
-      fallbackCalls: 0,
-      totalWorkerMs: 0
-    };
-    s.fallbackCalls += 1;
-    this.stats.set(task, s);
-  }
-  getStats() {
-    const result = {};
-    for (const [task, s] of this.stats) {
-      result[task] = {
-        ...s,
-        avgWorkerMs: s.workerCalls > 0 ? Math.round(s.totalWorkerMs / s.workerCalls) : 0
-      };
-    }
-    return result;
-  }
   get isAvailable() {
     if (this.supported === null) {
       try {
@@ -5978,183 +5689,83 @@ class ComputeWorkerPool {
       return false;
     }
   }
-  async parseHoldings(rawJson) {
-    if (!this.ensureWorker()) {
-      this.recordFallback("parseHoldings");
-      return parseHoldingsResponse(rawJson);
-    }
-    const t0 = performance.now();
+  async runOrFallback(task, payload, fallback, fallbackLogKey) {
+    if (!this.ensureWorker()) return fallback();
     try {
-      const result = await this.worker.run("parseHoldings", {
-        rawJson
-      });
-      this.recordWorker("parseHoldings", performance.now() - t0);
-      return result;
+      return await this.worker.run(task, payload);
     } catch (err) {
-      ComputeWorkerPool_log.debug("holdings.parse.fallback", {
+      ComputeWorkerPool_log.debug(fallbackLogKey, {
         error: err?.message
       });
-      this.recordFallback("parseHoldings");
-      return parseHoldingsResponse(rawJson);
+      return fallback();
     }
   }
+  async parseHoldings(rawJson) {
+    return this.runOrFallback("parseHoldings", {
+      rawJson
+    }, () => parseHoldingsResponse(rawJson), "holdings.parse.fallback");
+  }
   async processOptionsChain(rawJson, openingId, symbol, selectionContext) {
-    // Convert Map to plain object for structured clone transfer
     const selCtx = selectionContext ? {
       mode: selectionContext.mode,
       byRequestDate: selectionContext.byRequestDate ? Object.fromEntries(selectionContext.byRequestDate) : undefined
     } : undefined;
-    if (!this.ensureWorker()) {
-      this.recordFallback("processOptionsChain");
+    return this.runOrFallback("processOptionsChain", {
+      rawJson,
+      openingId,
+      symbol,
+      selectionContext: selCtx
+    }, () => {
       const parsed = parseOptionChainsResponse(rawJson);
       const etlRows = buildExpiryMetricsRows(parsed, openingId, symbol, selectionContext);
       return {
         parsed,
         etlRows
       };
-    }
-    const t0 = performance.now();
-    try {
-      const result = await this.worker.run("processOptionsChain", {
-        rawJson,
-        openingId,
-        symbol,
-        selectionContext: selCtx
-      });
-      this.recordWorker("processOptionsChain", performance.now() - t0);
-      return result;
-    } catch (err) {
-      ComputeWorkerPool_log.debug("optionsChain.process.fallback", {
-        error: err?.message
-      });
-      this.recordFallback("processOptionsChain");
-      const parsed = parseOptionChainsResponse(rawJson);
-      const etlRows = buildExpiryMetricsRows(parsed, openingId, symbol, selectionContext);
-      return {
-        parsed,
-        etlRows
-      };
-    }
+    }, "optionsChain.process.fallback");
   }
   async buildExpiryMetrics(parsedResponse, openingId, symbol, selectionContext) {
     const selCtx = selectionContext ? {
       mode: selectionContext.mode,
       byRequestDate: selectionContext.byRequestDate ? Object.fromEntries(selectionContext.byRequestDate) : undefined
     } : undefined;
-    if (!this.ensureWorker()) {
-      this.recordFallback("buildExpiryMetrics");
-      return buildExpiryMetricsRows(parsedResponse, openingId, symbol, selectionContext);
-    }
-    const t0 = performance.now();
-    try {
-      const result = await this.worker.run("buildExpiryMetrics", {
-        parsedResponse,
-        openingId,
-        symbol,
-        selectionContext: selCtx
-      });
-      this.recordWorker("buildExpiryMetrics", performance.now() - t0);
-      return result;
-    } catch (err) {
-      ComputeWorkerPool_log.debug("expiryMetrics.build.fallback", {
-        error: err?.message
-      });
-      this.recordFallback("buildExpiryMetrics");
-      return buildExpiryMetricsRows(parsedResponse, openingId, symbol, selectionContext);
-    }
+    return this.runOrFallback("buildExpiryMetrics", {
+      parsedResponse,
+      openingId,
+      symbol,
+      selectionContext: selCtx
+    }, () => buildExpiryMetricsRows(parsedResponse, openingId, symbol, selectionContext), "expiryMetrics.build.fallback");
   }
   async parseOptionsChain(rawJson) {
-    if (!this.ensureWorker()) {
-      this.recordFallback("parseOptionsChain");
-      return parseOptionChainsResponse(rawJson);
-    }
-    const t0 = performance.now();
-    try {
-      const result = await this.worker.run("parseOptionsChain", {
-        rawJson
-      });
-      this.recordWorker("parseOptionsChain", performance.now() - t0);
-      return result;
-    } catch (err) {
-      ComputeWorkerPool_log.debug("optionsChain.parse.fallback", {
-        error: err?.message
-      });
-      this.recordFallback("parseOptionsChain");
-      return parseOptionChainsResponse(rawJson);
-    }
+    return this.runOrFallback("parseOptionsChain", {
+      rawJson
+    }, () => parseOptionChainsResponse(rawJson), "optionsChain.parse.fallback");
   }
   async parseQuotes(rawJson) {
-    if (!this.ensureWorker()) {
-      this.recordFallback("parseQuotes");
-      return parseQuotesResponse(rawJson);
-    }
-    const t0 = performance.now();
-    try {
-      const result = await this.worker.run("parseQuotes", {
-        rawJson
-      });
-      this.recordWorker("parseQuotes", performance.now() - t0);
-      return result;
-    } catch (err) {
-      ComputeWorkerPool_log.debug("quotes.parse.fallback", {
-        error: err?.message
-      });
-      this.recordFallback("parseQuotes");
-      return parseQuotesResponse(rawJson);
-    }
+    return this.runOrFallback("parseQuotes", {
+      rawJson
+    }, () => parseQuotesResponse(rawJson), "quotes.parse.fallback");
   }
   async computeBeta(stockBars, marketBars, horizon) {
-    if (!this.ensureWorker()) {
-      this.recordFallback("computeBeta");
+    return this.runOrFallback("computeBeta", {
+      stockBars,
+      marketBars,
+      horizon
+    }, () => {
       const {
         stockCloses,
         marketCloses
       } = alignBarsByDate(stockBars, marketBars);
       return computeBeta(computeLogReturns(stockCloses), computeLogReturns(marketCloses), horizon);
-    }
-    const t0 = performance.now();
-    try {
-      const result = await this.worker.run("computeBeta", {
-        stockBars,
-        marketBars,
-        horizon
-      });
-      this.recordWorker("computeBeta", performance.now() - t0);
-      return result;
-    } catch (err) {
-      ComputeWorkerPool_log.debug("beta.compute.fallback", {
-        error: err?.message
-      });
-      this.recordFallback("computeBeta");
-      const {
-        stockCloses,
-        marketCloses
-      } = alignBarsByDate(stockBars, marketBars);
-      return computeBeta(computeLogReturns(stockCloses), computeLogReturns(marketCloses), horizon);
-    }
+    }, "beta.compute.fallback");
   }
   async computeRollingBeta(stockBars, marketBars, windowSize, options) {
-    if (!this.ensureWorker()) {
-      this.recordFallback("computeRollingBeta");
-      return computeRollingBeta(stockBars, marketBars, windowSize, options);
-    }
-    const t0 = performance.now();
-    try {
-      const result = await this.worker.run("computeRollingBeta", {
-        stockBars,
-        marketBars,
-        windowSize,
-        options
-      });
-      this.recordWorker("computeRollingBeta", performance.now() - t0);
-      return result;
-    } catch (err) {
-      ComputeWorkerPool_log.debug("rollingBeta.compute.fallback", {
-        error: err?.message
-      });
-      this.recordFallback("computeRollingBeta");
-      return computeRollingBeta(stockBars, marketBars, windowSize, options);
-    }
+    return this.runOrFallback("computeRollingBeta", {
+      stockBars,
+      marketBars,
+      windowSize,
+      options
+    }, () => computeRollingBeta(stockBars, marketBars, windowSize, options), "rollingBeta.compute.fallback");
   }
   destroy() {
     if (this.worker) {
@@ -8984,67 +8595,56 @@ function buildBottomTabBar(changeView) {
  * Generic typed event bus with optional replay support.
  * Domain-agnostic — parameterize with your own event map.
  */
-class TypedEventBus {
-  listeners = new Map();
-  latestValues = new Map();
 
-  /**
-   * Subscribe to an event. Returns an unsubscribe function.
-   * If `replay` is true and the event was previously emitted,
-   * the callback is invoked immediately with the last value.
-   */
-  on(event, cb, options) {
-    let set = this.listeners.get(event);
-    if (!set) {
-      set = new Set();
-      this.listeners.set(event, set);
-    }
-    set.add(cb);
-    if (options?.replay && this.latestValues.has(event)) {
-      try {
-        cb(this.latestValues.get(event));
-      } catch {
-        // Swallow replay errors — caller is responsible for its own error handling.
+function createEventBus() {
+  const listeners = new Map();
+  const latestValues = new Map();
+  return {
+    on(event, cb, options) {
+      let set = listeners.get(event);
+      if (!set) {
+        set = new Set();
+        listeners.set(event, set);
       }
-    }
-    return () => {
+      set.add(cb);
+      if (options?.replay && latestValues.has(event)) {
+        try {
+          cb(latestValues.get(event));
+        } catch {
+          // Swallow replay errors — caller is responsible for its own error handling.
+        }
+      }
+      return () => {
+        set.delete(cb);
+        if (set.size === 0) listeners.delete(event);
+      };
+    },
+    emit(event, data) {
+      latestValues.set(event, data);
+      const set = listeners.get(event);
+      if (!set) return;
+      for (const cb of set) {
+        try {
+          cb(data);
+        } catch {
+          // Listeners must not throw into the emitter loop.
+        }
+      }
+    },
+    off(event, cb) {
+      const set = listeners.get(event);
+      if (!set) return;
       set.delete(cb);
-      if (set.size === 0) this.listeners.delete(event);
-    };
-  }
-
-  /** Emit an event to all subscribers. Stores the value for replay. */
-  emit(event, data) {
-    this.latestValues.set(event, data);
-    const set = this.listeners.get(event);
-    if (!set) return;
-    for (const cb of set) {
-      try {
-        cb(data);
-      } catch {
-        // Listeners must not throw into the emitter loop.
-      }
+      if (set.size === 0) listeners.delete(event);
+    },
+    getLatest(event) {
+      return latestValues.get(event);
+    },
+    clear() {
+      listeners.clear();
+      latestValues.clear();
     }
-  }
-
-  /** Remove a specific listener. */
-  off(event, cb) {
-    const set = this.listeners.get(event);
-    if (!set) return;
-    set.delete(cb);
-    if (set.size === 0) this.listeners.delete(event);
-  }
-
-  /** Get the latest emitted value for an event (or undefined). */
-  getLatest(event) {
-    return this.latestValues.get(event);
-  }
-
-  /** Remove all listeners and stored values. */
-  clear() {
-    this.listeners.clear();
-    this.latestValues.clear();
-  }
+  };
 }
 ;// ./src/shared/utils/async/Clock.ts
 const systemClock = {
@@ -9743,131 +9343,129 @@ class PortfolioAggregator {
 }
 ;// ./src/backend/computation/holdings/aggregators/ScenarioCalculator.ts
 
-class ScenarioCalculator {
-  isSummaryRow(meta) {
-    return !!meta.underlyingKey && !isOption(meta.row) && meta.parentEquitySymbol == null;
+function isSummaryRow(meta) {
+  return !!meta.underlyingKey && !isOption(meta.row) && meta.parentEquitySymbol == null;
+}
+function classifyRowType(derived, meta) {
+  const isOptionRow = isOption(meta.row);
+  const hasUnderlying = !!meta.underlyingKey;
+  if (isOptionRow) {
+    derived.rowType = "Option";
+  } else if (hasUnderlying) {
+    derived.rowType = "Equity";
+  } else {
+    derived.rowType = "Other";
   }
-  enrichWithScenarios(holdingsIndex, derivedByHoldings, underlyingAgg) {
-    for (const [holdingsKey, meta] of holdingsIndex.entries()) {
-      const derived = derivedByHoldings[holdingsKey];
-      if (!derived) continue;
-      const underlyingKey = meta.underlyingKey;
-      const underlyingPrice = underlyingKey ? underlyingAgg[underlyingKey]?.underlyingPrice ?? null : null;
-      this.classifyRowType(derived, meta);
-      this.computeScenarioPnL(derived, underlyingPrice);
-      this.computeDeltaNotional(derived, underlyingPrice);
-      if (this.isSummaryRow(meta) && underlyingKey) {
-        this.enrichSummaryRow(derived, underlyingAgg[underlyingKey]);
-      } else {
-        this.clearSummaryFields(derived, meta);
-      }
-    }
+}
+function computeCarryToStress(thetaPerDay, pnlUp1PctDol, pnlDn1PctDol) {
+  const upAbs = pnlUp1PctDol != null ? Math.abs(pnlUp1PctDol) : null;
+  const dnAbs = pnlDn1PctDol != null ? Math.abs(pnlDn1PctDol) : null;
+  const maxStress = Math.max(upAbs ?? 0, dnAbs ?? 0);
+  if (thetaPerDay == null || maxStress === 0) return null;
+  return thetaPerDay / maxStress;
+}
+function computeScenarioPnL(derived, underlyingPrice) {
+  if (underlyingPrice == null) {
+    derived.pnlUp1PctDol = null;
+    derived.pnlDn1PctDol = null;
+    derived.carryToStress = null;
+    return;
   }
-  classifyRowType(derived, meta) {
-    const isOptionRow = isOption(meta.row);
-    const hasUnderlying = !!meta.underlyingKey;
-    if (isOptionRow) {
-      derived.rowType = "Option";
-    } else if (hasUnderlying) {
-      derived.rowType = "Equity";
+  const du = underlyingPrice * 0.01; // 1% move
+  const ds = derived.deltaShares ?? null;
+  const gs = derived.gammaSharesPerDol ?? null;
+  const gammaTerm = gs != null ? 0.5 * gs * du * du : 0;
+  derived.pnlUp1PctDol = ds != null ? ds * du + gammaTerm : null;
+  derived.pnlDn1PctDol = ds != null ? -ds * du + gammaTerm : null;
+  derived.convexityDol = derived.pnlUp1PctDol != null && derived.pnlDn1PctDol != null ? derived.pnlUp1PctDol + derived.pnlDn1PctDol : null;
+  derived.carryToStress = computeCarryToStress(derived.thetaPerDay ?? null, derived.pnlUp1PctDol, derived.pnlDn1PctDol);
+}
+function computeDeltaNotional(derived, underlyingPrice) {
+  derived.deltaNotionalDol = derived.deltaShares != null && underlyingPrice != null ? derived.deltaShares * underlyingPrice : null;
+  const margin = derived.marginReqDol ?? null;
+  derived.deltaNotionalPerMargin = derived.deltaNotionalDol != null && margin != null && margin !== 0 ? derived.deltaNotionalDol / margin : null;
+}
+function enrichSummaryRow(derived, underlyingAgg) {
+  if (!underlyingAgg) return;
+  derived.optDeltaShares = underlyingAgg.totalOptDeltaShares ?? null;
+  derived.totalGammaByUnderlying = underlyingAgg.totalGammaSharesPerDol ?? null;
+  derived.totalThetaByUnderlying = underlyingAgg.totalThetaPerDay ?? null;
+  derived.totalVegaByUnderlying = underlyingAgg.totalVegaPerVolPoint ?? null;
+  derived.totalRhoByUnderlying = underlyingAgg.totalRhoPer1pctRate ?? null;
+  derived.totalMarginReqByUnderlying = underlyingAgg.totalMarginReqDol ?? null;
+  derived.gammaDensityNearTerm = underlyingAgg.nearTermGammaAbs ?? null;
+  derived.gammaDensityWeighted = underlyingAgg.nearTermGammaWeighted ?? null;
+  derived.absGammaSharesPerDol = underlyingAgg.absGammaSharesPerDol ?? null;
+  derived.absVegaPerVolPoint = underlyingAgg.absVegaPerVolPoint ?? null;
+  derived.carryPerVega = underlyingAgg.carryPerVega ?? null;
+  derived.carryPerGamma = underlyingAgg.carryPerGamma ?? null;
+  derived.thetaOnMargin = underlyingAgg.thetaOnMargin ?? null;
+  derived.vegaOnMargin = underlyingAgg.vegaOnMargin ?? null;
+  derived.gammaOnMargin = underlyingAgg.gammaOnMargin ?? null;
+  derived.carryToStress = computeCarryToStress(derived.totalThetaByUnderlying ?? null, underlyingAgg.uPnlUp1PctDol ?? derived.uPnlUp1PctDol ?? derived.pnlUp1PctDol ?? null, underlyingAgg.uPnlDn1PctDol ?? derived.uPnlDn1PctDol ?? derived.pnlDn1PctDol ?? null);
+}
+function clearSummaryFields(derived, meta) {
+  derived.totalGammaByUnderlying = null;
+  derived.totalThetaByUnderlying = null;
+  derived.totalVegaByUnderlying = null;
+  derived.totalMarginReqByUnderlying = null;
+  if (!isOption(meta.row)) {
+    derived.gammaDensityNearTerm = null;
+    derived.gammaDensityWeighted = null;
+  }
+  if (!isOption(meta.row)) {
+    derived.optDeltaShares = null;
+  }
+}
+function enrichWithScenarios(holdingsIndex, derivedByHoldings, underlyingAgg) {
+  for (const [holdingsKey, meta] of holdingsIndex.entries()) {
+    const derived = derivedByHoldings[holdingsKey];
+    if (!derived) continue;
+    const underlyingKey = meta.underlyingKey;
+    const underlyingPrice = underlyingKey ? underlyingAgg[underlyingKey]?.underlyingPrice ?? null : null;
+    classifyRowType(derived, meta);
+    computeScenarioPnL(derived, underlyingPrice);
+    computeDeltaNotional(derived, underlyingPrice);
+    if (isSummaryRow(meta) && underlyingKey) {
+      enrichSummaryRow(derived, underlyingAgg[underlyingKey]);
     } else {
-      derived.rowType = "Other";
+      clearSummaryFields(derived, meta);
     }
   }
-  computeScenarioPnL(derived, underlyingPrice) {
-    if (underlyingPrice == null) {
-      derived.pnlUp1PctDol = null;
-      derived.pnlDn1PctDol = null;
-      derived.carryToStress = null;
-      return;
-    }
-    const du = underlyingPrice * 0.01; // 1% move
-    const ds = derived.deltaShares ?? null;
-    const gs = derived.gammaSharesPerDol ?? null;
-    const gammaTerm = gs != null ? 0.5 * gs * du * du : 0;
-    derived.pnlUp1PctDol = ds != null ? ds * du + gammaTerm : null;
-    derived.pnlDn1PctDol = ds != null ? -ds * du + gammaTerm : null;
-    derived.convexityDol = derived.pnlUp1PctDol != null && derived.pnlDn1PctDol != null ? derived.pnlUp1PctDol + derived.pnlDn1PctDol : null;
-    derived.carryToStress = this.computeCarryToStress(derived.thetaPerDay ?? null, derived.pnlUp1PctDol, derived.pnlDn1PctDol);
-  }
-  computeDeltaNotional(derived, underlyingPrice) {
-    derived.deltaNotionalDol = derived.deltaShares != null && underlyingPrice != null ? derived.deltaShares * underlyingPrice : null;
-    const margin = derived.marginReqDol ?? null;
-    derived.deltaNotionalPerMargin = derived.deltaNotionalDol != null && margin != null && margin !== 0 ? derived.deltaNotionalDol / margin : null;
-  }
-  computeCarryToStress(thetaPerDay, pnlUp1PctDol, pnlDn1PctDol) {
-    const upAbs = pnlUp1PctDol != null ? Math.abs(pnlUp1PctDol) : null;
-    const dnAbs = pnlDn1PctDol != null ? Math.abs(pnlDn1PctDol) : null;
-    const maxStress = Math.max(upAbs ?? 0, dnAbs ?? 0);
-    if (thetaPerDay == null || maxStress === 0) return null;
-    return thetaPerDay / maxStress;
-  }
-  enrichSummaryRow(derived, underlyingAgg) {
-    if (!underlyingAgg) return;
-    derived.optDeltaShares = underlyingAgg.totalOptDeltaShares ?? null;
-    derived.totalGammaByUnderlying = underlyingAgg.totalGammaSharesPerDol ?? null;
-    derived.totalThetaByUnderlying = underlyingAgg.totalThetaPerDay ?? null;
-    derived.totalVegaByUnderlying = underlyingAgg.totalVegaPerVolPoint ?? null;
-    derived.totalRhoByUnderlying = underlyingAgg.totalRhoPer1pctRate ?? null;
-    derived.totalMarginReqByUnderlying = underlyingAgg.totalMarginReqDol ?? null;
-    derived.gammaDensityNearTerm = underlyingAgg.nearTermGammaAbs ?? null;
-    derived.gammaDensityWeighted = underlyingAgg.nearTermGammaWeighted ?? null;
-    derived.absGammaSharesPerDol = underlyingAgg.absGammaSharesPerDol ?? null;
-    derived.absVegaPerVolPoint = underlyingAgg.absVegaPerVolPoint ?? null;
-    derived.carryPerVega = underlyingAgg.carryPerVega ?? null;
-    derived.carryPerGamma = underlyingAgg.carryPerGamma ?? null;
-    derived.thetaOnMargin = underlyingAgg.thetaOnMargin ?? null;
-    derived.vegaOnMargin = underlyingAgg.vegaOnMargin ?? null;
-    derived.gammaOnMargin = underlyingAgg.gammaOnMargin ?? null;
-    derived.carryToStress = this.computeCarryToStress(derived.totalThetaByUnderlying ?? null, underlyingAgg.uPnlUp1PctDol ?? derived.uPnlUp1PctDol ?? derived.pnlUp1PctDol ?? null, underlyingAgg.uPnlDn1PctDol ?? derived.uPnlDn1PctDol ?? derived.pnlDn1PctDol ?? null);
-  }
-  clearSummaryFields(derived, meta) {
-    derived.totalGammaByUnderlying = null;
-    derived.totalThetaByUnderlying = null;
-    derived.totalVegaByUnderlying = null;
-    derived.totalMarginReqByUnderlying = null;
-    if (!isOption(meta.row)) {
-      derived.gammaDensityNearTerm = null;
-      derived.gammaDensityWeighted = null;
-    }
-    if (!isOption(meta.row)) {
-      derived.optDeltaShares = null;
+}
+function refreshSummaryRowsFromUnderlyingAgg(holdingsIndex, derivedByHoldings, underlyingAgg) {
+  for (const [holdingsKey, meta] of holdingsIndex.entries()) {
+    const derived = derivedByHoldings[holdingsKey];
+    if (!derived) continue;
+    if (isSummaryRow(meta) && meta.underlyingKey) {
+      const aggRow = underlyingAgg[meta.underlyingKey];
+      enrichSummaryRow(derived, aggRow);
+      derived.uPnlUp1PctDol = aggRow?.uPnlUp1PctDol ?? derived.uPnlUp1PctDol ?? null;
+      derived.uPnlDn1PctDol = aggRow?.uPnlDn1PctDol ?? derived.uPnlDn1PctDol ?? null;
+      derived.carryToStress = computeCarryToStress(derived.totalThetaByUnderlying ?? derived.thetaPerDay ?? null, derived.uPnlUp1PctDol ?? derived.pnlUp1PctDol ?? null, derived.uPnlDn1PctDol ?? derived.pnlDn1PctDol ?? null);
+    } else {
+      derived.uPnlUp1PctDol = null;
+      derived.uPnlDn1PctDol = null;
     }
   }
-  refreshSummaryRowsFromUnderlyingAgg(holdingsIndex, derivedByHoldings, underlyingAgg) {
-    for (const [holdingsKey, meta] of holdingsIndex.entries()) {
-      const derived = derivedByHoldings[holdingsKey];
-      if (!derived) continue;
-      if (this.isSummaryRow(meta) && meta.underlyingKey) {
-        const aggRow = underlyingAgg[meta.underlyingKey];
-        this.enrichSummaryRow(derived, aggRow);
-        derived.uPnlUp1PctDol = aggRow?.uPnlUp1PctDol ?? derived.uPnlUp1PctDol ?? null;
-        derived.uPnlDn1PctDol = aggRow?.uPnlDn1PctDol ?? derived.uPnlDn1PctDol ?? null;
-        derived.carryToStress = this.computeCarryToStress(derived.totalThetaByUnderlying ?? derived.thetaPerDay ?? null, derived.uPnlUp1PctDol ?? derived.pnlUp1PctDol ?? null, derived.uPnlDn1PctDol ?? derived.pnlDn1PctDol ?? null);
-      } else {
-        derived.uPnlUp1PctDol = null;
-        derived.uPnlDn1PctDol = null;
-      }
+}
+function enrichWithConcentration(holdingsIndex, derivedByHoldings, portfolioAgg) {
+  const totalAbsDeltaNotional = portfolioAgg?.totalAbsDeltaNotionalDol ?? null;
+  const totalAbsVega = portfolioAgg?.totalAbsVegaPerVolPoint ?? null;
+  for (const [holdingsKey] of holdingsIndex.entries()) {
+    const derived = derivedByHoldings[holdingsKey];
+    if (!derived) continue;
+    const rowDeltaNotional = derived.deltaNotionalDol ?? null;
+    if (rowDeltaNotional != null && totalAbsDeltaNotional != null && totalAbsDeltaNotional !== 0) {
+      derived.deltaNotionalConcentrationPct = Math.abs(rowDeltaNotional) / totalAbsDeltaNotional;
+    } else {
+      derived.deltaNotionalConcentrationPct = null;
     }
-  }
-  enrichWithConcentration(holdingsIndex, derivedByHoldings, portfolioAgg) {
-    const totalAbsDeltaNotional = portfolioAgg?.totalAbsDeltaNotionalDol ?? null;
-    const totalAbsVega = portfolioAgg?.totalAbsVegaPerVolPoint ?? null;
-    for (const [holdingsKey] of holdingsIndex.entries()) {
-      const derived = derivedByHoldings[holdingsKey];
-      if (!derived) continue;
-      const rowDeltaNotional = derived.deltaNotionalDol ?? null;
-      if (rowDeltaNotional != null && totalAbsDeltaNotional != null && totalAbsDeltaNotional !== 0) {
-        derived.deltaNotionalConcentrationPct = Math.abs(rowDeltaNotional) / totalAbsDeltaNotional;
-      } else {
-        derived.deltaNotionalConcentrationPct = null;
-      }
-      const rowAbsVega = derived.absVegaPerVolPoint ?? (derived.vegaPerVolPoint != null ? Math.abs(derived.vegaPerVolPoint) : null);
-      if (rowAbsVega != null && totalAbsVega != null && totalAbsVega !== 0) {
-        derived.vegaConcentrationPct = rowAbsVega / totalAbsVega;
-      } else {
-        derived.vegaConcentrationPct = null;
-      }
+    const rowAbsVega = derived.absVegaPerVolPoint ?? (derived.vegaPerVolPoint != null ? Math.abs(derived.vegaPerVolPoint) : null);
+    if (rowAbsVega != null && totalAbsVega != null && totalAbsVega !== 0) {
+      derived.vegaConcentrationPct = rowAbsVega / totalAbsVega;
+    } else {
+      derived.vegaConcentrationPct = null;
     }
   }
 }
@@ -10318,7 +9916,6 @@ class DerivedStatePipeline {
   constructor() {
     this.underlyingAgg = new UnderlyingAggregator();
     this.portfolioAgg = new PortfolioAggregator();
-    this.scenarioCalc = new ScenarioCalculator();
     this.hierarchyBuilder = new HierarchyBuilder();
   }
   buildHierarchicalHoldings(holdings, holdingsIndex, derivedState, warningState) {
@@ -10338,7 +9935,7 @@ class DerivedStatePipeline {
       derivedState.byHoldingsKey[holdingsKey] = computeDerivedMetrics(meta.row);
     }
     derivedState.byUnderlying = this.underlyingAgg.buildUnderlyingAgg(holdingsIndex, derivedState.byHoldingsKey);
-    this.scenarioCalc.enrichWithScenarios(holdingsIndex, derivedState.byHoldingsKey, derivedState.byUnderlying);
+    enrichWithScenarios(holdingsIndex, derivedState.byHoldingsKey, derivedState.byUnderlying);
     this.underlyingAgg.enrichWithScenarioPnL(derivedState.byUnderlying, holdingsIndex, derivedState.byHoldingsKey);
 
     // computePortfolioAgg reads uPnlUp/Dn from underlyingAgg directly,
@@ -10348,8 +9945,8 @@ class DerivedStatePipeline {
 
     // Single pass: propagates all underlyingAgg data (PnL + portfolio context)
     // to summary rows after all upstream mutations are complete.
-    this.scenarioCalc.refreshSummaryRowsFromUnderlyingAgg(holdingsIndex, derivedState.byHoldingsKey, derivedState.byUnderlying);
-    this.scenarioCalc.enrichWithConcentration(holdingsIndex, derivedState.byHoldingsKey, derivedState.portfolioAgg);
+    refreshSummaryRowsFromUnderlyingAgg(holdingsIndex, derivedState.byHoldingsKey, derivedState.byUnderlying);
+    enrichWithConcentration(holdingsIndex, derivedState.byHoldingsKey, derivedState.portfolioAgg);
     normalizeNumbersDeepInPlace(derivedState, 6);
     span.end("ok", {
       holdingsKeys: Object.keys(derivedState.byHoldingsKey).length,
@@ -10385,15 +9982,15 @@ class DerivedStatePipeline {
       const meta = holdingsIndex.get(holdingsKey);
       if (!meta) continue;
       const derived = existingDerivedState.byHoldingsKey[holdingsKey];
-      this.scenarioCalc.enrichWithScenarios(new Map([[holdingsKey, meta]]), {
+      enrichWithScenarios(new Map([[holdingsKey, meta]]), {
         [holdingsKey]: derived
       }, existingDerivedState.byUnderlying);
     }
     this.underlyingAgg.enrichWithScenarioPnL(existingDerivedState.byUnderlying, holdingsIndex, existingDerivedState.byHoldingsKey);
     existingDerivedState.portfolioAgg = this.portfolioAgg.computePortfolioAgg(holdingsIndex, existingDerivedState.byHoldingsKey, existingDerivedState.byUnderlying);
     this.underlyingAgg.applyPortfolioContext(existingDerivedState.byUnderlying, existingDerivedState.portfolioAgg);
-    this.scenarioCalc.refreshSummaryRowsFromUnderlyingAgg(holdingsIndex, existingDerivedState.byHoldingsKey, existingDerivedState.byUnderlying);
-    this.scenarioCalc.enrichWithConcentration(holdingsIndex, existingDerivedState.byHoldingsKey, existingDerivedState.portfolioAgg);
+    refreshSummaryRowsFromUnderlyingAgg(holdingsIndex, existingDerivedState.byHoldingsKey, existingDerivedState.byUnderlying);
+    enrichWithConcentration(holdingsIndex, existingDerivedState.byHoldingsKey, existingDerivedState.portfolioAgg);
     existingDerivedState.asOfTs = Date.now();
 
     // Only normalize touched subtrees instead of the entire derived state
@@ -14383,6 +13980,27 @@ function txComplete(tx) {
     tx.onabort = () => reject(tx.error ?? new DOMException("Transaction aborted", "AbortError"));
   });
 }
+
+/** Single-op read transaction. The callback returns the IDBRequest to await. */
+function readTx(db, storeName, fn) {
+  const tx = db.transaction(storeName, "readonly");
+  return txPromise(fn(tx.objectStore(storeName)));
+}
+
+/** Write transaction with no return value. The callback queues ops on the store. */
+async function writeTx(db, storeName, fn) {
+  const tx = db.transaction(storeName, "readwrite");
+  await fn(tx.objectStore(storeName));
+  await txComplete(tx);
+}
+
+/** Write transaction returning a value (e.g. read-then-write). */
+async function writeTxResult(db, storeName, fn) {
+  const tx = db.transaction(storeName, "readwrite");
+  const result = await fn(tx.objectStore(storeName));
+  await txComplete(tx);
+  return result;
+}
 ;// ./src/backend/core/db/core/KVStore.ts
 
 
@@ -14867,6 +14485,14 @@ function extractNews(apiData) {
 
 
 const BarronsFetcher_log = logService.namespace("network");
+function cardDataPointsToRecord(card) {
+  if (!card?.dataPoints) return null;
+  const obj = {};
+  for (const dp of card.dataPoints) {
+    obj[dp.key] = dp.value?.primaryValue ?? formattedValue(dp.value) ?? "";
+  }
+  return obj;
+}
 // ── News-only fetch (lightweight, for the news page) ────────────────────────
 
 async function fetchBarronsNewsOnly(symbol) {
@@ -15054,15 +14680,7 @@ async function fetchBarronsData(symbol) {
   // Financial ratios
   const basicTablesNamed = cpPP.BasicTableCard?.length ? cpPP.BasicTableCard : [];
   const basicTables = basicTablesFromBlocks.length ? basicTablesFromBlocks : basicTablesNamed;
-  const getTable = name => {
-    const card = basicTables.find(c => c.description?.toUpperCase() === name);
-    if (!card?.dataPoints) return null;
-    const obj = {};
-    for (const dp of card.dataPoints) {
-      obj[dp.key] = dp.value?.primaryValue ?? formattedValue(dp.value) ?? "";
-    }
-    return obj;
-  };
+  const getTable = name => cardDataPointsToRecord(basicTables.find(c => c.description?.toUpperCase() === name));
   const ratios = {
     valuation: getTable("VALUATION"),
     profitability: getTable("PROFITABILITY"),
@@ -15925,359 +15543,339 @@ async function* streamOpenAI(ctx, options) {
     }
   }
 }
+;// ./src/backend/core/network/llm/anthropicProvider.ts
+
+const ENDPOINT = "https://api.anthropic.com/v1/messages";
+function buildBody(ctx, options, stream) {
+  const body = {
+    model: ctx.model,
+    max_tokens: options.maxTokens ?? ctx.maxTokens,
+    temperature: options.temperature ?? ctx.temperature,
+    system: options.systemPrompt,
+    messages: options.messages
+  };
+  if (stream) body.stream = true;
+  return body;
+}
+function buildHeaders(ctx) {
+  return {
+    "x-api-key": ctx.apiKey,
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json"
+  };
+}
+async function completeAnthropic(ctx, options) {
+  const response = await ctx.fetchWithTimeout(ENDPOINT, {
+    method: "POST",
+    headers: buildHeaders(ctx),
+    body: JSON.stringify(buildBody(ctx, options, false))
+  }, 180_000, "Anthropic");
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Anthropic API error ${response.status}: ${text.slice(0, 300)}`);
+  }
+  const parsed = await response.json();
+  const text = parsed.content?.[0]?.text ?? "";
+  const tokens = (parsed.usage?.input_tokens ?? 0) + (parsed.usage?.output_tokens ?? 0);
+  return {
+    content: text,
+    tokensUsed: tokens,
+    model: parsed.model ?? ctx.model
+  };
+}
+
+/**
+ * Anthropic streaming via /v1/messages with stream: true.
+ */
+async function* streamAnthropic(ctx, options) {
+  const response = await ctx.fetchStreaming(ENDPOINT, {
+    method: "POST",
+    headers: buildHeaders(ctx),
+    body: JSON.stringify(buildBody(ctx, options, true))
+  }, options.signal, "Anthropic");
+  let totalTokens = 0;
+  for await (const data of parseSSEStream(response, options.signal)) {
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (event.type === "content_block_delta") {
+      const delta = event.delta;
+      if (delta?.type === "text_delta") {
+        yield {
+          type: "text",
+          delta: delta.text ?? ""
+        };
+      } else if (delta?.type === "thinking_delta") {
+        yield {
+          type: "thinking",
+          delta: delta.thinking ?? ""
+        };
+      }
+    } else if (event.type === "message_delta") {
+      const usage = event.usage;
+      totalTokens = (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0);
+    } else if (event.type === "message_stop") {
+      yield {
+        type: "done",
+        tokensUsed: totalTokens
+      };
+    }
+  }
+}
+;// ./src/backend/core/network/llm/geminiProvider.ts
+
+function geminiProvider_buildBody(ctx, options, webSearch) {
+  const contents = options.messages.map(m => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{
+      text: m.content
+    }]
+  }));
+  const body = {
+    systemInstruction: {
+      parts: [{
+        text: options.systemPrompt
+      }]
+    },
+    contents,
+    generationConfig: {
+      temperature: options.temperature ?? ctx.temperature,
+      maxOutputTokens: options.maxTokens ?? ctx.maxTokens
+    }
+  };
+  if (webSearch) body.tools = [{
+    google_search: {}
+  }];
+  return body;
+}
+function buildUrl(ctx, streaming) {
+  const op = streaming ? "streamGenerateContent?alt=sse" : "generateContent";
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ctx.model)}:${op}${streaming ? "&" : "?"}key=${encodeURIComponent(ctx.apiKey)}`;
+}
+async function completeGemini(ctx, options) {
+  const response = await ctx.fetchWithTimeout(buildUrl(ctx, false), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(geminiProvider_buildBody(ctx, options, false))
+  }, 180_000, "Google");
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Google API error ${response.status}: ${text.slice(0, 300)}`);
+  }
+  const parsed = await response.json();
+  const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  const tokens = parsed.usageMetadata?.totalTokenCount ?? 0;
+  return {
+    content: text,
+    tokensUsed: tokens,
+    model: ctx.model
+  };
+}
+
+/**
+ * Gemini streaming via streamGenerateContent?alt=sse.
+ */
+async function* streamGemini(ctx, options) {
+  const response = await ctx.fetchStreaming(buildUrl(ctx, true), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(geminiProvider_buildBody(ctx, options, !!options.webSearch))
+  }, options.signal, "Google");
+  let totalTokens = 0;
+  let lastGroundingMetadata = null;
+  for await (const data of parseSSEStream(response, options.signal)) {
+    let event;
+    try {
+      event = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    const candidates = event.candidates;
+    const candidate = candidates?.[0];
+    const content = candidate?.content;
+    const parts = content?.parts;
+    if (parts) {
+      for (const part of parts) {
+        if (part.thought) {
+          yield {
+            type: "thinking",
+            delta: part.text ?? ""
+          };
+        } else if (part.text) {
+          yield {
+            type: "text",
+            delta: part.text
+          };
+        }
+      }
+    }
+    const usageMeta = event.usageMetadata;
+    if (usageMeta?.totalTokenCount) {
+      totalTokens = usageMeta.totalTokenCount;
+    }
+    if (candidate?.groundingMetadata) {
+      lastGroundingMetadata = candidate.groundingMetadata;
+    }
+  }
+  if (lastGroundingMetadata) {
+    const chunks = lastGroundingMetadata.groundingChunks ?? [];
+    for (const chunk of chunks) {
+      if (chunk.web?.uri) {
+        yield {
+          type: "annotation",
+          annotation: {
+            url: chunk.web.uri,
+            title: chunk.web.title ?? "",
+            startIndex: 0,
+            endIndex: 0
+          }
+        };
+      }
+    }
+  }
+  yield {
+    type: "done",
+    tokensUsed: totalTokens
+  };
+}
 ;// ./src/backend/core/network/llm/LLMClient.ts
 
 
 
 
+
 const LLMClient_log = logService.namespace("ai");
-class LLMClient {
-  constructor(config) {
-    this.provider = config.provider;
-    this.apiKey = config.apiKey;
-    this.model = config.model;
-    this.maxTokens = config.maxTokens ?? 4096;
-    this.temperature = config.temperature ?? 0.3;
-    this.openAIServiceTier = config.openAIServiceTier ?? "auto";
-    this.supportsCustomTemperature = supportsCustomTemperature(this.provider, this.model);
-  }
+// ── Fetch helpers (module-scope, shared by all providers) ──────────────────
 
-  // ── Non-streaming completion ─────────────────────────────────────────────
-
-  async complete(options) {
-    const span = LLMClient_log.span("llmComplete", {
-      provider: this.provider,
-      model: this.model
+async function fetchWithTimeout(url, init, timeoutMs, providerName) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
     });
-    try {
-      let result;
-      if (this.provider === "anthropic") result = await this.completeAnthropic(options);else if (this.provider === "google") result = await this.completeGoogle(options);else result = await completeOpenAI(this.openAIContext(), options);
-      span.end("ok", {
-        tokensUsed: result.tokensUsed,
-        model: result.model
-      }, "info");
-      return result;
-    } catch (err) {
-      span.end("error", {
-        error: err?.message ?? String(err)
-      }, "error");
-      throw err;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`${providerName} request timed out (${Math.round(timeoutMs / 1000)}s)`);
     }
+    throw new Error(`${providerName} network error: ${String(err)}`);
+  } finally {
+    clearTimeout(timeoutId);
   }
+}
 
-  // ── Streaming completion ─────────────────────────────────────────────────
-
-  async *completeStream(options) {
-    const span = LLMClient_log.span("llmCompleteStream", {
-      provider: this.provider,
-      model: this.model
+/**
+ * Fetch for streaming: connection timeout only (default 30s).
+ * Once the connection is established the read timeout is managed by the
+ * caller's AbortSignal, not by a timer.
+ */
+async function fetchStreaming(url, init, signal, providerName = "LLM", connectTimeoutMs = 30_000) {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort);
+  const timeoutId = setTimeout(() => controller.abort(), connectTimeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal
     });
-    try {
-      if (this.provider === "anthropic") yield* this.streamAnthropic(options);else if (this.provider === "google") yield* this.streamGemini(options);else yield* streamOpenAI(this.openAIContext(), options);
-      span.end("ok", {}, "info");
-    } catch (err) {
-      span.end("error", {
-        error: err?.message ?? String(err)
-      }, "error");
-      yield {
-        type: "error",
-        error: err?.message ?? String(err)
-      };
-    }
-  }
-
-  // ── Provider context ─────────────────────────────────────────────────────
-
-  openAIContext() {
-    return {
-      apiKey: this.apiKey,
-      model: this.model,
-      maxTokens: this.maxTokens,
-      temperature: this.temperature,
-      openAIServiceTier: this.openAIServiceTier,
-      supportsCustomTemperature: this.supportsCustomTemperature,
-      fetchWithTimeout: (url, init, timeoutMs, providerName) => this.fetchWithTimeout(url, init, timeoutMs, providerName),
-      fetchStreaming: (url, init, signal, providerName, connectTimeoutMs) => this.fetchStreaming(url, init, signal, providerName, connectTimeoutMs)
-    };
-  }
-
-  // ── Fetch helpers ────────────────────────────────────────────────────────
-
-  async fetchWithTimeout(url, init, timeoutMs, providerName) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(url, {
-        ...init,
-        signal: controller.signal
-      });
-      return response;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        throw new Error(`${providerName} request timed out (${Math.round(timeoutMs / 1000)}s)`);
-      }
-      throw new Error(`${providerName} network error: ${String(err)}`);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  /**
-   * Fetch for streaming: connection timeout only (30s).
-   * Once the connection is established the read timeout is managed by the
-   * caller's AbortSignal, not by a timer.
-   */
-  async fetchStreaming(url, init, signal, providerName = "LLM", connectTimeoutMs = 30_000) {
-    const controller = new AbortController();
-    const onAbort = () => controller.abort();
-    signal?.addEventListener("abort", onAbort);
-    const timeoutId = setTimeout(() => controller.abort(), connectTimeoutMs);
-    try {
-      const response = await fetch(url, {
-        ...init,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(`${providerName} streaming error ${response.status}: ${text.slice(0, 300)}`);
-      }
-      return response;
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (err instanceof DOMException && err.name === "AbortError") {
-        if (signal?.aborted) throw new Error("Cancelled");
-        throw new Error(`${providerName} streaming connection timed out (${Math.round(connectTimeoutMs / 1000)}s)`);
-      }
-      throw err;
-    } finally {
-      signal?.removeEventListener("abort", onAbort);
-    }
-  }
-
-  // ── Non-streaming providers ──────────────────────────────────────────────
-
-  async completeAnthropic(options) {
-    const body = {
-      model: this.model,
-      max_tokens: options.maxTokens ?? this.maxTokens,
-      temperature: options.temperature ?? this.temperature,
-      system: options.systemPrompt,
-      messages: options.messages
-    };
-    const response = await this.fetchWithTimeout("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body)
-    }, 180_000, "Anthropic");
+    clearTimeout(timeoutId);
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      throw new Error(`Anthropic API error ${response.status}: ${text.slice(0, 300)}`);
+      throw new Error(`${providerName} streaming error ${response.status}: ${text.slice(0, 300)}`);
     }
-    const parsed = await response.json();
-    const text = parsed.content?.[0]?.text ?? "";
-    const tokens = (parsed.usage?.input_tokens ?? 0) + (parsed.usage?.output_tokens ?? 0);
-    return {
-      content: text,
-      tokensUsed: tokens,
-      model: parsed.model ?? this.model
-    };
-  }
-  async completeGoogle(options) {
-    const contents = options.messages.map(m => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{
-        text: m.content
-      }]
-    }));
-    const body = {
-      systemInstruction: {
-        parts: [{
-          text: options.systemPrompt
-        }]
-      },
-      contents,
-      generationConfig: {
-        temperature: options.temperature ?? this.temperature,
-        maxOutputTokens: options.maxTokens ?? this.maxTokens
-      }
-    };
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
-    const response = await this.fetchWithTimeout(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body)
-    }, 180_000, "Google");
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`Google API error ${response.status}: ${text.slice(0, 300)}`);
+    return response;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      if (signal?.aborted) throw new Error("Cancelled");
+      throw new Error(`${providerName} streaming connection timed out (${Math.round(connectTimeoutMs / 1000)}s)`);
     }
-    const parsed = await response.json();
-    const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    const tokens = parsed.usageMetadata?.totalTokenCount ?? 0;
-    return {
-      content: text,
-      tokensUsed: tokens,
-      model: this.model
-    };
+    throw err;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
+}
 
-  // ── Streaming providers ──────────────────────────────────────────────────
+// ── Provider dispatch table ────────────────────────────────────────────────
 
-  /**
-   * Anthropic streaming via /v1/messages with stream: true.
-   */
-  async *streamAnthropic(options) {
-    const body = {
-      model: this.model,
-      max_tokens: options.maxTokens ?? this.maxTokens,
-      temperature: options.temperature ?? this.temperature,
-      system: options.systemPrompt,
-      messages: options.messages,
-      stream: true
-    };
-    const response = await this.fetchStreaming("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body)
-    }, options.signal, "Anthropic");
-    let totalTokens = 0;
-    for await (const data of parseSSEStream(response, options.signal)) {
-      let event;
+const PROVIDERS = {
+  anthropic: {
+    complete: completeAnthropic,
+    stream: streamAnthropic
+  },
+  openai: {
+    complete: completeOpenAI,
+    stream: streamOpenAI
+  },
+  google: {
+    complete: completeGemini,
+    stream: streamGemini
+  }
+};
+function createLLMClient(config) {
+  const provider = config.provider;
+  const model = config.model;
+  const ctx = {
+    apiKey: config.apiKey,
+    model,
+    maxTokens: config.maxTokens ?? 4096,
+    temperature: config.temperature ?? 0.3,
+    openAIServiceTier: config.openAIServiceTier ?? "auto",
+    supportsCustomTemperature: supportsCustomTemperature(provider, model),
+    fetchWithTimeout,
+    fetchStreaming
+  };
+  const handlers = PROVIDERS[provider];
+  return {
+    provider,
+    model,
+    async complete(options) {
+      const span = LLMClient_log.span("llmComplete", {
+        provider,
+        model
+      });
       try {
-        event = JSON.parse(data);
-      } catch {
-        continue;
+        const result = await handlers.complete(ctx, options);
+        span.end("ok", {
+          tokensUsed: result.tokensUsed,
+          model: result.model
+        }, "info");
+        return result;
+      } catch (err) {
+        span.end("error", {
+          error: err?.message ?? String(err)
+        }, "error");
+        throw err;
       }
-      if (event.type === "content_block_delta") {
-        const delta = event.delta;
-        if (delta?.type === "text_delta") {
-          yield {
-            type: "text",
-            delta: delta.text ?? ""
-          };
-        } else if (delta?.type === "thinking_delta") {
-          yield {
-            type: "thinking",
-            delta: delta.thinking ?? ""
-          };
-        }
-      } else if (event.type === "message_delta") {
-        const usage = event.usage;
-        totalTokens = (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0);
-      } else if (event.type === "message_stop") {
+    },
+    async *completeStream(options) {
+      const span = LLMClient_log.span("llmCompleteStream", {
+        provider,
+        model
+      });
+      try {
+        yield* handlers.stream(ctx, options);
+        span.end("ok", {}, "info");
+      } catch (err) {
+        span.end("error", {
+          error: err?.message ?? String(err)
+        }, "error");
         yield {
-          type: "done",
-          tokensUsed: totalTokens
+          type: "error",
+          error: err?.message ?? String(err)
         };
       }
     }
-  }
-
-  /**
-   * Gemini streaming via streamGenerateContent?alt=sse.
-   */
-  async *streamGemini(options) {
-    const contents = options.messages.map(m => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{
-        text: m.content
-      }]
-    }));
-    const body = {
-      systemInstruction: {
-        parts: [{
-          text: options.systemPrompt
-        }]
-      },
-      contents,
-      generationConfig: {
-        temperature: options.temperature ?? this.temperature,
-        maxOutputTokens: options.maxTokens ?? this.maxTokens
-      }
-    };
-    if (options.webSearch) {
-      body.tools = [{
-        google_search: {}
-      }];
-    }
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(this.apiKey)}`;
-    const response = await this.fetchStreaming(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body)
-    }, options.signal, "Google");
-    let totalTokens = 0;
-    let lastGroundingMetadata = null;
-    for await (const data of parseSSEStream(response, options.signal)) {
-      let event;
-      try {
-        event = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      const candidates = event.candidates;
-      const candidate = candidates?.[0];
-      const content = candidate?.content;
-      const parts = content?.parts;
-      if (parts) {
-        for (const part of parts) {
-          if (part.thought) {
-            yield {
-              type: "thinking",
-              delta: part.text ?? ""
-            };
-          } else if (part.text) {
-            yield {
-              type: "text",
-              delta: part.text
-            };
-          }
-        }
-      }
-      const usageMeta = event.usageMetadata;
-      if (usageMeta?.totalTokenCount) {
-        totalTokens = usageMeta.totalTokenCount;
-      }
-      if (candidate?.groundingMetadata) {
-        lastGroundingMetadata = candidate.groundingMetadata;
-      }
-    }
-
-    // Emit grounding citations after stream ends
-    if (lastGroundingMetadata) {
-      const chunks = lastGroundingMetadata.groundingChunks ?? [];
-      for (const chunk of chunks) {
-        if (chunk.web?.uri) {
-          yield {
-            type: "annotation",
-            annotation: {
-              url: chunk.web.uri,
-              title: chunk.web.title ?? "",
-              startIndex: 0,
-              endIndex: 0
-            }
-          };
-        }
-      }
-    }
-    yield {
-      type: "done",
-      tokensUsed: totalTokens
-    };
-  }
+  };
 }
 ;// ./src/backend/services/ai/config/types.ts
 // ── KV key: ai.config.providers ──────────────────────────────────────────────
@@ -16350,7 +15948,7 @@ async function summarizeNews(items, mode, providerConfig) {
       openAIServiceTier: providerConfig.openai.serviceTier
     } : {})
   };
-  const primaryResponse = await new LLMClient({
+  const primaryResponse = await createLLMClient({
     ...baseClientConfig,
     maxTokens: PRIMARY_MAX_TOKENS
   }).complete({
@@ -16364,7 +15962,7 @@ async function summarizeNews(items, mode, providerConfig) {
   if (primaryText.length > 0) return primaryText;
   const shouldRetry = providerConfig.selected === "openai" && (primaryResponse.finishReason === "length" || (primaryResponse.reasoningTokens ?? 0) > 0);
   if (shouldRetry) {
-    const retryResponse = await new LLMClient({
+    const retryResponse = await createLLMClient({
       ...baseClientConfig,
       maxTokens: RETRY_MAX_TOKENS
     }).complete({
@@ -16411,7 +16009,7 @@ async function tagNewsItems(items, providerConfig) {
   const apiKey = getProviderApiKey(providerConfig);
   if (!apiKey) return items;
   const headlines = items.map((item, i) => `[${i}] ${item.title}`).join("\n");
-  const client = new LLMClient({
+  const client = createLLMClient({
     provider: providerConfig.selected,
     apiKey,
     model: providerConfig.selectedModel,
@@ -18989,7 +18587,7 @@ class BackendOrchestrator {
     this.logger = logService.namespace("pipeline");
 
     // Core infrastructure
-    this.eventBus = new TypedEventBus();
+    this.eventBus = createEventBus();
     this.persistor = new PipelineStatePersistor(logService.namespace("storage"), () => this.ctx.storage);
     const clock = systemClock;
 
@@ -21751,53 +21349,50 @@ function createFloatingSnapshot(headerController, _uiElements, deps) {
 
 
 const AccountHistoryStore_log = logService.namespace("storage");
+const STORE = STORES.ACCOUNT_SNAPSHOT_HISTORY;
 class AccountHistoryStore {
   constructor(db) {
     this.db = db;
   }
   async getAll() {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readonly");
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).getAll());
+    return readTx(this.db, STORE, s => s.getAll());
   }
   async getRange(startTs, endTs) {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readonly");
     const range = IDBKeyRange.bound(startTs, endTs);
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).getAll(range));
+    return readTx(this.db, STORE, s => s.getAll(range));
   }
   async put(point) {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readwrite");
-    tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).put(point);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, s => {
+      s.put(point);
+    });
     AccountHistoryStore_log.debug("accountHistory.put", {
       ts: point.ts
     });
   }
   async putBatch(points) {
     if (points.length === 0) return;
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readwrite");
-    const store = tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY);
-    for (const point of points) store.put(point);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, s => {
+      for (const point of points) s.put(point);
+    });
     AccountHistoryStore_log.debug("accountHistory.putBatch", {
       count: points.length
     });
   }
   async deleteOlderThan(cutoffTs) {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readwrite");
-    const store = tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY);
-    const range = IDBKeyRange.upperBound(cutoffTs, true);
-    const keys = await txPromise(store.getAllKeys(range));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    const deleted = await writeTxResult(this.db, STORE, async s => {
+      const range = IDBKeyRange.upperBound(cutoffTs, true);
+      const keys = await txPromise(s.getAllKeys(range));
+      for (const key of keys) s.delete(key);
+      return keys.length;
+    });
     AccountHistoryStore_log.debug("accountHistory.deleteOlderThan", {
       cutoffTs,
-      deletedCount: keys.length
+      deletedCount: deleted
     });
-    return keys.length;
+    return deleted;
   }
   async count() {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readonly");
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).count());
+    return readTx(this.db, STORE, s => s.count());
   }
 }
 ;// ./src/backend/core/db/account/AccountHistoryArchiveStore.ts
@@ -21805,29 +21400,26 @@ class AccountHistoryStore {
 
 
 const AccountHistoryArchiveStore_log = logService.namespace("storage");
+const AccountHistoryArchiveStore_STORE = STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE;
 class AccountHistoryArchiveStore {
   constructor(db) {
     this.db = db;
   }
   async getAll() {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE, "readonly");
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE).getAll());
+    return readTx(this.db, AccountHistoryArchiveStore_STORE, s => s.getAll());
   }
   async getRange(startTs, endTs) {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE, "readonly");
     const range = IDBKeyRange.bound(startTs, endTs);
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE).getAll(range));
+    return readTx(this.db, AccountHistoryArchiveStore_STORE, s => s.getAll(range));
   }
   async count() {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE, "readonly");
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE).count());
+    return readTx(this.db, AccountHistoryArchiveStore_STORE, s => s.count());
   }
   async putBatch(points) {
     if (points.length === 0) return;
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE, "readwrite");
-    const store = tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY_ARCHIVE);
-    for (const point of points) store.put(point);
-    await txComplete(tx);
+    await writeTx(this.db, AccountHistoryArchiveStore_STORE, s => {
+      for (const point of points) s.put(point);
+    });
     AccountHistoryArchiveStore_log.debug("accountHistoryArchive.putBatch", {
       count: points.length
     });
@@ -30772,6 +30364,31 @@ const REBALANCE_MODES = {
 function isFiniteNum(v) {
   return typeof v === "number" && Number.isFinite(v);
 }
+function finiteOr0(v) {
+  return isFiniteNum(v) ? v : 0;
+}
+
+// ── Mode value extraction ──
+
+const fieldExtractor = field => row => finiteOr0(row?.[field]);
+const MODE_EXTRACTORS = {
+  deltaDollarPct: (row, _key, ctx) => {
+    const dn = row?.deltaNotionalDol ?? 0;
+    return isFiniteNum(dn) ? dn / ctx.acctVal * 100 : 0;
+  },
+  betaPct: (row, key, ctx) => {
+    const dn = row?.deltaNotionalDol ?? 0;
+    const beta = ctx.betaData?.get(key)?.[ctx.betaHorizon]?.beta;
+    const b = isFiniteNum(beta) ? beta : 1;
+    const bn = isFiniteNum(dn) ? dn * b : 0;
+    return bn / ctx.acctVal * 100;
+  },
+  shares: fieldExtractor("totalDeltaShares"),
+  deltaDollar: fieldExtractor("deltaNotionalDol"),
+  gamma: fieldExtractor("totalGammaSharesPerDol"),
+  theta: fieldExtractor("totalThetaPerDay"),
+  vega: fieldExtractor("totalVegaPerVolPoint")
+};
 
 /**
  * Extract current per-underlying values for a given rebalance mode.
@@ -30780,74 +30397,57 @@ function isFiniteNum(v) {
  */
 function extractModeCurrentValues(mode, derived, betaData, betaHorizon = "short") {
   const byU = derived.byUnderlying ?? {};
+  const ctx = {
+    acctVal: Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1),
+    betaData,
+    betaHorizon
+  };
+  const extract = MODE_EXTRACTORS[mode];
   const result = new Map();
-  switch (mode) {
-    case "deltaDollarPct":
-      {
-        const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
-        for (const [key, row] of Object.entries(byU)) {
-          const dn = row?.deltaNotionalDol ?? 0;
-          result.set(key, isFiniteNum(dn) ? dn / acctVal * 100 : 0);
-        }
-        break;
-      }
-    case "betaPct":
-      {
-        const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
-        for (const [key, row] of Object.entries(byU)) {
-          const dn = row?.deltaNotionalDol ?? 0;
-          const beta = betaData?.get(key)?.[betaHorizon]?.beta;
-          const b = isFiniteNum(beta) ? beta : 1;
-          const bn = isFiniteNum(dn) ? dn * b : 0;
-          result.set(key, bn / acctVal * 100);
-        }
-        break;
-      }
-    case "shares":
-      {
-        for (const [key, row] of Object.entries(byU)) {
-          const v = row?.totalDeltaShares ?? 0;
-          result.set(key, isFiniteNum(v) ? v : 0);
-        }
-        break;
-      }
-    case "deltaDollar":
-      {
-        for (const [key, row] of Object.entries(byU)) {
-          const v = row?.deltaNotionalDol ?? 0;
-          result.set(key, isFiniteNum(v) ? v : 0);
-        }
-        break;
-      }
-    case "gamma":
-      {
-        for (const [key, row] of Object.entries(byU)) {
-          const v = row?.totalGammaSharesPerDol ?? 0;
-          result.set(key, isFiniteNum(v) ? v : 0);
-        }
-        break;
-      }
-    case "theta":
-      {
-        for (const [key, row] of Object.entries(byU)) {
-          const v = row?.totalThetaPerDay ?? 0;
-          result.set(key, isFiniteNum(v) ? v : 0);
-        }
-        break;
-      }
-    case "vega":
-      {
-        for (const [key, row] of Object.entries(byU)) {
-          const v = row?.totalVegaPerVolPoint ?? 0;
-          result.set(key, isFiniteNum(v) ? v : 0);
-        }
-        break;
-      }
+  for (const [key, row] of Object.entries(byU)) {
+    result.set(key, extract(row, key, ctx));
   }
   return result;
 }
 
 // ── Linked target computation ──
+
+function deriveFromDeltaDollar(deltaDollar, ctx) {
+  const shares = ctx.price > 0 ? deltaDollar / ctx.price : 0;
+  const deltaDollarPct = deltaDollar / ctx.acctVal * 100;
+  const betaPct = deltaDollar * ctx.beta / ctx.acctVal * 100;
+  return {
+    shares,
+    deltaDollar,
+    deltaDollarPct,
+    betaPct
+  };
+}
+const LINKED_TARGET_BUILDERS = {
+  shares: (entry, ctx) => {
+    const shares = entry.value;
+    const deltaDollar = ctx.price > 0 ? shares * ctx.price : 0;
+    return {
+      ...deriveFromDeltaDollar(deltaDollar, ctx),
+      shares
+    };
+  },
+  deltaDollar: (entry, ctx) => deriveFromDeltaDollar(entry.value, ctx),
+  deltaDollarPct: (entry, ctx) => {
+    const deltaDollar = entry.value / 100 * ctx.acctVal;
+    return {
+      ...deriveFromDeltaDollar(deltaDollar, ctx),
+      deltaDollarPct: entry.value
+    };
+  },
+  betaPct: (entry, ctx) => {
+    const deltaDollar = Math.abs(ctx.beta) > 0.01 ? entry.value / 100 * ctx.acctVal / ctx.beta : 0;
+    return {
+      ...deriveFromDeltaDollar(deltaDollar, ctx),
+      betaPct: entry.value
+    };
+  }
+};
 
 /**
  * Given a user-set anchor target for one exposure mode, derive all four
@@ -30858,45 +30458,12 @@ function extractModeCurrentValues(mode, derived, betaData, betaHorizon = "short"
  *   betaPct = (deltaDollar × beta) / accountValue × 100
  */
 function computeLinkedTargets(entry, underlyingPrice, beta, accountValue) {
-  const price = isFiniteNum(underlyingPrice) && underlyingPrice > 0 ? underlyingPrice : 0;
-  const b = isFiniteNum(beta) && Math.abs(beta) > 0.01 ? beta : 1;
-  const acctVal = Math.max(accountValue, 1);
-  let shares = 0;
-  let deltaDollar = 0;
-  let deltaDollarPct = 0;
-  let betaPct = 0;
-  switch (entry.anchor) {
-    case "shares":
-      shares = entry.value;
-      deltaDollar = price > 0 ? shares * price : 0;
-      deltaDollarPct = deltaDollar / acctVal * 100;
-      betaPct = deltaDollar * b / acctVal * 100;
-      break;
-    case "deltaDollar":
-      deltaDollar = entry.value;
-      shares = price > 0 ? deltaDollar / price : 0;
-      deltaDollarPct = deltaDollar / acctVal * 100;
-      betaPct = deltaDollar * b / acctVal * 100;
-      break;
-    case "deltaDollarPct":
-      deltaDollarPct = entry.value;
-      deltaDollar = deltaDollarPct / 100 * acctVal;
-      shares = price > 0 ? deltaDollar / price : 0;
-      betaPct = deltaDollar * b / acctVal * 100;
-      break;
-    case "betaPct":
-      betaPct = entry.value;
-      deltaDollar = Math.abs(b) > 0.01 ? betaPct / 100 * acctVal / b : 0;
-      shares = price > 0 ? deltaDollar / price : 0;
-      deltaDollarPct = deltaDollar / acctVal * 100;
-      break;
-  }
-  return {
-    shares,
-    deltaDollar,
-    deltaDollarPct,
-    betaPct
+  const ctx = {
+    price: isFiniteNum(underlyingPrice) && underlyingPrice > 0 ? underlyingPrice : 0,
+    beta: isFiniteNum(beta) && Math.abs(beta) > 0.01 ? beta : 1,
+    acctVal: Math.max(accountValue, 1)
   };
+  return LINKED_TARGET_BUILDERS[entry.anchor](entry, ctx);
 }
 ;// ./src/frontend/trade_portfolio/components/governance/rebalanceTypes.ts
 
@@ -31246,65 +30813,6 @@ function renderTradeSuggestions(result, privacyHidden = false, displayMultiplier
   container.appendChild(summaryRow);
   return container;
 }
-;// ./src/frontend/trade_portfolio/components/governance/rebalanceProfileIO.ts
-
-function downloadProfiles(profiles) {
-  if (profiles.length === 0) return;
-  const data = JSON.stringify({
-    version: 1,
-    exportedAt: Date.now(),
-    profiles
-  }, null, 2);
-  const blob = new Blob([data], {
-    type: "application/json"
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  const d = new Date();
-  const pad2 = v => String(v).padStart(2, "0");
-  a.download = `rebalance-profiles-${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-function parseImportedProfiles(jsonText) {
-  const parsed = JSON.parse(jsonText);
-  const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.profiles) ? parsed.profiles : [];
-  if (incoming.length === 0) return [];
-  const validated = [];
-  for (const entry of incoming) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const candidate = entry;
-    const rawTargets = candidate.rebalanceTargets;
-    if (!rawTargets || typeof rawTargets !== "object" || Array.isArray(rawTargets)) continue;
-    const targets = {};
-    for (const [key, val] of Object.entries(rawTargets)) {
-      if (!val || typeof val !== "object" || Array.isArray(val)) continue;
-      const e = val;
-      const anchor = e.anchor;
-      const value = Number(e.value);
-      if (!TARGET_MODE_SET.has(anchor) || !Number.isFinite(value)) continue;
-      targets[key] = {
-        anchor,
-        value: Math.round(value * 100) / 100
-      };
-    }
-    if (Object.keys(targets).length === 0) continue;
-    const createdAtRaw = Number(candidate.createdAt);
-    const createdAt = Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? Math.round(createdAtRaw) : Date.now();
-    const id = typeof candidate.id === "string" && candidate.id.trim().length > 0 ? candidate.id.trim().slice(0, 80) : `rp_${createdAt}_${Math.random().toString(36).slice(2, 8)}`;
-    const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim().slice(0, 160) : new Date(createdAt).toISOString().slice(0, 16).replace("T", " ");
-    validated.push({
-      id,
-      name,
-      createdAt,
-      rebalanceTargets: targets
-    });
-  }
-  return validated;
-}
 ;// ./src/frontend/trade_portfolio/components/governance/rebalanceTableHelpers.ts
 
 
@@ -31593,7 +31101,837 @@ function updateSummaryRefs(keysInGroup, curValues, linked, curRefMap, tgtRefMap,
     devEl.style.cssText = devSpanStyle(deviationColor(dev));
   });
 }
+;// ./src/frontend/trade_portfolio/components/governance/rebalanceTableBuilder.ts
+
+
+
+
+function buildRebalanceTable(state, p) {
+  const {
+    tableContainer,
+    curRefs,
+    tgtRefs,
+    devRefs,
+    priceRefs,
+    totalCurRefs,
+    totalTgtRefs,
+    totalDevRefs,
+    eqTotalCurRefs,
+    eqTotalTgtRefs,
+    eqTotalDevRefs,
+    etfTotalCurRefs,
+    etfTotalTgtRefs,
+    etfTotalDevRefs,
+    watchlistTotalCurRefs,
+    watchlistTotalTgtRefs,
+    watchlistTotalDevRefs,
+    inputsByKey,
+    anchorByKey,
+    maskConfig,
+    MASKED_TEXT,
+    isMetricMasked,
+    isGreekMasked,
+    getDisplayMultiplier,
+    handleSort,
+    handleTargetInput,
+    saveUnderlyingTarget,
+    updateAnchorVisuals
+  } = state;
+  const betaHorizon = state.getBetaHorizon();
+  const sortKey = state.getSortKey();
+  const sortAsc = state.getSortAsc();
+  tableContainer.innerHTML = "";
+  curRefs.clear();
+  tgtRefs.clear();
+  devRefs.clear();
+  priceRefs.clear();
+  totalCurRefs.clear();
+  totalTgtRefs.clear();
+  totalDevRefs.clear();
+  eqTotalCurRefs.clear();
+  eqTotalTgtRefs.clear();
+  eqTotalDevRefs.clear();
+  etfTotalCurRefs.clear();
+  etfTotalTgtRefs.clear();
+  etfTotalDevRefs.clear();
+  watchlistTotalCurRefs.clear();
+  watchlistTotalTgtRefs.clear();
+  watchlistTotalDevRefs.clear();
+  const keys = state.getAllKeys(p);
+  state.setRenderedKeyList(keys.join(","));
+  state.setLastTargetsHash(JSON.stringify(p.rebalanceTargets ?? {}));
+  const curValues = new Map();
+  CURRENT_MODES.forEach(m => curValues.set(m, extractModeCurrentValues(m, p.derived, p.betaData, betaHorizon)));
+  const linked = resolveAllLinkedTargets(p.rebalanceTargets, p, betaHorizon);
+  anchorByKey.clear();
+  if (p.rebalanceTargets) {
+    for (const [key, entry] of Object.entries(p.rebalanceTargets)) {
+      anchorByKey.set(key, entry.anchor);
+    }
+  }
+  const sortedKeys = [...keys];
+  if (sortKey) {
+    const sk = sortKey;
+    const dir = sortAsc ? 1 : -1;
+    if (sk === "underlying") {
+      sortedKeys.sort((a, b) => a.localeCompare(b) * dir);
+    } else if (sk.startsWith("tgt:")) {
+      const mode = sk.slice(4);
+      sortedKeys.sort((a, b) => ((linked.get(a)?.[mode] ?? 0) - (linked.get(b)?.[mode] ?? 0)) * dir);
+    } else if (sk.startsWith("dev:")) {
+      const mode = sk.slice(4);
+      sortedKeys.sort((a, b) => {
+        const curA = curValues.get(mode)?.get(a) ?? 0;
+        const curB = curValues.get(mode)?.get(b) ?? 0;
+        const devA = (linked.get(a)?.[mode] ?? curA) - curA;
+        const devB = (linked.get(b)?.[mode] ?? curB) - curB;
+        return (devA - devB) * dir;
+      });
+    } else if (sk === "_beta") {
+      sortedKeys.sort((a, b) => {
+        const bA = p.betaData?.get(a)?.[betaHorizon]?.beta ?? 0;
+        const bB = p.betaData?.get(b)?.[betaHorizon]?.beta ?? 0;
+        return (bA - bB) * dir;
+      });
+    } else {
+      const vals = curValues.get(sk);
+      sortedKeys.sort((a, b) => ((vals?.get(a) ?? 0) - (vals?.get(b) ?? 0)) * dir);
+    }
+  }
+  const table = document.createElement("table");
+  table.style.cssText = tableStyle + " border-collapse:collapse; table-layout:auto; width:max-content; min-width:100%;";
+  const thead = document.createElement("thead");
+  const visibleMetrics = state.getVisibleMetricGroups();
+  const visibleGreeks = state.getVisibleGreekModes();
+  const groupRow = document.createElement("tr");
+  const emptyTh = document.createElement("th");
+  emptyTh.colSpan = 2;
+  emptyTh.style.cssText = thStyle + " padding:2px 4px;";
+  groupRow.appendChild(emptyTh);
+  visibleMetrics.forEach(m => {
+    const gh = document.createElement("th");
+    gh.colSpan = 3;
+    gh.textContent = REBALANCE_MODES[m].shortLabel;
+    gh.style.cssText = thStyle + " text-align:center; font-size:11px; padding:2px 4px; letter-spacing:0.5px;" + groupBorderStyle;
+    groupRow.appendChild(gh);
+  });
+  const greekGroupTh = document.createElement("th");
+  greekGroupTh.colSpan = visibleGreeks.length + 1;
+  greekGroupTh.textContent = "Greeks";
+  greekGroupTh.style.cssText = thStyle + " text-align:center; font-size:11px; padding:2px 4px; letter-spacing:0.5px;" + groupBorderStyle;
+  groupRow.appendChild(greekGroupTh);
+  thead.appendChild(groupRow);
+  const lr = document.createElement("tr");
+  const ulTh = document.createElement("th");
+  const ulArrow = sortKey === "underlying" ? sortAsc ? " ▲" : " ▼" : "";
+  ulTh.textContent = "Ticker" + ulArrow;
+  ulTh.style.cssText = thStyle + " width:60px; min-width:60px; font-size:11px; padding:3px 6px; cursor:pointer; user-select:none;";
+  ulTh.addEventListener("click", () => handleSort("underlying"));
+  lr.appendChild(ulTh);
+  const priceTh = document.createElement("th");
+  priceTh.textContent = "Price";
+  priceTh.style.cssText = thStyle + " min-width:52px; font-size:11px; padding:3px 4px; text-align:right;";
+  lr.appendChild(priceTh);
+  const sortableThStyle = thStyle + " min-width:52px; font-size:11px; padding:3px 4px; text-align:right; cursor:pointer; user-select:none;";
+  visibleMetrics.forEach(m => {
+    const cArrow = sortKey === m ? sortAsc ? " ▲" : " ▼" : "";
+    const cTh = document.createElement("th");
+    cTh.textContent = "current" + cArrow;
+    cTh.title = REBALANCE_MODES[m].label + " current (click to sort)";
+    cTh.style.cssText = sortableThStyle + groupBorderStyle;
+    cTh.addEventListener("click", () => handleSort(m));
+    lr.appendChild(cTh);
+    const tKey = `tgt:${m}`;
+    const tArrow = sortKey === tKey ? sortAsc ? " ▲" : " ▼" : "";
+    const tTh = document.createElement("th");
+    tTh.textContent = "target" + tArrow;
+    tTh.title = REBALANCE_MODES[m].label + " target (click to sort)";
+    tTh.style.cssText = sortableThStyle;
+    tTh.addEventListener("click", () => handleSort(tKey));
+    lr.appendChild(tTh);
+    const dKey = `dev:${m}`;
+    const dArrow = sortKey === dKey ? sortAsc ? " ▲" : " ▼" : "";
+    const dTh = document.createElement("th");
+    dTh.textContent = "dev" + dArrow;
+    dTh.title = REBALANCE_MODES[m].label + " deviation (click to sort)";
+    dTh.style.cssText = sortableThStyle;
+    dTh.addEventListener("click", () => handleSort(dKey));
+    lr.appendChild(dTh);
+  });
+  const betaArrow = sortKey === "_beta" ? sortAsc ? " ▲" : " ▼" : "";
+  const betaTh = document.createElement("th");
+  betaTh.textContent = "β" + betaArrow;
+  betaTh.title = "Beta (click to sort)";
+  betaTh.style.cssText = thStyle + " min-width:42px; font-size:11px; padding:3px 4px; text-align:right; cursor:pointer; user-select:none;" + groupBorderStyle;
+  betaTh.addEventListener("click", () => handleSort("_beta"));
+  lr.appendChild(betaTh);
+  visibleGreeks.forEach(m => {
+    const arrow = sortKey === m ? sortAsc ? " ▲" : " ▼" : "";
+    const th = document.createElement("th");
+    th.textContent = REBALANCE_MODES[m].shortLabel + arrow;
+    th.title = REBALANCE_MODES[m].label + " (click to sort)";
+    th.style.cssText = thStyle + " min-width:48px; font-size:11px; padding:3px 4px; text-align:right; cursor:pointer; user-select:none;";
+    th.addEventListener("click", () => handleSort(m));
+    lr.appendChild(th);
+  });
+  thead.appendChild(lr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  const byU = p.derived.byUnderlying ?? {};
+  const etfSet = p.etfUnderlyingKeys ?? new Set();
+  const holdingKeys = new Set(Object.keys(byU));
+  const equityKeys = [];
+  const etfKeys = [];
+  const watchlistKeys = [];
+  for (const key of sortedKeys) {
+    if (!holdingKeys.has(key)) {
+      watchlistKeys.push(key);
+    } else if (etfSet.has(key)) {
+      etfKeys.push(key);
+    } else {
+      equityKeys.push(key);
+    }
+  }
+  state.setLastEquityKeys(equityKeys);
+  state.setLastEtfKeys(etfKeys);
+  state.setLastWatchlistKeys(watchlistKeys);
+  const hasBothGroups = equityKeys.length > 0 && etfKeys.length > 0;
+  const hasWatchlist = watchlistKeys.length > 0;
+  function appendDataRow(key, zebraIdx) {
+    const tr = document.createElement("tr");
+    if (zebraIdx % 2 === 1) tr.style.background = "var(--ax-bg-glass-inset)";
+    const tdSym = document.createElement("td");
+    tdSym.textContent = key;
+    tdSym.style.cssText = tdStyle + " width:60px; min-width:60px; font-weight:600; font-size:13px; padding:3px 6px; white-space:nowrap;";
+    tr.appendChild(tdSym);
+    const priceVal = resolveQuoteLastPrice(key, p);
+    const priceText = typeof priceVal === "number" && Number.isFinite(priceVal) ? "$" + priceVal.toFixed(2) : "-";
+    const tdPrice = document.createElement("td");
+    tdPrice.textContent = priceText;
+    tdPrice.style.cssText = curCellStyle + " text-align:right; font-size:12px; color:var(--ios-text-secondary); font-variant-numeric:tabular-nums;";
+    priceRefs.set(key, tdPrice);
+    tr.appendChild(tdPrice);
+    const lt = linked.get(key);
+    const hasTarget = !!lt;
+    const keyInputs = new Map();
+    visibleMetrics.forEach(mode => {
+      const config = REBALANCE_MODES[mode];
+      const masked = isMetricMasked(mode);
+      const mul = getDisplayMultiplier(mode);
+      const cur = curValues.get(mode)?.get(key) ?? 0;
+      const tdCur = document.createElement("td");
+      tdCur.style.cssText = curCellStyle + " text-align:right;" + groupBorderStyle;
+      const curEl = document.createElement("span");
+      curEl.textContent = masked ? MASKED_TEXT : config.formatValue(cur * mul);
+      curEl.style.cssText = curSpanStyle;
+      curRefs.set(`${mode}:${key}`, curEl);
+      tdCur.appendChild(curEl);
+      tr.appendChild(tdCur);
+      const tdTgt = document.createElement("td");
+      tdTgt.style.cssText = tgtCellStyle;
+      if (masked) {
+        const maskedSpan = document.createElement("span");
+        maskedSpan.textContent = MASKED_TEXT;
+        maskedSpan.style.cssText = "font-size:12px; color:var(--ios-text-secondary);";
+        tdTgt.appendChild(maskedSpan);
+      } else {
+        let input = inputsByKey.get(key)?.get(mode);
+        if (!input) {
+          input = document.createElement("input");
+          input.type = "number";
+          input.step = config.isPct ? "0.5" : "any";
+          if (config.isPct) {
+            input.min = "0";
+            input.max = "100";
+          }
+          input.placeholder = "—";
+          const capturedMode = mode;
+          const capturedKey = key;
+          input.addEventListener("input", () => {
+            handleTargetInput(capturedKey, capturedMode);
+          });
+          input.addEventListener("change", () => {
+            saveUnderlyingTarget(capturedKey);
+          });
+        }
+        if (hasTarget) {
+          input.value = formatTargetInputValue(lt[mode] * mul, config.isPct);
+        } else {
+          input.value = "";
+        }
+        input.style.cssText = cellInputStyle;
+        keyInputs.set(mode, input);
+        tdTgt.appendChild(input);
+      }
+      tr.appendChild(tdTgt);
+      const tdDev = document.createElement("td");
+      tdDev.style.cssText = devCellStyle + " text-align:right;";
+      const devEl = document.createElement("span");
+      if (masked) {
+        devEl.textContent = MASKED_TEXT;
+        devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
+      } else if (hasTarget) {
+        const tgt = lt[mode];
+        const dev = cur - tgt;
+        devEl.textContent = (dev >= 0 ? "+" : "") + config.formatValue(dev * mul);
+        devEl.style.cssText = devSpanStyle(deviationColor(dev));
+      } else {
+        devEl.textContent = "-";
+        devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
+      }
+      devRefs.set(`${mode}:${key}`, devEl);
+      tdDev.appendChild(devEl);
+      tr.appendChild(tdDev);
+    });
+    inputsByKey.set(key, keyInputs);
+    updateAnchorVisuals(key);
+    const betaRaw = p.betaData?.get(key)?.[betaHorizon]?.beta;
+    const betaVal = typeof betaRaw === "number" && Number.isFinite(betaRaw) ? betaRaw : null;
+    const tdBeta = document.createElement("td");
+    tdBeta.textContent = betaVal != null ? betaVal.toFixed(2) : "-";
+    tdBeta.style.cssText = curCellStyle + " text-align:right; font-size:12px; color:var(--ios-text-secondary); font-variant-numeric:tabular-nums;" + groupBorderStyle;
+    curRefs.set(`_beta:${key}`, tdBeta);
+    tr.appendChild(tdBeta);
+    visibleGreeks.forEach(mode => {
+      const config = REBALANCE_MODES[mode];
+      const cur = curValues.get(mode)?.get(key) ?? 0;
+      const td = document.createElement("td");
+      td.style.cssText = curCellStyle + " text-align:right;";
+      const curEl = document.createElement("span");
+      curEl.textContent = isGreekMasked(mode) ? MASKED_TEXT : config.formatValue(cur * getDisplayMultiplier(mode));
+      curEl.style.cssText = curSpanStyle;
+      curRefs.set(`${mode}:${key}`, curEl);
+      td.appendChild(curEl);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  if (hasBothGroups || hasWatchlist) {
+    let hasRenderedSection = false;
+    const appendGroupedSection = (sectionKeys, summaryLabel, curRefMap, tgtRefMap, devRefMap) => {
+      if (sectionKeys.length === 0) return;
+      if (hasRenderedSection) {
+        const [repeatGroupRow, repeatSubRow] = buildRepeatedHeaderRows(visibleMetrics, visibleGreeks);
+        tbody.appendChild(repeatGroupRow);
+        tbody.appendChild(repeatSubRow);
+      }
+      sectionKeys.forEach((key, i) => appendDataRow(key, i));
+      tbody.appendChild(buildSummaryRow(summaryLabel, sectionKeys, curValues, linked, "border-top:2px solid var(--ios-border); background:var(--ax-bg-glass-inset); font-weight:700;", curRefMap, tgtRefMap, devRefMap, maskConfig, visibleMetrics, visibleGreeks));
+      hasRenderedSection = true;
+    };
+    if (equityKeys.length > 0) {
+      appendGroupedSection(equityKeys, "Equities Summary", eqTotalCurRefs, eqTotalTgtRefs, eqTotalDevRefs);
+    }
+    if (etfKeys.length > 0) {
+      appendGroupedSection(etfKeys, "ETFs Summary", etfTotalCurRefs, etfTotalTgtRefs, etfTotalDevRefs);
+    }
+    if (hasWatchlist) {
+      appendGroupedSection(watchlistKeys, "Watchlist Summary", watchlistTotalCurRefs, watchlistTotalTgtRefs, watchlistTotalDevRefs);
+    }
+  } else {
+    sortedKeys.forEach((key, i) => appendDataRow(key, i));
+  }
+  table.appendChild(tbody);
+  const tfoot = document.createElement("tfoot");
+  const totalTr = buildSummaryRow("Total", sortedKeys, curValues, linked, "border-top:2px solid var(--ios-border);", totalCurRefs, totalTgtRefs, totalDevRefs, maskConfig, visibleMetrics, visibleGreeks);
+  tfoot.appendChild(totalTr);
+  table.appendChild(tfoot);
+  tableContainer.appendChild(table);
+}
+;// ./src/frontend/trade_portfolio/components/governance/rebalanceIncrementalUpdate.ts
+
+
+
+
+function updateRebalanceIncremental(state, p) {
+  const {
+    priceRefs,
+    curRefs,
+    devRefs,
+    anchorByKey,
+    inputsByKey,
+    dirtyKeys,
+    totalCurRefs,
+    totalTgtRefs,
+    totalDevRefs,
+    eqTotalCurRefs,
+    eqTotalTgtRefs,
+    eqTotalDevRefs,
+    etfTotalCurRefs,
+    etfTotalTgtRefs,
+    etfTotalDevRefs,
+    watchlistTotalCurRefs,
+    watchlistTotalTgtRefs,
+    watchlistTotalDevRefs,
+    isMetricMasked,
+    isGreekMasked,
+    getDisplayMultiplier,
+    maskConfig,
+    MASKED_TEXT
+  } = state;
+  const betaHorizon = state.getBetaHorizon();
+  const curValues = new Map();
+  CURRENT_MODES.forEach(m => curValues.set(m, extractModeCurrentValues(m, p.derived, p.betaData, betaHorizon)));
+  const linked = resolveAllLinkedTargets(p.rebalanceTargets, p, betaHorizon);
+  const keys = state.getAllKeys(p);
+  keys.forEach(key => {
+    const priceEl = priceRefs.get(key);
+    if (priceEl) {
+      const priceVal = resolveQuoteLastPrice(key, p);
+      priceEl.textContent = typeof priceVal === "number" && Number.isFinite(priceVal) ? "$" + priceVal.toFixed(2) : "-";
+    }
+    CURRENT_MODES.forEach(mode => {
+      const cur = curValues.get(mode)?.get(key) ?? 0;
+      const curEl = curRefs.get(`${mode}:${key}`);
+      if (!curEl) return;
+      const masked = PRIVACY_HIDDEN_METRICS.has(mode) ? isMetricMasked(mode) : PRIVACY_HIDDEN_GREEKS.has(mode) ? isGreekMasked(mode) : false;
+      curEl.textContent = masked ? MASKED_TEXT : REBALANCE_MODES[mode].formatValue(cur * getDisplayMultiplier(mode));
+    });
+    const betaEl = curRefs.get(`_beta:${key}`);
+    if (betaEl) {
+      const betaRaw = p.betaData?.get(key)?.[betaHorizon]?.beta;
+      betaEl.textContent = typeof betaRaw === "number" && Number.isFinite(betaRaw) ? betaRaw.toFixed(2) : "-";
+    }
+    const lt = linked.get(key);
+    const anchor = anchorByKey.get(key);
+    const inputs = inputsByKey.get(key);
+    if (lt && inputs) {
+      if (!dirtyKeys.has(key)) {
+        TARGET_MODES.forEach(mode => {
+          if (mode === anchor) return;
+          const inp = inputs.get(mode);
+          if (inp) {
+            const config = REBALANCE_MODES[mode];
+            const mul = getDisplayMultiplier(mode);
+            inp.value = formatTargetInputValue(lt[mode] * mul, config.isPct);
+          }
+        });
+      }
+    }
+    DEVIATION_MODES.forEach(mode => {
+      const devEl = devRefs.get(`${mode}:${key}`);
+      if (!devEl) return;
+      if (isMetricMasked(mode)) {
+        devEl.textContent = MASKED_TEXT;
+        devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
+        return;
+      }
+      if (!lt) {
+        devEl.textContent = "-";
+        devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
+        return;
+      }
+      const cur = curValues.get(mode)?.get(key) ?? 0;
+      const tgt = lt[mode];
+      const dev = cur - tgt;
+      const mul = getDisplayMultiplier(mode);
+      devEl.textContent = (dev >= 0 ? "+" : "") + REBALANCE_MODES[mode].formatValue(dev * mul);
+      devEl.style.cssText = devSpanStyle(deviationColor(dev));
+    });
+  });
+  const lastEquityKeys = state.getLastEquityKeys();
+  const lastEtfKeys = state.getLastEtfKeys();
+  const lastWatchlistKeys = state.getLastWatchlistKeys();
+  if (lastEquityKeys.length > 0 && eqTotalCurRefs.size > 0) {
+    updateSummaryRefs(lastEquityKeys, curValues, linked, eqTotalCurRefs, eqTotalTgtRefs, eqTotalDevRefs, maskConfig);
+  }
+  if (lastEtfKeys.length > 0 && etfTotalCurRefs.size > 0) {
+    updateSummaryRefs(lastEtfKeys, curValues, linked, etfTotalCurRefs, etfTotalTgtRefs, etfTotalDevRefs, maskConfig);
+  }
+  if (lastWatchlistKeys.length > 0 && watchlistTotalCurRefs.size > 0) {
+    updateSummaryRefs(lastWatchlistKeys, curValues, linked, watchlistTotalCurRefs, watchlistTotalTgtRefs, watchlistTotalDevRefs, maskConfig);
+  }
+  updateSummaryRefs(keys, curValues, linked, totalCurRefs, totalTgtRefs, totalDevRefs, maskConfig);
+}
+;// ./src/frontend/trade_portfolio/components/governance/rebalanceTargetEditing.ts
+
+
+
+
+function createTargetEditing(state) {
+  const {
+    inputsByKey,
+    anchorByKey,
+    dirtyKeys,
+    devRefs,
+    profileSelect,
+    getDisplayMultiplier
+  } = state;
+  function parseAnchorInputValue(mode, rawValue) {
+    const value = parseFloat(rawValue);
+    if (!Number.isFinite(value)) return null;
+    const config = REBALANCE_MODES[mode];
+    if (config.isPct && (value < 0 || value > 100)) return null;
+    const mul = getDisplayMultiplier(mode);
+    const real = mul !== 1 ? value / mul : value;
+    return Math.round(real * 100) / 100;
+  }
+  function getAllKeys(p) {
+    const keys = new Set(Object.keys(p.derived.byUnderlying ?? {}));
+    if (p.rebalanceTargets) {
+      for (const k of Object.keys(p.rebalanceTargets)) keys.add(k);
+    }
+    if (p.extraBetaTickers) {
+      for (const k of p.extraBetaTickers) keys.add(k);
+    }
+    return [...keys].sort();
+  }
+  function saveUnderlyingTarget(key) {
+    const anchor = anchorByKey.get(key);
+    const inputs = inputsByKey.get(key);
+    if (!anchor || !inputs) return;
+    const anchorInput = inputs.get(anchor);
+    if (!anchorInput) return;
+    const v = parseAnchorInputValue(anchor, anchorInput.value);
+    state.setSelfTriggeredUpdate(true);
+    const latestPayload = state.getLatestPayload();
+    const merged = {
+      ...(latestPayload.rebalanceTargets ?? {})
+    };
+    if (v != null) {
+      merged[key] = {
+        anchor,
+        value: v
+      };
+    } else {
+      delete merged[key];
+      anchorByKey.delete(key);
+    }
+    state.setLastTargetsHash(JSON.stringify(merged));
+    latestPayload.onUpdateRebalanceTargets?.(merged);
+    dirtyKeys.delete(key);
+  }
+  function handleTargetInput(key, editedMode) {
+    const inputs = inputsByKey.get(key);
+    if (!inputs) return;
+    const editedInput = inputs.get(editedMode);
+    if (!editedInput) return;
+    const v = parseAnchorInputValue(editedMode, editedInput.value);
+    if (state.getSelectedProfileId()) {
+      state.setSelectedProfileId("");
+      profileSelect.value = "";
+    }
+    if (v == null) {
+      TARGET_MODES.forEach(m => {
+        if (m !== editedMode) {
+          const inp = inputs.get(m);
+          if (inp) inp.value = "";
+        }
+      });
+      anchorByKey.delete(key);
+      updateAnchorVisuals(key);
+      updateDeviationCells(key, null);
+      dirtyKeys.add(key);
+      return;
+    }
+    anchorByKey.set(key, editedMode);
+    dirtyKeys.add(key);
+    const entry = {
+      anchor: editedMode,
+      value: v
+    };
+    const latestPayload = state.getLatestPayload();
+    const betaHorizon = state.getBetaHorizon();
+    const price = resolveQuoteLastPrice(key, latestPayload) ?? 0;
+    const betaRaw = latestPayload.betaData?.get(key)?.[betaHorizon]?.beta;
+    const beta = typeof betaRaw === "number" && Number.isFinite(betaRaw) ? betaRaw : 1;
+    const acctVal = latestPayload.derived.portfolioAgg?.netMarketValue ?? 1;
+    const linked = computeLinkedTargets(entry, price, beta, acctVal);
+    TARGET_MODES.forEach(m => {
+      if (m === editedMode) return;
+      const inp = inputs.get(m);
+      if (inp) {
+        const config = REBALANCE_MODES[m];
+        const mul = getDisplayMultiplier(m);
+        inp.value = formatTargetInputValue(linked[m] * mul, config.isPct);
+      }
+    });
+    updateAnchorVisuals(key);
+    updateDeviationCells(key, linked);
+  }
+  function updateAnchorVisuals(key) {
+    const anchor = anchorByKey.get(key);
+    const inputs = inputsByKey.get(key);
+    if (!inputs) return;
+    TARGET_MODES.forEach(m => {
+      const inp = inputs.get(m);
+      if (!inp) return;
+      if (m === anchor) {
+        inp.style.cssText = cellInputStyle + " border-color:var(--ios-blue); background:rgba(0,122,255,0.06);";
+      } else {
+        inp.style.cssText = cellInputStyle;
+      }
+    });
+  }
+  function updateDeviationCells(key, linked) {
+    const latestPayload = state.getLatestPayload();
+    const betaHorizon = state.getBetaHorizon();
+    DEVIATION_MODES.forEach(mode => {
+      const devEl = devRefs.get(`${mode}:${key}`);
+      if (!devEl) return;
+      if (!linked) {
+        devEl.textContent = "-";
+        devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
+        return;
+      }
+      const curMap = extractModeCurrentValues(mode, latestPayload.derived, latestPayload.betaData, betaHorizon);
+      const cur = curMap.get(key) ?? 0;
+      const tgt = linked[mode];
+      const dev = cur - tgt;
+      const mul = getDisplayMultiplier(mode);
+      devEl.textContent = (dev >= 0 ? "+" : "") + REBALANCE_MODES[mode].formatValue(dev * mul);
+      devEl.style.cssText = devSpanStyle(deviationColor(dev));
+    });
+  }
+  return {
+    parseAnchorInputValue,
+    getAllKeys,
+    saveUnderlyingTarget,
+    handleTargetInput,
+    updateAnchorVisuals,
+    updateDeviationCells
+  };
+}
+;// ./src/frontend/trade_portfolio/components/governance/rebalanceProfileIO.ts
+
+function downloadProfiles(profiles) {
+  if (profiles.length === 0) return;
+  const data = JSON.stringify({
+    version: 1,
+    exportedAt: Date.now(),
+    profiles
+  }, null, 2);
+  const blob = new Blob([data], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const d = new Date();
+  const pad2 = v => String(v).padStart(2, "0");
+  a.download = `rebalance-profiles-${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function parseImportedProfiles(jsonText) {
+  const parsed = JSON.parse(jsonText);
+  const incoming = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.profiles) ? parsed.profiles : [];
+  if (incoming.length === 0) return [];
+  const validated = [];
+  for (const entry of incoming) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const candidate = entry;
+    const rawTargets = candidate.rebalanceTargets;
+    if (!rawTargets || typeof rawTargets !== "object" || Array.isArray(rawTargets)) continue;
+    const targets = {};
+    for (const [key, val] of Object.entries(rawTargets)) {
+      if (!val || typeof val !== "object" || Array.isArray(val)) continue;
+      const e = val;
+      const anchor = e.anchor;
+      const value = Number(e.value);
+      if (!TARGET_MODE_SET.has(anchor) || !Number.isFinite(value)) continue;
+      targets[key] = {
+        anchor,
+        value: Math.round(value * 100) / 100
+      };
+    }
+    if (Object.keys(targets).length === 0) continue;
+    const createdAtRaw = Number(candidate.createdAt);
+    const createdAt = Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? Math.round(createdAtRaw) : Date.now();
+    const id = typeof candidate.id === "string" && candidate.id.trim().length > 0 ? candidate.id.trim().slice(0, 80) : `rp_${createdAt}_${Math.random().toString(36).slice(2, 8)}`;
+    const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim().slice(0, 160) : new Date(createdAt).toISOString().slice(0, 16).replace("T", " ");
+    validated.push({
+      id,
+      name,
+      createdAt,
+      rebalanceTargets: targets
+    });
+  }
+  return validated;
+}
+;// ./src/frontend/trade_portfolio/components/governance/rebalanceProfileActions.ts
+
+
+function setupProfileActions(state) {
+  const {
+    profileSelect,
+    saveProfileBtn,
+    loadProfileBtn,
+    deleteProfileBtn,
+    exportSelectedBtn,
+    exportAllBtn,
+    importFileBtn,
+    inputsByKey,
+    anchorByKey,
+    dirtyKeys,
+    parseAnchorInputValue
+  } = state;
+  function listProfiles(p) {
+    return [...(p.rebalanceProfiles ?? [])].sort((a, b) => b.createdAt - a.createdAt);
+  }
+  function collectCurrentTargets() {
+    const result = {};
+    anchorByKey.forEach((anchor, key) => {
+      const inputs = inputsByKey.get(key);
+      if (!inputs) return;
+      const input = inputs.get(anchor);
+      if (!input) return;
+      const v = parseAnchorInputValue(anchor, input.value);
+      if (v != null) result[key] = {
+        anchor,
+        value: v
+      };
+    });
+    return result;
+  }
+  function setButtonEnabled(btn, enabled) {
+    btn.disabled = !enabled;
+    btn.style.opacity = enabled ? "1" : "0.5";
+    btn.style.cursor = enabled ? "pointer" : "not-allowed";
+  }
+  function syncProfileControls(p) {
+    const profiles = listProfiles(p);
+    const profileHash = profiles.map(x => `${x.id}|${x.name}|${x.createdAt}`).join("||");
+    if (profileHash !== state.getLastProfilesHash()) {
+      profileSelect.innerHTML = "";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = profiles.length > 0 ? "Portfolio ..." : "No portfolio saved";
+      profileSelect.appendChild(placeholder);
+      profiles.forEach(profile => {
+        const option = document.createElement("option");
+        option.value = profile.id;
+        option.textContent = profile.name;
+        profileSelect.appendChild(option);
+      });
+      state.setLastProfilesHash(profileHash);
+    }
+    let selectedProfileId = state.getSelectedProfileId();
+    if (selectedProfileId && !profiles.some(profile => profile.id === selectedProfileId)) {
+      selectedProfileId = "";
+    }
+    if (!selectedProfileId && profiles.length > 0) {
+      selectedProfileId = profiles[0].id;
+    }
+    state.setSelectedProfileId(selectedProfileId);
+    profileSelect.value = selectedProfileId || "";
+    const hasSelection = selectedProfileId.length > 0;
+    setButtonEnabled(loadProfileBtn, hasSelection);
+    setButtonEnabled(deleteProfileBtn, hasSelection);
+    setButtonEnabled(exportAllBtn, profiles.length > 0);
+    setButtonEnabled(exportSelectedBtn, hasSelection);
+  }
+  function getSelectedProfile() {
+    const selectedId = state.getSelectedProfileId() || profileSelect.value;
+    if (!selectedId) return null;
+    const profiles = state.getLatestPayload().rebalanceProfiles ?? [];
+    return profiles.find(profile => profile.id === selectedId) ?? null;
+  }
+  function applyTargets(nextTargets) {
+    dirtyKeys.clear();
+    const cloned = cloneTargets(nextTargets);
+    state.setSelfTriggeredUpdate(true);
+    state.setLastTargetsHash(JSON.stringify(cloned));
+    const latestPayload = state.getLatestPayload();
+    const optimisticPayload = {
+      ...latestPayload,
+      rebalanceTargets: cloned
+    };
+    state.setLatestPayload(optimisticPayload);
+    optimisticPayload.onUpdateRebalanceTargets?.(cloned);
+    state.renderAll(optimisticPayload);
+  }
+  profileSelect.addEventListener("change", () => {
+    state.setSelectedProfileId(profileSelect.value || "");
+    syncProfileControls(state.getLatestPayload());
+  });
+  saveProfileBtn.addEventListener("click", () => {
+    const ts = Date.now();
+    const nextTargets = collectCurrentTargets();
+    applyTargets(nextTargets);
+    const latestPayload = state.getLatestPayload();
+    const profile = {
+      id: `rp_${ts}_${Math.random().toString(36).slice(2, 8)}`,
+      name: buildAutoProfileName(nextTargets, latestPayload, ts, state.getBetaHorizon()),
+      createdAt: ts,
+      rebalanceTargets: cloneTargets(nextTargets)
+    };
+    const currentProfiles = listProfiles(latestPayload);
+    const nextProfiles = [profile, ...currentProfiles].slice(0, MAX_REBALANCE_PROFILES);
+    state.setSelectedProfileId(profile.id);
+    latestPayload.onUpdateRebalanceProfiles?.(nextProfiles);
+    state.renderAll({
+      ...latestPayload,
+      rebalanceProfiles: nextProfiles
+    });
+  });
+  loadProfileBtn.addEventListener("click", () => {
+    const selected = getSelectedProfile();
+    if (!selected) return;
+    state.setSelectedProfileId(selected.id);
+    state.setRenderedKeyList("");
+    applyTargets(selected.rebalanceTargets);
+  });
+  deleteProfileBtn.addEventListener("click", () => {
+    const selected = getSelectedProfile();
+    if (!selected) return;
+    const latestPayload = state.getLatestPayload();
+    const nextProfiles = listProfiles(latestPayload).filter(profile => profile.id !== selected.id);
+    state.setSelectedProfileId(nextProfiles[0]?.id ?? "");
+    latestPayload.onUpdateRebalanceProfiles?.(nextProfiles);
+    state.renderAll({
+      ...latestPayload,
+      rebalanceProfiles: nextProfiles
+    });
+  });
+  exportAllBtn.addEventListener("click", () => {
+    downloadProfiles(listProfiles(state.getLatestPayload()));
+  });
+  exportSelectedBtn.addEventListener("click", () => {
+    const selected = getSelectedProfile();
+    if (!selected) return;
+    downloadProfiles([selected]);
+  });
+  importFileBtn.addEventListener("click", () => {
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = ".json";
+    fileInput.style.display = "none";
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files?.[0];
+      if (!file || file.size > 2 * 1024 * 1024) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const validated = parseImportedProfiles(reader.result);
+          if (validated.length === 0) return;
+          const latestPayload = state.getLatestPayload();
+          const existing = listProfiles(latestPayload);
+          const existingTimestamps = new Set(existing.map(p => p.createdAt));
+          const merged = [...existing, ...validated.filter(p => !existingTimestamps.has(p.createdAt))].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_REBALANCE_PROFILES);
+          latestPayload.onUpdateRebalanceProfiles?.(merged);
+          state.renderAll({
+            ...latestPayload,
+            rebalanceProfiles: merged
+          });
+        } catch {
+          /* ignore malformed JSON */
+        }
+      };
+      reader.readAsText(file);
+    });
+    document.body.appendChild(fileInput);
+    fileInput.click();
+    document.body.removeChild(fileInput);
+  });
+  return {
+    syncProfileControls
+  };
+}
 ;// ./src/frontend/trade_portfolio/components/governance/RebalanceIdeasPanel.ts
+
 
 
 
@@ -31879,188 +32217,70 @@ function renderRebalanceIdeasPanel(payload) {
   let lastTargetsHash = "";
   let lastProfilesHash = "";
   let selectedProfileId = "";
-  function listProfiles(p) {
-    return [...(p.rebalanceProfiles ?? [])].sort((a, b) => b.createdAt - a.createdAt);
-  }
-  function collectCurrentTargets() {
-    const result = {};
-    anchorByKey.forEach((anchor, key) => {
-      const inputs = inputsByKey.get(key);
-      if (!inputs) return;
-      const input = inputs.get(anchor);
-      if (!input) return;
-      const v = parseAnchorInputValue(anchor, input.value);
-      if (v != null) result[key] = {
-        anchor,
-        value: v
-      };
-    });
-    return result;
-  }
-  function setButtonEnabled(btn, enabled) {
-    btn.disabled = !enabled;
-    btn.style.opacity = enabled ? "1" : "0.5";
-    btn.style.cursor = enabled ? "pointer" : "not-allowed";
-  }
-  function syncProfileControls(p) {
-    const profiles = listProfiles(p);
-    const profileHash = profiles.map(x => `${x.id}|${x.name}|${x.createdAt}`).join("||");
-    if (profileHash !== lastProfilesHash) {
-      profileSelect.innerHTML = "";
-      const placeholder = document.createElement("option");
-      placeholder.value = "";
-      placeholder.textContent = profiles.length > 0 ? "Portfolio ..." : "No portfolio saved";
-      profileSelect.appendChild(placeholder);
-      profiles.forEach(profile => {
-        const option = document.createElement("option");
-        option.value = profile.id;
-        option.textContent = profile.name;
-        profileSelect.appendChild(option);
-      });
-      lastProfilesHash = profileHash;
-    }
-    if (selectedProfileId && !profiles.some(profile => profile.id === selectedProfileId)) {
-      selectedProfileId = "";
-    }
-    if (!selectedProfileId && profiles.length > 0) {
-      selectedProfileId = profiles[0].id;
-    }
-    profileSelect.value = selectedProfileId || "";
-    const hasSelection = selectedProfileId.length > 0;
-    setButtonEnabled(loadProfileBtn, hasSelection);
-    setButtonEnabled(deleteProfileBtn, hasSelection);
-    setButtonEnabled(exportAllBtn, profiles.length > 0);
-    setButtonEnabled(exportSelectedBtn, hasSelection);
-  }
-  function parseAnchorInputValue(mode, rawValue) {
-    const value = parseFloat(rawValue);
-    if (!Number.isFinite(value)) return null;
-    const config = REBALANCE_MODES[mode];
-    if (config.isPct && (value < 0 || value > 100)) return null;
-    // Reverse the display multiplier so persisted value is always 1x
-    const mul = getDisplayMultiplier(mode);
-    const real = mul !== 1 ? value / mul : value;
-    return Math.round(real * 100) / 100;
-  }
-  function getAllKeys(p) {
-    const keys = new Set(Object.keys(p.derived.byUnderlying ?? {}));
-    if (p.rebalanceTargets) {
-      for (const k of Object.keys(p.rebalanceTargets)) keys.add(k);
-    }
-    if (p.extraBetaTickers) {
-      for (const k of p.extraBetaTickers) keys.add(k);
-    }
-    return [...keys].sort();
-  }
-  function saveUnderlyingTarget(key) {
-    const anchor = anchorByKey.get(key);
-    const inputs = inputsByKey.get(key);
-    if (!anchor || !inputs) return;
-    const anchorInput = inputs.get(anchor);
-    if (!anchorInput) return;
-    const v = parseAnchorInputValue(anchor, anchorInput.value);
-    selfTriggeredUpdate = true;
-    const merged = {
-      ...(latestPayload.rebalanceTargets ?? {})
-    };
-    if (v != null) {
-      merged[key] = {
-        anchor,
-        value: v
-      };
-    } else {
-      delete merged[key];
-      anchorByKey.delete(key);
-    }
-    lastTargetsHash = JSON.stringify(merged);
-    latestPayload.onUpdateRebalanceTargets?.(merged);
-    dirtyKeys.delete(key);
-  }
-
-  /** When user types in a target input, update linked values. */
-  function handleTargetInput(key, editedMode) {
-    const inputs = inputsByKey.get(key);
-    if (!inputs) return;
-    const editedInput = inputs.get(editedMode);
-    if (!editedInput) return;
-    const v = parseAnchorInputValue(editedMode, editedInput.value);
-
-    // User modified targets — deselect loaded profile
-    if (selectedProfileId) {
-      selectedProfileId = "";
-      profileSelect.value = "";
-    }
-    if (v == null) {
-      // User cleared the field — clear all linked fields and anchor
-      TARGET_MODES.forEach(m => {
-        if (m !== editedMode) {
-          const inp = inputs.get(m);
-          if (inp) inp.value = "";
-        }
-      });
-      anchorByKey.delete(key);
-      updateAnchorVisuals(key);
-      updateDeviationCells(key, null);
-      dirtyKeys.add(key);
-      return;
-    }
-    anchorByKey.set(key, editedMode);
-    dirtyKeys.add(key);
-    const entry = {
-      anchor: editedMode,
-      value: v
-    };
-    const price = resolveQuoteLastPrice(key, latestPayload) ?? 0;
-    const betaRaw = latestPayload.betaData?.get(key)?.[betaHorizon]?.beta;
-    const beta = typeof betaRaw === "number" && Number.isFinite(betaRaw) ? betaRaw : 1;
-    const acctVal = latestPayload.derived.portfolioAgg?.netMarketValue ?? 1;
-    const linked = computeLinkedTargets(entry, price, beta, acctVal);
-
-    // Fill other inputs with derived values (display-multiplied)
-    TARGET_MODES.forEach(m => {
-      if (m === editedMode) return;
-      const inp = inputs.get(m);
-      if (inp) {
-        const config = REBALANCE_MODES[m];
-        const mul = getDisplayMultiplier(m);
-        inp.value = formatTargetInputValue(linked[m] * mul, config.isPct);
-      }
-    });
-    updateAnchorVisuals(key);
-    updateDeviationCells(key, linked);
-  }
-  function updateAnchorVisuals(key) {
-    const anchor = anchorByKey.get(key);
-    const inputs = inputsByKey.get(key);
-    if (!inputs) return;
-    TARGET_MODES.forEach(m => {
-      const inp = inputs.get(m);
-      if (!inp) return;
-      if (m === anchor) {
-        inp.style.cssText = cellInputStyle + " border-color:var(--ios-blue); background:rgba(0,122,255,0.06);";
-      } else {
-        inp.style.cssText = cellInputStyle;
-      }
-    });
-  }
-  function updateDeviationCells(key, linked) {
-    DEVIATION_MODES.forEach(mode => {
-      const devEl = devRefs.get(`${mode}:${key}`);
-      if (!devEl) return;
-      if (!linked) {
-        devEl.textContent = "-";
-        devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
-        return;
-      }
-      const curMap = extractModeCurrentValues(mode, latestPayload.derived, latestPayload.betaData, betaHorizon);
-      const cur = curMap.get(key) ?? 0;
-      const tgt = linked[mode];
-      const dev = cur - tgt;
-      const mul = getDisplayMultiplier(mode);
-      devEl.textContent = (dev >= 0 ? "+" : "") + REBALANCE_MODES[mode].formatValue(dev * mul);
-      devEl.style.cssText = devSpanStyle(deviationColor(dev));
-    });
-  }
+  const {
+    parseAnchorInputValue,
+    getAllKeys,
+    saveUnderlyingTarget,
+    handleTargetInput,
+    updateAnchorVisuals
+  } = createTargetEditing({
+    inputsByKey,
+    anchorByKey,
+    dirtyKeys,
+    devRefs,
+    profileSelect,
+    getLatestPayload: () => latestPayload,
+    getBetaHorizon: () => betaHorizon,
+    getSelectedProfileId: () => selectedProfileId,
+    setSelectedProfileId: s => {
+      selectedProfileId = s;
+    },
+    setSelfTriggeredUpdate: b => {
+      selfTriggeredUpdate = b;
+    },
+    setLastTargetsHash: s => {
+      lastTargetsHash = s;
+    },
+    getDisplayMultiplier
+  });
+  const {
+    syncProfileControls
+  } = setupProfileActions({
+    profileSelect,
+    saveProfileBtn,
+    loadProfileBtn,
+    deleteProfileBtn,
+    exportSelectedBtn,
+    exportAllBtn,
+    importFileBtn,
+    inputsByKey,
+    anchorByKey,
+    dirtyKeys,
+    getLatestPayload: () => latestPayload,
+    setLatestPayload: p => {
+      latestPayload = p;
+    },
+    getBetaHorizon: () => betaHorizon,
+    getSelectedProfileId: () => selectedProfileId,
+    setSelectedProfileId: s => {
+      selectedProfileId = s;
+    },
+    getLastProfilesHash: () => lastProfilesHash,
+    setLastProfilesHash: s => {
+      lastProfilesHash = s;
+    },
+    setSelfTriggeredUpdate: b => {
+      selfTriggeredUpdate = b;
+    },
+    setLastTargetsHash: s => {
+      lastTargetsHash = s;
+    },
+    setRenderedKeyList: s => {
+      renderedKeyList = s;
+    },
+    parseAnchorInputValue,
+    renderAll: p => renderAll(p)
+  });
   const maskConfig = {
     isMetricMasked,
     isGreekMasked,
@@ -32083,433 +32303,91 @@ function renderRebalanceIdeasPanel(payload) {
 
   // ── Build unified metrics table ──
   function buildTable(p) {
-    tableContainer.innerHTML = "";
-    curRefs.clear();
-    tgtRefs.clear();
-    devRefs.clear();
-    priceRefs.clear();
-    totalCurRefs.clear();
-    totalTgtRefs.clear();
-    totalDevRefs.clear();
-    eqTotalCurRefs.clear();
-    eqTotalTgtRefs.clear();
-    eqTotalDevRefs.clear();
-    etfTotalCurRefs.clear();
-    etfTotalTgtRefs.clear();
-    etfTotalDevRefs.clear();
-    watchlistTotalCurRefs.clear();
-    watchlistTotalTgtRefs.clear();
-    watchlistTotalDevRefs.clear();
-    const keys = getAllKeys(p);
-    renderedKeyList = keys.join(",");
-    lastTargetsHash = JSON.stringify(p.rebalanceTargets ?? {});
-
-    // Compute current values for all display modes
-    const curValues = new Map();
-    CURRENT_MODES.forEach(m => curValues.set(m, extractModeCurrentValues(m, p.derived, p.betaData, betaHorizon)));
-
-    // Resolve linked targets for all underlyings
-    const linked = resolveAllLinkedTargets(p.rebalanceTargets, p, betaHorizon);
-
-    // Populate anchor state from persisted targets
-    anchorByKey.clear();
-    if (p.rebalanceTargets) {
-      for (const [key, entry] of Object.entries(p.rebalanceTargets)) {
-        anchorByKey.set(key, entry.anchor);
-      }
-    }
-
-    // Sort keys
-    const sortedKeys = [...keys];
-    if (sortKey) {
-      const sk = sortKey;
-      const dir = sortAsc ? 1 : -1;
-      if (sk === "underlying") {
-        sortedKeys.sort((a, b) => a.localeCompare(b) * dir);
-      } else if (sk.startsWith("tgt:")) {
-        const mode = sk.slice(4);
-        sortedKeys.sort((a, b) => ((linked.get(a)?.[mode] ?? 0) - (linked.get(b)?.[mode] ?? 0)) * dir);
-      } else if (sk.startsWith("dev:")) {
-        const mode = sk.slice(4);
-        sortedKeys.sort((a, b) => {
-          const curA = curValues.get(mode)?.get(a) ?? 0;
-          const curB = curValues.get(mode)?.get(b) ?? 0;
-          const devA = (linked.get(a)?.[mode] ?? curA) - curA;
-          const devB = (linked.get(b)?.[mode] ?? curB) - curB;
-          return (devA - devB) * dir;
-        });
-      } else if (sk === "_beta") {
-        sortedKeys.sort((a, b) => {
-          const bA = p.betaData?.get(a)?.[betaHorizon]?.beta ?? 0;
-          const bB = p.betaData?.get(b)?.[betaHorizon]?.beta ?? 0;
-          return (bA - bB) * dir;
-        });
-      } else {
-        const vals = curValues.get(sk);
-        sortedKeys.sort((a, b) => ((vals?.get(a) ?? 0) - (vals?.get(b) ?? 0)) * dir);
-      }
-    }
-    const table = document.createElement("table");
-    table.style.cssText = tableStyle + " border-collapse:collapse; table-layout:auto; width:max-content; min-width:100%;";
-
-    // ── thead ──
-    const thead = document.createElement("thead");
-
-    // ── Group header row (metric names) ──
-    const visibleMetrics = getVisibleMetricGroups();
-    const visibleGreeks = getVisibleGreekModes();
-    const groupRow = document.createElement("tr");
-    const emptyTh = document.createElement("th");
-    emptyTh.colSpan = 2; // Ticker + Price
-    emptyTh.style.cssText = thStyle + " padding:2px 4px;";
-    groupRow.appendChild(emptyTh);
-    visibleMetrics.forEach(m => {
-      const gh = document.createElement("th");
-      gh.colSpan = 3; // Current, Target, Deviation
-      gh.textContent = REBALANCE_MODES[m].shortLabel;
-      gh.style.cssText = thStyle + " text-align:center; font-size:11px; padding:2px 4px; letter-spacing:0.5px;" + groupBorderStyle;
-      groupRow.appendChild(gh);
-    });
-    const greekGroupTh = document.createElement("th");
-    greekGroupTh.colSpan = visibleGreeks.length + 1; // +1 for β
-    greekGroupTh.textContent = "Greeks";
-    greekGroupTh.style.cssText = thStyle + " text-align:center; font-size:11px; padding:2px 4px; letter-spacing:0.5px;" + groupBorderStyle;
-    groupRow.appendChild(greekGroupTh);
-    thead.appendChild(groupRow);
-
-    // ── Sub-header row (C/T/D labels + Greek labels) ──
-    const lr = document.createElement("tr");
-    // Ticker header
-    const ulTh = document.createElement("th");
-    const ulArrow = sortKey === "underlying" ? sortAsc ? " \u25B2" : " \u25BC" : "";
-    ulTh.textContent = "Ticker" + ulArrow;
-    ulTh.style.cssText = thStyle + " width:60px; min-width:60px; font-size:11px; padding:3px 6px; cursor:pointer; user-select:none;";
-    ulTh.addEventListener("click", () => handleSort("underlying"));
-    lr.appendChild(ulTh);
-
-    // Price header
-    const priceTh = document.createElement("th");
-    priceTh.textContent = "Price";
-    priceTh.style.cssText = thStyle + " min-width:52px; font-size:11px; padding:3px 4px; text-align:right;";
-    lr.appendChild(priceTh);
-
-    // Per-metric sub-headers: current, target, dev (all sortable)
-    const sortableThStyle = thStyle + " min-width:52px; font-size:11px; padding:3px 4px; text-align:right; cursor:pointer; user-select:none;";
-    visibleMetrics.forEach(m => {
-      const cArrow = sortKey === m ? sortAsc ? " \u25B2" : " \u25BC" : "";
-      const cTh = document.createElement("th");
-      cTh.textContent = "current" + cArrow;
-      cTh.title = REBALANCE_MODES[m].label + " current (click to sort)";
-      cTh.style.cssText = sortableThStyle + groupBorderStyle;
-      cTh.addEventListener("click", () => handleSort(m));
-      lr.appendChild(cTh);
-      const tKey = `tgt:${m}`;
-      const tArrow = sortKey === tKey ? sortAsc ? " \u25B2" : " \u25BC" : "";
-      const tTh = document.createElement("th");
-      tTh.textContent = "target" + tArrow;
-      tTh.title = REBALANCE_MODES[m].label + " target (click to sort)";
-      tTh.style.cssText = sortableThStyle;
-      tTh.addEventListener("click", () => handleSort(tKey));
-      lr.appendChild(tTh);
-      const dKey = `dev:${m}`;
-      const dArrow = sortKey === dKey ? sortAsc ? " \u25B2" : " \u25BC" : "";
-      const dTh = document.createElement("th");
-      dTh.textContent = "dev" + dArrow;
-      dTh.title = REBALANCE_MODES[m].label + " deviation (click to sort)";
-      dTh.style.cssText = sortableThStyle;
-      dTh.addEventListener("click", () => handleSort(dKey));
-      lr.appendChild(dTh);
-    });
-
-    // Beta (raw) header — first in Greeks group (sortable)
-    const betaArrow = sortKey === "_beta" ? sortAsc ? " \u25B2" : " \u25BC" : "";
-    const betaTh = document.createElement("th");
-    betaTh.textContent = "\u03B2" + betaArrow;
-    betaTh.title = "Beta (click to sort)";
-    betaTh.style.cssText = thStyle + " min-width:42px; font-size:11px; padding:3px 4px; text-align:right; cursor:pointer; user-select:none;" + groupBorderStyle;
-    betaTh.addEventListener("click", () => handleSort("_beta"));
-    lr.appendChild(betaTh);
-
-    // Greek sub-headers (each sortable)
-    visibleGreeks.forEach(m => {
-      const arrow = sortKey === m ? sortAsc ? " \u25B2" : " \u25BC" : "";
-      const th = document.createElement("th");
-      th.textContent = REBALANCE_MODES[m].shortLabel + arrow;
-      th.title = REBALANCE_MODES[m].label + " (click to sort)";
-      th.style.cssText = thStyle + " min-width:48px; font-size:11px; padding:3px 4px; text-align:right; cursor:pointer; user-select:none;";
-      th.addEventListener("click", () => handleSort(m));
-      lr.appendChild(th);
-    });
-    thead.appendChild(lr);
-    table.appendChild(thead);
-
-    // ── tbody ──
-    const tbody = document.createElement("tbody");
-    const byU = p.derived.byUnderlying ?? {};
-
-    // Partition into equity/ETF/watchlist groups
-    const etfSet = p.etfUnderlyingKeys ?? new Set();
-    const holdingKeys = new Set(Object.keys(byU));
-    const equityKeys = [];
-    const etfKeys = [];
-    const watchlistKeys = [];
-    for (const key of sortedKeys) {
-      if (!holdingKeys.has(key)) {
-        watchlistKeys.push(key);
-      } else if (etfSet.has(key)) {
-        etfKeys.push(key);
-      } else {
-        equityKeys.push(key);
-      }
-    }
-    lastEquityKeys = equityKeys;
-    lastEtfKeys = etfKeys;
-    lastWatchlistKeys = watchlistKeys;
-    const hasBothGroups = equityKeys.length > 0 && etfKeys.length > 0;
-    const hasWatchlist = watchlistKeys.length > 0;
-    function appendDataRow(key, zebraIdx) {
-      const tr = document.createElement("tr");
-      if (zebraIdx % 2 === 1) tr.style.background = "var(--ax-bg-glass-inset)";
-
-      // Ticker cell
-      const tdSym = document.createElement("td");
-      tdSym.textContent = key;
-      tdSym.style.cssText = tdStyle + " width:60px; min-width:60px; font-weight:600; font-size:13px; padding:3px 6px; white-space:nowrap;";
-      tr.appendChild(tdSym);
-
-      // Price cell
-      const priceVal = resolveQuoteLastPrice(key, p);
-      const priceText = typeof priceVal === "number" && Number.isFinite(priceVal) ? "$" + priceVal.toFixed(2) : "-";
-      const tdPrice = document.createElement("td");
-      tdPrice.textContent = priceText;
-      tdPrice.style.cssText = curCellStyle + " text-align:right; font-size:12px; color:var(--ios-text-secondary); font-variant-numeric:tabular-nums;";
-      priceRefs.set(key, tdPrice);
-      tr.appendChild(tdPrice);
-
-      // Per-metric groups: Current, Target, Deviation for each visible metric
-      const lt = linked.get(key);
-      const hasTarget = !!lt;
-      const keyInputs = new Map();
-      visibleMetrics.forEach(mode => {
-        const config = REBALANCE_MODES[mode];
-        const masked = isMetricMasked(mode);
-        const mul = getDisplayMultiplier(mode);
-
-        // Current value cell
-        const cur = curValues.get(mode)?.get(key) ?? 0;
-        const tdCur = document.createElement("td");
-        tdCur.style.cssText = curCellStyle + " text-align:right;" + groupBorderStyle;
-        const curEl = document.createElement("span");
-        curEl.textContent = masked ? MASKED_TEXT : config.formatValue(cur * mul);
-        curEl.style.cssText = curSpanStyle;
-        curRefs.set(`${mode}:${key}`, curEl);
-        tdCur.appendChild(curEl);
-        tr.appendChild(tdCur);
-
-        // Target input cell
-        const tdTgt = document.createElement("td");
-        tdTgt.style.cssText = tgtCellStyle;
-        if (masked) {
-          const maskedSpan = document.createElement("span");
-          maskedSpan.textContent = MASKED_TEXT;
-          maskedSpan.style.cssText = "font-size:12px; color:var(--ios-text-secondary);";
-          tdTgt.appendChild(maskedSpan);
-        } else {
-          let input = inputsByKey.get(key)?.get(mode);
-          if (!input) {
-            input = document.createElement("input");
-            input.type = "number";
-            input.step = config.isPct ? "0.5" : "any";
-            if (config.isPct) {
-              input.min = "0";
-              input.max = "100";
-            }
-            input.placeholder = "\u2014";
-            const capturedMode = mode;
-            const capturedKey = key;
-            input.addEventListener("input", () => {
-              handleTargetInput(capturedKey, capturedMode);
-            });
-            input.addEventListener("change", () => {
-              saveUnderlyingTarget(capturedKey);
-            });
-          }
-          if (hasTarget) {
-            input.value = formatTargetInputValue(lt[mode] * mul, config.isPct);
-          } else {
-            input.value = "";
-          }
-          input.style.cssText = cellInputStyle;
-          keyInputs.set(mode, input);
-          tdTgt.appendChild(input);
-        }
-        tr.appendChild(tdTgt);
-
-        // Deviation cell
-        const tdDev = document.createElement("td");
-        tdDev.style.cssText = devCellStyle + " text-align:right;";
-        const devEl = document.createElement("span");
-        if (masked) {
-          devEl.textContent = MASKED_TEXT;
-          devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
-        } else if (hasTarget) {
-          const tgt = lt[mode];
-          const dev = cur - tgt;
-          devEl.textContent = (dev >= 0 ? "+" : "") + config.formatValue(dev * mul);
-          devEl.style.cssText = devSpanStyle(deviationColor(dev));
-        } else {
-          devEl.textContent = "-";
-          devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
-        }
-        devRefs.set(`${mode}:${key}`, devEl);
-        tdDev.appendChild(devEl);
-        tr.appendChild(tdDev);
-      });
-      inputsByKey.set(key, keyInputs);
-      updateAnchorVisuals(key);
-
-      // Beta (raw) cell — first in Greeks group
-      const betaRaw = p.betaData?.get(key)?.[betaHorizon]?.beta;
-      const betaVal = typeof betaRaw === "number" && Number.isFinite(betaRaw) ? betaRaw : null;
-      const tdBeta = document.createElement("td");
-      tdBeta.textContent = betaVal != null ? betaVal.toFixed(2) : "-";
-      tdBeta.style.cssText = curCellStyle + " text-align:right; font-size:12px; color:var(--ios-text-secondary); font-variant-numeric:tabular-nums;" + groupBorderStyle;
-      curRefs.set(`_beta:${key}`, tdBeta);
-      tr.appendChild(tdBeta);
-
-      // Greeks (current only, masked in privacy mode)
-      visibleGreeks.forEach(mode => {
-        const config = REBALANCE_MODES[mode];
-        const cur = curValues.get(mode)?.get(key) ?? 0;
-        const td = document.createElement("td");
-        td.style.cssText = curCellStyle + " text-align:right;";
-        const curEl = document.createElement("span");
-        curEl.textContent = isGreekMasked(mode) ? MASKED_TEXT : config.formatValue(cur * getDisplayMultiplier(mode));
-        curEl.style.cssText = curSpanStyle;
-        curRefs.set(`${mode}:${key}`, curEl);
-        td.appendChild(curEl);
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    }
-    if (hasBothGroups || hasWatchlist) {
-      let hasRenderedSection = false;
-      const appendGroupedSection = (sectionKeys, summaryLabel, curRefMap, tgtRefMap, devRefMap) => {
-        if (sectionKeys.length === 0) return;
-        if (hasRenderedSection) {
-          const [repeatGroupRow, repeatSubRow] = buildRepeatedHeaderRows(visibleMetrics, visibleGreeks);
-          tbody.appendChild(repeatGroupRow);
-          tbody.appendChild(repeatSubRow);
-        }
-        sectionKeys.forEach((key, i) => appendDataRow(key, i));
-        tbody.appendChild(buildSummaryRow(summaryLabel, sectionKeys, curValues, linked, "border-top:2px solid var(--ios-border); background:var(--ax-bg-glass-inset); font-weight:700;", curRefMap, tgtRefMap, devRefMap, maskConfig, visibleMetrics, visibleGreeks));
-        hasRenderedSection = true;
-      };
-      if (equityKeys.length > 0) {
-        appendGroupedSection(equityKeys, "Equities Summary", eqTotalCurRefs, eqTotalTgtRefs, eqTotalDevRefs);
-      }
-      if (etfKeys.length > 0) {
-        appendGroupedSection(etfKeys, "ETFs Summary", etfTotalCurRefs, etfTotalTgtRefs, etfTotalDevRefs);
-      }
-      if (hasWatchlist) {
-        appendGroupedSection(watchlistKeys, "Watchlist Summary", watchlistTotalCurRefs, watchlistTotalTgtRefs, watchlistTotalDevRefs);
-      }
-    } else {
-      sortedKeys.forEach((key, i) => appendDataRow(key, i));
-    }
-    table.appendChild(tbody);
-
-    // ── tfoot — grand total row ──
-    const tfoot = document.createElement("tfoot");
-    const totalTr = buildSummaryRow("Total", sortedKeys, curValues, linked, "border-top:2px solid var(--ios-border);", totalCurRefs, totalTgtRefs, totalDevRefs, maskConfig, visibleMetrics, visibleGreeks);
-    tfoot.appendChild(totalTr);
-    table.appendChild(tfoot);
-    tableContainer.appendChild(table);
+    buildRebalanceTable({
+      tableContainer,
+      curRefs,
+      tgtRefs,
+      devRefs,
+      priceRefs,
+      totalCurRefs,
+      totalTgtRefs,
+      totalDevRefs,
+      eqTotalCurRefs,
+      eqTotalTgtRefs,
+      eqTotalDevRefs,
+      etfTotalCurRefs,
+      etfTotalTgtRefs,
+      etfTotalDevRefs,
+      watchlistTotalCurRefs,
+      watchlistTotalTgtRefs,
+      watchlistTotalDevRefs,
+      inputsByKey,
+      anchorByKey,
+      setLastEquityKeys: k => {
+        lastEquityKeys = k;
+      },
+      setLastEtfKeys: k => {
+        lastEtfKeys = k;
+      },
+      setLastWatchlistKeys: k => {
+        lastWatchlistKeys = k;
+      },
+      setRenderedKeyList: s => {
+        renderedKeyList = s;
+      },
+      setLastTargetsHash: s => {
+        lastTargetsHash = s;
+      },
+      getBetaHorizon: () => betaHorizon,
+      getSortKey: () => sortKey,
+      getSortAsc: () => sortAsc,
+      maskConfig,
+      MASKED_TEXT,
+      getAllKeys,
+      getVisibleMetricGroups,
+      getVisibleGreekModes,
+      isMetricMasked,
+      isGreekMasked,
+      getDisplayMultiplier,
+      handleSort,
+      handleTargetInput,
+      saveUnderlyingTarget,
+      updateAnchorVisuals
+    }, p);
   }
 
   // ── Incremental update (patches current, linked targets, deviations; preserves anchor inputs) ──
   function updateIncremental(p) {
-    const curValues = new Map();
-    CURRENT_MODES.forEach(m => curValues.set(m, extractModeCurrentValues(m, p.derived, p.betaData, betaHorizon)));
-    const linked = resolveAllLinkedTargets(p.rebalanceTargets, p, betaHorizon);
-    const keys = getAllKeys(p);
-    keys.forEach(key => {
-      // Update price
-      const priceEl = priceRefs.get(key);
-      if (priceEl) {
-        const priceVal = resolveQuoteLastPrice(key, p);
-        priceEl.textContent = typeof priceVal === "number" && Number.isFinite(priceVal) ? "$" + priceVal.toFixed(2) : "-";
-      }
-
-      // Update current values
-      CURRENT_MODES.forEach(mode => {
-        const cur = curValues.get(mode)?.get(key) ?? 0;
-        const curEl = curRefs.get(`${mode}:${key}`);
-        if (!curEl) return;
-        const masked = PRIVACY_HIDDEN_METRICS.has(mode) ? isMetricMasked(mode) : PRIVACY_HIDDEN_GREEKS.has(mode) ? isGreekMasked(mode) : false;
-        curEl.textContent = masked ? MASKED_TEXT : REBALANCE_MODES[mode].formatValue(cur * getDisplayMultiplier(mode));
-      });
-
-      // Update beta cell
-      const betaEl = curRefs.get(`_beta:${key}`);
-      if (betaEl) {
-        const betaRaw = p.betaData?.get(key)?.[betaHorizon]?.beta;
-        betaEl.textContent = typeof betaRaw === "number" && Number.isFinite(betaRaw) ? betaRaw.toFixed(2) : "-";
-      }
-
-      // Update linked target displays and deviations
-      const lt = linked.get(key);
-      const anchor = anchorByKey.get(key);
-      const inputs = inputsByKey.get(key);
-      if (lt && inputs) {
-        // Update non-anchor target inputs with recomputed values
-        if (!dirtyKeys.has(key)) {
-          TARGET_MODES.forEach(mode => {
-            if (mode === anchor) return;
-            const inp = inputs.get(mode);
-            if (inp) {
-              const config = REBALANCE_MODES[mode];
-              const mul = getDisplayMultiplier(mode);
-              inp.value = formatTargetInputValue(lt[mode] * mul, config.isPct);
-            }
-          });
-        }
-      }
-
-      // Update deviations
-      DEVIATION_MODES.forEach(mode => {
-        const devEl = devRefs.get(`${mode}:${key}`);
-        if (!devEl) return;
-        if (isMetricMasked(mode)) {
-          devEl.textContent = MASKED_TEXT;
-          devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
-          return;
-        }
-        if (!lt) {
-          devEl.textContent = "-";
-          devEl.style.cssText = devSpanStyle(DS_COLORS.textPrimary);
-          return;
-        }
-        const cur = curValues.get(mode)?.get(key) ?? 0;
-        const tgt = lt[mode];
-        const dev = cur - tgt;
-        const mul = getDisplayMultiplier(mode);
-        devEl.textContent = (dev >= 0 ? "+" : "") + REBALANCE_MODES[mode].formatValue(dev * mul);
-        devEl.style.cssText = devSpanStyle(deviationColor(dev));
-      });
-    });
-
-    // Update summary rows (sub-totals + grand total)
-    if (lastEquityKeys.length > 0 && eqTotalCurRefs.size > 0) {
-      updateSummaryRefs(lastEquityKeys, curValues, linked, eqTotalCurRefs, eqTotalTgtRefs, eqTotalDevRefs, maskConfig);
-    }
-    if (lastEtfKeys.length > 0 && etfTotalCurRefs.size > 0) {
-      updateSummaryRefs(lastEtfKeys, curValues, linked, etfTotalCurRefs, etfTotalTgtRefs, etfTotalDevRefs, maskConfig);
-    }
-    if (lastWatchlistKeys.length > 0 && watchlistTotalCurRefs.size > 0) {
-      updateSummaryRefs(lastWatchlistKeys, curValues, linked, watchlistTotalCurRefs, watchlistTotalTgtRefs, watchlistTotalDevRefs, maskConfig);
-    }
-    updateSummaryRefs(keys, curValues, linked, totalCurRefs, totalTgtRefs, totalDevRefs, maskConfig);
+    updateRebalanceIncremental({
+      priceRefs,
+      curRefs,
+      devRefs,
+      anchorByKey,
+      inputsByKey,
+      dirtyKeys,
+      totalCurRefs,
+      totalTgtRefs,
+      totalDevRefs,
+      eqTotalCurRefs,
+      eqTotalTgtRefs,
+      eqTotalDevRefs,
+      etfTotalCurRefs,
+      etfTotalTgtRefs,
+      etfTotalDevRefs,
+      watchlistTotalCurRefs,
+      watchlistTotalTgtRefs,
+      watchlistTotalDevRefs,
+      getBetaHorizon: () => betaHorizon,
+      getLastEquityKeys: () => lastEquityKeys,
+      getLastEtfKeys: () => lastEtfKeys,
+      getLastWatchlistKeys: () => lastWatchlistKeys,
+      isMetricMasked,
+      isGreekMasked,
+      getDisplayMultiplier,
+      getAllKeys,
+      maskConfig,
+      MASKED_TEXT
+    }, p);
   }
 
   // ── Orchestrator: decide full rebuild vs incremental ──
@@ -32538,106 +32416,6 @@ function renderRebalanceIdeasPanel(payload) {
     const result = buildTradeSuggestions(p, betaHorizon);
     tradesBody.appendChild(renderTradeSuggestions(result, getShareMode() === "dollarOff", getShareMode() === "custom" ? getCustomMultiplier() : getShareMode() === "10x" ? 10 : 1));
   };
-  const getSelectedProfile = () => {
-    const selectedId = selectedProfileId || profileSelect.value;
-    if (!selectedId) return null;
-    const profiles = latestPayload.rebalanceProfiles ?? [];
-    return profiles.find(profile => profile.id === selectedId) ?? null;
-  };
-  const applyTargets = nextTargets => {
-    dirtyKeys.clear();
-    const cloned = cloneTargets(nextTargets);
-    selfTriggeredUpdate = true;
-    lastTargetsHash = JSON.stringify(cloned);
-    const optimisticPayload = {
-      ...latestPayload,
-      rebalanceTargets: cloned
-    };
-    latestPayload = optimisticPayload;
-    latestPayload.onUpdateRebalanceTargets?.(cloned);
-    renderAll(optimisticPayload);
-  };
-  profileSelect.addEventListener("change", () => {
-    selectedProfileId = profileSelect.value || "";
-    syncProfileControls(latestPayload);
-  });
-  saveProfileBtn.addEventListener("click", () => {
-    const ts = Date.now();
-    const nextTargets = collectCurrentTargets();
-    applyTargets(nextTargets);
-    const profile = {
-      id: `rp_${ts}_${Math.random().toString(36).slice(2, 8)}`,
-      name: buildAutoProfileName(nextTargets, latestPayload, ts, betaHorizon),
-      createdAt: ts,
-      rebalanceTargets: cloneTargets(nextTargets)
-    };
-    const currentProfiles = listProfiles(latestPayload);
-    const nextProfiles = [profile, ...currentProfiles].slice(0, MAX_REBALANCE_PROFILES);
-    selectedProfileId = profile.id;
-    latestPayload.onUpdateRebalanceProfiles?.(nextProfiles);
-    renderAll({
-      ...latestPayload,
-      rebalanceProfiles: nextProfiles
-    });
-  });
-  loadProfileBtn.addEventListener("click", () => {
-    const selected = getSelectedProfile();
-    if (!selected) return;
-    selectedProfileId = selected.id;
-    renderedKeyList = "";
-    applyTargets(selected.rebalanceTargets);
-  });
-  deleteProfileBtn.addEventListener("click", () => {
-    const selected = getSelectedProfile();
-    if (!selected) return;
-    const nextProfiles = listProfiles(latestPayload).filter(profile => profile.id !== selected.id);
-    selectedProfileId = nextProfiles[0]?.id ?? "";
-    latestPayload.onUpdateRebalanceProfiles?.(nextProfiles);
-    renderAll({
-      ...latestPayload,
-      rebalanceProfiles: nextProfiles
-    });
-  });
-  exportAllBtn.addEventListener("click", () => {
-    downloadProfiles(listProfiles(latestPayload));
-  });
-  exportSelectedBtn.addEventListener("click", () => {
-    const selected = getSelectedProfile();
-    if (!selected) return;
-    downloadProfiles([selected]);
-  });
-  importFileBtn.addEventListener("click", () => {
-    const fileInput = document.createElement("input");
-    fileInput.type = "file";
-    fileInput.accept = ".json";
-    fileInput.style.display = "none";
-    fileInput.addEventListener("change", () => {
-      const file = fileInput.files?.[0];
-      if (!file || file.size > 2 * 1024 * 1024) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const validated = parseImportedProfiles(reader.result);
-          if (validated.length === 0) return;
-          // Merge with existing profiles (dedup by createdAt timestamp)
-          const existing = listProfiles(latestPayload);
-          const existingTimestamps = new Set(existing.map(p => p.createdAt));
-          const merged = [...existing, ...validated.filter(p => !existingTimestamps.has(p.createdAt))].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_REBALANCE_PROFILES);
-          latestPayload.onUpdateRebalanceProfiles?.(merged);
-          renderAll({
-            ...latestPayload,
-            rebalanceProfiles: merged
-          });
-        } catch {
-          /* ignore malformed JSON */
-        }
-      };
-      reader.readAsText(file);
-    });
-    document.body.appendChild(fileInput);
-    fileInput.click();
-    document.body.removeChild(fileInput);
-  });
 
   // ── Render all ──
   const renderAll = p => {
@@ -34375,63 +34153,14 @@ function holdings_renderMobilePage(ctx) {
 }
 ;// ./src/backend/computation/risk/aggregateHelpers.ts
 
-function computeTotalAbsDeltaNotionalDol(portfolioAgg, byUnderlying) {
-  const fromAgg = portfolioAgg?.totalAbsDeltaNotionalDol;
-  if (guards_isFiniteNumber(fromAgg)) return fromAgg;
+function sumByField(byUnderlying, pick, options) {
+  const cached = options?.cached;
+  if (guards_isFiniteNumber(cached)) return cached;
   let total = 0;
   if (!byUnderlying) return total;
   for (const key in byUnderlying) {
-    const dn = byUnderlying[key]?.deltaNotionalDol;
-    if (guards_isFiniteNumber(dn)) total += Math.abs(dn);
-  }
-  return total;
-}
-function computeTotalAbsVegaPerVolPoint(portfolioAgg, byUnderlying) {
-  const fromAgg = portfolioAgg?.totalAbsVegaPerVolPoint;
-  if (guards_isFiniteNumber(fromAgg)) return fromAgg;
-  let total = 0;
-  if (!byUnderlying) return total;
-  for (const key in byUnderlying) {
-    const vega = byUnderlying[key]?.totalVegaPerVolPoint;
-    if (guards_isFiniteNumber(vega)) total += Math.abs(vega);
-  }
-  return total;
-}
-function computeTotalThetaPerDayFromAgg(portfolioAgg, byUnderlying) {
-  const fromAgg = portfolioAgg?.totalThetaPerDay;
-  if (guards_isFiniteNumber(fromAgg)) return fromAgg;
-  let total = 0;
-  if (!byUnderlying) return total;
-  for (const key in byUnderlying) {
-    const theta = byUnderlying[key]?.totalThetaPerDay;
-    if (guards_isFiniteNumber(theta)) total += theta;
-  }
-  return total;
-}
-function computeTotalRhoPer1pctRate(byUnderlying) {
-  let total = 0;
-  if (!byUnderlying) return total;
-  for (const key in byUnderlying) {
-    const rho = byUnderlying[key]?.rhoPer1pctRate;
-    if (guards_isFiniteNumber(rho)) total += rho;
-  }
-  return total;
-}
-function computeTotalUPnlUp1PctDol(byUnderlying) {
-  let total = 0;
-  if (!byUnderlying) return total;
-  for (const key in byUnderlying) {
-    const v = byUnderlying[key]?.uPnlUp1PctDol;
-    if (guards_isFiniteNumber(v)) total += v;
-  }
-  return total;
-}
-function computeTotalUPnlDn1PctDol(byUnderlying) {
-  let total = 0;
-  if (!byUnderlying) return total;
-  for (const key in byUnderlying) {
-    const v = byUnderlying[key]?.uPnlDn1PctDol;
-    if (guards_isFiniteNumber(v)) total += v;
+    const v = pick(byUnderlying[key]);
+    if (guards_isFiniteNumber(v)) total += options?.abs ? Math.abs(v) : v;
   }
   return total;
 }
@@ -34509,8 +34238,8 @@ function computeConcentrations(byUnderlying, totalAbsDeltaNotional, totalMarketV
 }
 function calculateScenarios(_portfolioAgg, byUnderlying, totalAbsVega, marketValue) {
   const scenarios = [];
-  const uPnlUp1Pct = computeTotalUPnlUp1PctDol(byUnderlying);
-  const uPnlDn1Pct = computeTotalUPnlDn1PctDol(byUnderlying);
+  const uPnlUp1Pct = sumByField(byUnderlying, r => r?.uPnlUp1PctDol);
+  const uPnlDn1Pct = sumByField(byUnderlying, r => r?.uPnlDn1PctDol);
   const marketMoves = [5, 2, 1, 0, -1, -2, -5];
   for (const move of marketMoves) {
     const scaledPnl = move > 0 ? uPnlUp1Pct * move : uPnlDn1Pct * Math.abs(move);
@@ -34853,80 +34582,83 @@ const PRESET_BETA_FACTOR_SCENARIOS = [{
 
 
 const RiskMetricsCalculator_log = logService.namespace("risk");
-class RiskMetricsCalculator {
-  computeRiskMetrics(derived, account, totals, limits, betaFactorPayload) {
-    const portfolioAgg = derived?.portfolioAgg;
-    const byUnderlying = derived?.byUnderlying || {};
-    const marketValue = totals?.marketValue ?? totals?.liquidationValue ?? 0;
-    const grossMarketValue = portfolioAgg?.grossMarketValue ?? marketValue;
-    const totalMargin = marketValue;
-    const usedMargin = computeUsedMargin(byUnderlying);
-    const availableMargin = Math.max(0, totalMargin - usedMargin);
-    // Ratio 0–1; formatPct handles ×100 for display
-    const marginUtilizationPct = totalMargin > 0 ? usedMargin / totalMargin : 0;
-    const absDeltaNotionalDol = computeTotalAbsDeltaNotionalDol(portfolioAgg, byUnderlying);
-    const weightedBeta = portfolioAgg?.portfolioWeightedBetaShort ?? 0;
-    const betaScale = Math.abs(marketValue) > 0 ? absDeltaNotionalDol / Math.abs(marketValue) : 0;
-    const currentBeta = weightedBeta * betaScale;
-    const netDeltaShares = computeNetDeltaShares(byUnderlying);
-    const netDeltaDollars = computeNetDeltaDollars(byUnderlying);
-    const totalAbsGamma = computeTotalAbsGamma(byUnderlying);
-    const totalGammaDollarExposure = computeGammaDollarExposure(byUnderlying);
-    const dailyThetaDecay = computeTotalThetaPerDayFromAgg(portfolioAgg, byUnderlying);
-    const totalAbsVega = computeTotalAbsVegaPerVolPoint(portfolioAgg, byUnderlying);
-    const totalRho = computeTotalRhoPer1pctRate(byUnderlying);
-    const topUnderlyingConcentrations = computeConcentrations(byUnderlying, absDeltaNotionalDol, marketValue, usedMargin);
-    const scenarios = calculateScenarios(portfolioAgg, byUnderlying, totalAbsVega, marketValue);
-    const betaFactorScenarios = this.calculateBetaFactorScenarios(byUnderlying, marketValue, betaFactorPayload);
-    const metrics = {
-      marginUtilizationPct,
-      currentBeta,
-      netDeltaShares,
-      totalAbsVega,
-      topUnderlyingConcentrations,
-      marketValue
-    };
-    const limitBreaches = checkLimitBreaches(metrics, limits);
-    void account;
-    RiskMetricsCalculator_log.debug("computeRiskMetrics.done", {
-      underlyings: Object.keys(byUnderlying).length,
-      marginUtil: +(marginUtilizationPct * 100).toFixed(1),
-      beta: +currentBeta.toFixed(3),
-      breaches: limitBreaches.length,
-      scenarios: betaFactorScenarios.length
-    });
-    return {
-      marginUtilizationPct,
-      currentBeta,
-      availableMargin,
-      totalMargin,
-      usedMargin,
-      netDeltaShares,
-      netDeltaDollars,
-      totalAbsGamma,
-      totalGammaDollarExposure,
-      dailyThetaDecay,
-      totalAbsVega,
-      totalRho,
-      marketValue,
-      grossMarketValue,
-      topUnderlyingConcentrations,
-      scenarios,
-      betaFactorScenarios,
-      limitBreaches
-    };
-  }
-  calculateBetaFactorScenarios(byUnderlying, marketValue, payload) {
-    if (!payload) return [];
-    const modelType = payload.modelType ?? "anchor";
-    const horizon = payload.horizon ?? "short";
-    const inputs = [...PRESET_BETA_FACTOR_SCENARIOS];
-    if (payload.customScenario) inputs.push(payload.customScenario);
-    return inputs.map(input => computeSingleBetaFactorScenario(input, byUnderlying, marketValue, modelType, horizon, payload.threeFactorData, payload.allBenchmarkBetas));
-  }
-  static calculateSingleBetaFactorScenario(input, byUnderlying, marketValue, modelType, horizon, threeFactorData, allBenchmarkBetas) {
-    return computeSingleBetaFactorScenario(input, byUnderlying, marketValue, modelType, horizon, threeFactorData, allBenchmarkBetas);
-  }
+function computeRiskMetrics(derived, account, totals, limits, betaFactorPayload) {
+  const portfolioAgg = derived?.portfolioAgg;
+  const byUnderlying = derived?.byUnderlying || {};
+  const marketValue = totals?.marketValue ?? totals?.liquidationValue ?? 0;
+  const grossMarketValue = portfolioAgg?.grossMarketValue ?? marketValue;
+  const totalMargin = marketValue;
+  const usedMargin = computeUsedMargin(byUnderlying);
+  const availableMargin = Math.max(0, totalMargin - usedMargin);
+  // Ratio 0–1; formatPct handles ×100 for display
+  const marginUtilizationPct = totalMargin > 0 ? usedMargin / totalMargin : 0;
+  const absDeltaNotionalDol = sumByField(byUnderlying, r => r?.deltaNotionalDol, {
+    cached: portfolioAgg?.totalAbsDeltaNotionalDol,
+    abs: true
+  });
+  const weightedBeta = portfolioAgg?.portfolioWeightedBetaShort ?? 0;
+  const betaScale = Math.abs(marketValue) > 0 ? absDeltaNotionalDol / Math.abs(marketValue) : 0;
+  const currentBeta = weightedBeta * betaScale;
+  const netDeltaShares = computeNetDeltaShares(byUnderlying);
+  const netDeltaDollars = computeNetDeltaDollars(byUnderlying);
+  const totalAbsGamma = computeTotalAbsGamma(byUnderlying);
+  const totalGammaDollarExposure = computeGammaDollarExposure(byUnderlying);
+  const dailyThetaDecay = sumByField(byUnderlying, r => r?.totalThetaPerDay, {
+    cached: portfolioAgg?.totalThetaPerDay
+  });
+  const totalAbsVega = sumByField(byUnderlying, r => r?.totalVegaPerVolPoint, {
+    cached: portfolioAgg?.totalAbsVegaPerVolPoint,
+    abs: true
+  });
+  const totalRho = sumByField(byUnderlying, r => r?.totalRhoPer1pctRate);
+  const topUnderlyingConcentrations = computeConcentrations(byUnderlying, absDeltaNotionalDol, marketValue, usedMargin);
+  const scenarios = calculateScenarios(portfolioAgg, byUnderlying, totalAbsVega, marketValue);
+  const betaFactorScenarios = calculateBetaFactorScenarios(byUnderlying, marketValue, betaFactorPayload);
+  const metrics = {
+    marginUtilizationPct,
+    currentBeta,
+    netDeltaShares,
+    totalAbsVega,
+    topUnderlyingConcentrations,
+    marketValue
+  };
+  const limitBreaches = checkLimitBreaches(metrics, limits);
+  void account;
+  RiskMetricsCalculator_log.debug("computeRiskMetrics.done", {
+    underlyings: Object.keys(byUnderlying).length,
+    marginUtil: +(marginUtilizationPct * 100).toFixed(1),
+    beta: +currentBeta.toFixed(3),
+    breaches: limitBreaches.length,
+    scenarios: betaFactorScenarios.length
+  });
+  return {
+    marginUtilizationPct,
+    currentBeta,
+    availableMargin,
+    totalMargin,
+    usedMargin,
+    netDeltaShares,
+    netDeltaDollars,
+    totalAbsGamma,
+    totalGammaDollarExposure,
+    dailyThetaDecay,
+    totalAbsVega,
+    totalRho,
+    marketValue,
+    grossMarketValue,
+    topUnderlyingConcentrations,
+    scenarios,
+    betaFactorScenarios,
+    limitBreaches
+  };
+}
+function calculateBetaFactorScenarios(byUnderlying, marketValue, payload) {
+  if (!payload) return [];
+  const modelType = payload.modelType ?? "anchor";
+  const horizon = payload.horizon ?? "short";
+  const inputs = [...PRESET_BETA_FACTOR_SCENARIOS];
+  if (payload.customScenario) inputs.push(payload.customScenario);
+  return inputs.map(input => computeSingleBetaFactorScenario(input, byUnderlying, marketValue, modelType, horizon, payload.threeFactorData, payload.allBenchmarkBetas));
 }
 ;// ./src/frontend/trade_portfolio/components/overview/PortfolioHealthScore.ts
 
@@ -38241,7 +37973,6 @@ function riskManagement_renderPage(ctx) {
     updateOrCreate,
     ensureSectionLayout
   } = lifecycle;
-  const riskCalculator = new RiskMetricsCalculator();
   const makeChip = text => {
     return createElement_ui_createElement("span", {
       text,
@@ -38341,7 +38072,7 @@ function riskManagement_renderPage(ctx) {
         horizon: controlState.scenarioHorizon,
         customScenario: customScenarioInput
       };
-      const riskMetrics = riskCalculator.computeRiskMetrics(derived, account, totals, liveSettings.riskLimits, betaFactorPayload);
+      const riskMetrics = computeRiskMetrics(derived, account, totals, liveSettings.riskLimits, betaFactorPayload);
       const timestamp = typeof derived.asOfTs === "number" && Number.isFinite(derived.asOfTs) ? new Date(derived.asOfTs).toISOString() : null;
       stateVectorPlaceholder.style.display = "block";
       updateOrCreate(stateVectorPlaceholder, "stateVector", () => renderPortfolioStateVector({
@@ -60795,47 +60526,46 @@ function pageHelpers_renderTickerSelect(tickerSelect, symbolInput, ctx, symbolOv
 
 
 const TimestampCaptureStore_log = logService.namespace("storage");
+const TimestampCaptureStore_STORE = STORES.TIMESTAMP_OPENINGS;
 class TimestampCaptureStore {
   constructor(db) {
     this.db = db;
   }
   async getBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readonly");
-    const index = tx.objectStore(STORES.TIMESTAMP_OPENINGS).index("symbol");
-    return txPromise(index.getAll(symbol));
+    return readTx(this.db, TimestampCaptureStore_STORE, s => s.index("symbol").getAll(symbol));
   }
   async put(record) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
-    tx.objectStore(STORES.TIMESTAMP_OPENINGS).put(record);
-    await txComplete(tx);
+    await writeTx(this.db, TimestampCaptureStore_STORE, s => {
+      s.put(record);
+    });
     TimestampCaptureStore_log.debug("timestampCaptures.put", {
       symbol: record.symbol
     });
   }
   async replaceSymbol(symbol, records) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.TIMESTAMP_OPENINGS);
-    const index = store.index("symbol");
-    const existingKeys = await txPromise(index.getAllKeys(symbol));
-    for (const key of existingKeys) store.delete(key);
-    for (const record of records) store.put(record);
-    await txComplete(tx);
+    let removed = 0;
+    await writeTx(this.db, TimestampCaptureStore_STORE, async s => {
+      const keys = await txPromise(s.index("symbol").getAllKeys(symbol));
+      removed = keys.length;
+      for (const key of keys) s.delete(key);
+      for (const record of records) s.put(record);
+    });
     TimestampCaptureStore_log.debug("timestampCaptures.replaceSymbol", {
       symbol,
-      removed: existingKeys.length,
+      removed,
       added: records.length
     });
   }
   async deleteBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.TIMESTAMP_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.TIMESTAMP_OPENINGS);
-    const index = store.index("symbol");
-    const keys = await txPromise(index.getAllKeys(symbol));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    let count = 0;
+    await writeTx(this.db, TimestampCaptureStore_STORE, async s => {
+      const keys = await txPromise(s.index("symbol").getAllKeys(symbol));
+      count = keys.length;
+      for (const key of keys) s.delete(key);
+    });
     TimestampCaptureStore_log.debug("timestampCaptures.deleteBySymbol", {
       symbol,
-      deletedCount: keys.length
+      deletedCount: count
     });
   }
 }
@@ -61513,6 +61243,7 @@ function createDashboardStore(initialSymbol) {
 
 
 
+const CaptureSnapshotStore_STORE = STORES.SNAPSHOTS;
 function normalizeSnapshot(row) {
   if (!row) return row;
   row.marketTimeCt = normalizeMarketTimeCT(row.marketTimeCt);
@@ -61575,26 +61306,21 @@ class CaptureSnapshotStore {
     this.db = db;
   }
   async put(row) {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readwrite");
-    tx.objectStore(STORES.SNAPSHOTS).put(row);
-    await txComplete(tx);
+    await writeTx(this.db, CaptureSnapshotStore_STORE, s => {
+      s.put(row);
+    });
   }
   async get(openingId) {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readonly");
-    const row = await txPromise(tx.objectStore(STORES.SNAPSHOTS).get(openingId));
+    const row = await readTx(this.db, CaptureSnapshotStore_STORE, s => s.get(openingId));
     return row ? normalizeSnapshot(row) : undefined;
   }
   async findByDataTimestamp(symbol, dataTimestamp) {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readonly");
-    const index = tx.objectStore(STORES.SNAPSHOTS).index("symbolDataTs");
-    const row = await txPromise(index.get([symbol, dataTimestamp]));
+    const row = await readTx(this.db, CaptureSnapshotStore_STORE, s => s.index("symbolDataTs").get([symbol, dataTimestamp]));
     return row ? normalizeSnapshot(row) : undefined;
   }
   async getBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readonly");
-    const index = tx.objectStore(STORES.SNAPSHOTS).index("symbolCaptured");
-    const range = IDBKeyRange.bound([symbol, ""], [symbol, "\uffff"]);
-    const rows = await txPromise(index.getAll(range));
+    const range = IDBKeyRange.bound([symbol, ""], [symbol, "￿"]);
+    const rows = await readTx(this.db, CaptureSnapshotStore_STORE, s => s.index("symbolCaptured").getAll(range));
     return rows.map(normalizeSnapshot);
   }
   async getBySymbolAndDatePrefix(symbol, datePrefix) {
@@ -61616,34 +61342,32 @@ class CaptureSnapshotStore {
     return best;
   }
   async delete(openingId) {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readwrite");
-    tx.objectStore(STORES.SNAPSHOTS).delete(openingId);
-    await txComplete(tx);
+    await writeTx(this.db, CaptureSnapshotStore_STORE, s => {
+      s.delete(openingId);
+    });
   }
 }
 ;// ./src/backend/core/db/capture/CaptureStrikeAggregateStore.ts
 
 
+const CaptureStrikeAggregateStore_STORE = STORES.STRIKE_AGGREGATES;
 class CaptureStrikeAggregateStore {
   constructor(db) {
     this.db = db;
   }
   async putBatch(rows) {
     if (rows.length === 0) return;
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readwrite");
-    const store = tx.objectStore(STORES.STRIKE_AGGREGATES);
-    for (const row of rows) store.put(row);
-    await txComplete(tx);
+    await writeTx(this.db, CaptureStrikeAggregateStore_STORE, s => {
+      for (const row of rows) s.put(row);
+    });
   }
   async getByOpeningId(openingId) {
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readonly");
-    const index = tx.objectStore(STORES.STRIKE_AGGREGATES).index("openingId");
-    return txPromise(index.getAll(openingId));
+    return readTx(this.db, CaptureStrikeAggregateStore_STORE, s => s.index("openingId").getAll(openingId));
   }
   async getByOpeningIds(ids) {
     if (ids.length === 0) return new Map();
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readonly");
-    const index = tx.objectStore(STORES.STRIKE_AGGREGATES).index("openingId");
+    const tx = this.db.transaction(CaptureStrikeAggregateStore_STORE, "readonly");
+    const index = tx.objectStore(CaptureStrikeAggregateStore_STORE).index("openingId");
     const results = await Promise.all(ids.map(id => txPromise(index.getAll(id))));
     const map = new Map();
     for (let i = 0; i < ids.length; i++) {
@@ -61654,12 +61378,9 @@ class CaptureStrikeAggregateStore {
   async deleteByOpeningId(openingId) {
     const rows = await this.getByOpeningId(openingId);
     if (rows.length === 0) return;
-    const tx = this.db.transaction(STORES.STRIKE_AGGREGATES, "readwrite");
-    const store = tx.objectStore(STORES.STRIKE_AGGREGATES);
-    for (const row of rows) {
-      store.delete([row.openingId, row.strike]);
-    }
-    await txComplete(tx);
+    await writeTx(this.db, CaptureStrikeAggregateStore_STORE, s => {
+      for (const row of rows) s.delete([row.openingId, row.strike]);
+    });
   }
 }
 ;// ./src/frontend/analysis_optionFlow/data/queryEngine.ts
@@ -61842,63 +61563,59 @@ function dedupByTime(snapshots) {
 
 
 const MonitorCaptureStore_log = logService.namespace("storage");
+const MonitorCaptureStore_STORE = STORES.MONITOR_OPENINGS;
 class MonitorCaptureStore {
   constructor(db) {
     this.db = db;
   }
   async getBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.MONITOR_OPENINGS, "readonly");
-    const index = tx.objectStore(STORES.MONITOR_OPENINGS).index("symbol");
-    return txPromise(index.getAll(symbol));
+    return readTx(this.db, MonitorCaptureStore_STORE, s => s.index("symbol").getAll(symbol));
   }
   async put(capture) {
-    const tx = this.db.transaction(STORES.MONITOR_OPENINGS, "readwrite");
-    tx.objectStore(STORES.MONITOR_OPENINGS).put(capture);
-    await txComplete(tx);
+    await writeTx(this.db, MonitorCaptureStore_STORE, s => {
+      s.put(capture);
+    });
     MonitorCaptureStore_log.debug("monitorCaptures.put", {
       symbol: capture.symbol
     });
   }
   async putBatch(captures) {
     if (captures.length === 0) return;
-    const tx = this.db.transaction(STORES.MONITOR_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.MONITOR_OPENINGS);
-    for (const capture of captures) store.put(capture);
-    await txComplete(tx);
+    await writeTx(this.db, MonitorCaptureStore_STORE, s => {
+      for (const capture of captures) s.put(capture);
+    });
     MonitorCaptureStore_log.debug("monitorCaptures.putBatch", {
       count: captures.length
     });
   }
   async deleteBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.MONITOR_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.MONITOR_OPENINGS);
-    const index = store.index("symbol");
-    const keys = await txPromise(index.getAllKeys(symbol));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    let count = 0;
+    await writeTx(this.db, MonitorCaptureStore_STORE, async s => {
+      const keys = await txPromise(s.index("symbol").getAllKeys(symbol));
+      count = keys.length;
+      for (const key of keys) s.delete(key);
+    });
     MonitorCaptureStore_log.debug("monitorCaptures.deleteBySymbol", {
       symbol,
-      deletedCount: keys.length
+      deletedCount: count
     });
   }
   async replaceSymbol(symbol, captures) {
-    const tx = this.db.transaction(STORES.MONITOR_OPENINGS, "readwrite");
-    const store = tx.objectStore(STORES.MONITOR_OPENINGS);
-    const index = store.index("symbol");
-    const existingKeys = await txPromise(index.getAllKeys(symbol));
-    for (const key of existingKeys) store.delete(key);
-    for (const capture of captures) store.put(capture);
-    await txComplete(tx);
+    let removed = 0;
+    await writeTx(this.db, MonitorCaptureStore_STORE, async s => {
+      const keys = await txPromise(s.index("symbol").getAllKeys(symbol));
+      removed = keys.length;
+      for (const key of keys) s.delete(key);
+      for (const capture of captures) s.put(capture);
+    });
     MonitorCaptureStore_log.debug("monitorCaptures.replaceSymbol", {
       symbol,
-      removed: existingKeys.length,
+      removed,
       added: captures.length
     });
   }
   async countBySymbol(symbol) {
-    const tx = this.db.transaction(STORES.MONITOR_OPENINGS, "readonly");
-    const index = tx.objectStore(STORES.MONITOR_OPENINGS).index("symbol");
-    return txPromise(index.count(symbol));
+    return readTx(this.db, MonitorCaptureStore_STORE, s => s.index("symbol").count(symbol));
   }
 }
 ;// ./src/frontend/analysis_optionFlow/data/monitorHistory.ts
@@ -67422,48 +67139,45 @@ function showPurgeWarning(_anchor, onConfirm) {
 ;// ./src/backend/core/db/capture/CaptureStrikeStore.ts
 
 
+const CaptureStrikeStore_STORE = STORES.STRIKE_LEGS;
 class CaptureStrikeStore {
   constructor(db) {
     this.db = db;
   }
   async putBatch(rows) {
     if (rows.length === 0) return;
-    const tx = this.db.transaction(STORES.STRIKE_LEGS, "readwrite");
-    const store = tx.objectStore(STORES.STRIKE_LEGS);
-    for (const row of rows) store.put(row);
-    await txComplete(tx);
+    await writeTx(this.db, CaptureStrikeStore_STORE, s => {
+      for (const row of rows) s.put(row);
+    });
   }
   async getByOpeningId(openingId) {
-    const tx = this.db.transaction(STORES.STRIKE_LEGS, "readonly");
-    const index = tx.objectStore(STORES.STRIKE_LEGS).index("openingId");
-    return txPromise(index.getAll(openingId));
+    return readTx(this.db, CaptureStrikeStore_STORE, s => s.index("openingId").getAll(openingId));
   }
   async deleteByOpeningId(openingId) {
     const rows = await this.getByOpeningId(openingId);
     if (rows.length === 0) return;
-    const tx = this.db.transaction(STORES.STRIKE_LEGS, "readwrite");
-    const store = tx.objectStore(STORES.STRIKE_LEGS);
-    for (const row of rows) {
-      store.delete([row.openingId, row.expiryLabel, row.strike, row.optionType]);
-    }
-    await txComplete(tx);
+    await writeTx(this.db, CaptureStrikeStore_STORE, s => {
+      for (const row of rows) {
+        s.delete([row.openingId, row.expiryLabel, row.strike, row.optionType]);
+      }
+    });
   }
 }
 ;// ./src/backend/core/db/capture/CaptureLabelStore.ts
 
 
+const CaptureLabelStore_STORE = STORES.FEATURE_LABELS;
 class CaptureLabelStore {
   constructor(db) {
     this.db = db;
   }
   async put(row) {
-    const tx = this.db.transaction(STORES.FEATURE_LABELS, "readwrite");
-    tx.objectStore(STORES.FEATURE_LABELS).put(row);
-    await txComplete(tx);
+    await writeTx(this.db, CaptureLabelStore_STORE, s => {
+      s.put(row);
+    });
   }
   async get(openingId, symbol) {
-    const tx = this.db.transaction(STORES.FEATURE_LABELS, "readonly");
-    return txPromise(tx.objectStore(STORES.FEATURE_LABELS).get([openingId, symbol]));
+    return readTx(this.db, CaptureLabelStore_STORE, s => s.get([openingId, symbol]));
   }
   async patchField(openingId, symbol, field, value) {
     const existing = await this.get(openingId, symbol);
@@ -67472,18 +67186,16 @@ class CaptureLabelStore {
     await this.put(existing);
   }
   async deleteByOpeningId(openingId) {
-    const tx = this.db.transaction(STORES.FEATURE_LABELS, "readwrite");
-    const store = tx.objectStore(STORES.FEATURE_LABELS);
-    const index = store.index("openingId");
-    const keys = await txPromise(index.getAllKeys(openingId));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    await writeTx(this.db, CaptureLabelStore_STORE, async s => {
+      const keys = await txPromise(s.index("openingId").getAllKeys(openingId));
+      for (const key of keys) s.delete(key);
+    });
   }
   async getOrCreate(openingId, symbol) {
     const existing = await this.get(openingId, symbol);
     if (existing) return existing;
     const row = {
-      openingId: openingId,
+      openingId,
       symbol,
       fwdRet10m: null,
       fwdRet30m: null,
@@ -67499,32 +67211,6 @@ class CaptureLabelStore {
     await this.put(row);
     return row;
   }
-}
-;// ./src/backend/computation/options/monitor/etl/MetaETL.ts
-
-
-function buildMetaRow(response, symbol, capturedAtUtc) {
-  // Normalise the Schwab ET timestamp ("HH:MM:SS AM/PM ET, MM/DD/YYYY") to a UTC
-  // ISO-8601 string so every downstream query can use standard date comparisons.
-  // Fall back to capturedAtUtc when parsing fails (e.g. unexpected format).
-  const dataTimestamp = (response.currentDateTime ? parseSchwabEtTimestampToUtcIso(response.currentDateTime) : null) ?? capturedAtUtc;
-
-  // Derive the display market time in CT from the data timestamp, not from the
-  // moment we happened to fire the HTTP request.
-  const marketTimeCT = formatHourMinuteCT(dataTimestamp) || formatHourMinuteCT(capturedAtUtc) || "00:00";
-  return {
-    openingId: generateUUID(),
-    symbol,
-    capturedAtUtc: capturedAtUtc,
-    marketTimeCt: marketTimeCT,
-    dataTimestamp: dataTimestamp,
-    underlyingPrice: response.underlyingPrice,
-    interestRate: response.interestRate,
-    dividendYield: response.dividendYield,
-    contractMultiplier: response.contractMultiplier,
-    expirationsCount: response.expirations.length,
-    isDelayed: response.isDelayed
-  };
 }
 ;// ./src/backend/computation/options/monitor/StrikeLegs.ts
 
@@ -67829,6 +67515,23 @@ function buildFallbackOptionCapture(symbol, response, capturedAtUtc, dataTimesta
     isDelayed: response.isDelayed ?? false
   };
 }
+function buildMetaRow(response, symbol, capturedAtUtc) {
+  const dataTimestamp = (response.currentDateTime ? parseSchwabEtTimestampToUtcIso(response.currentDateTime) : null) ?? capturedAtUtc;
+  const marketTimeCT = formatHourMinuteCT(dataTimestamp) || formatHourMinuteCT(capturedAtUtc) || "00:00";
+  return {
+    openingId: generateUUID(),
+    symbol,
+    capturedAtUtc,
+    marketTimeCt: marketTimeCT,
+    dataTimestamp,
+    underlyingPrice: response.underlyingPrice,
+    interestRate: response.interestRate,
+    dividendYield: response.dividendYield,
+    contractMultiplier: response.contractMultiplier,
+    expirationsCount: response.expirations.length,
+    isDelayed: response.isDelayed
+  };
+}
 
 /**
  * Build an OptionCapture from a live OptionsChainsResponse.
@@ -67837,18 +67540,17 @@ function buildFallbackOptionCapture(symbol, response, capturedAtUtc, dataTimesta
  */
 async function buildOptionCapture(symbol, response, capturedAtUtc, selectionContext) {
   if (!response.expirations.length) return null;
-  const dataTimestampUtc = (response.currentDateTime ? parseSchwabEtTimestampToUtcIso(response.currentDateTime) : null) ?? capturedAtUtc;
+  const meta = buildMetaRow(response, symbol, capturedAtUtc);
   try {
-    const meta = buildMetaRow(response, symbol, capturedAtUtc);
     const expiryRows = await computeWorkerPool.buildExpiryMetrics(response, meta.openingId, symbol, selectionContext);
     const capture = buildOptionCaptureFromExpiryRows(symbol, meta, expiryRows);
-    return capture ?? buildFallbackOptionCapture(symbol, response, capturedAtUtc, dataTimestampUtc);
+    return capture ?? buildFallbackOptionCapture(symbol, response, capturedAtUtc, meta.dataTimestamp);
   } catch (err) {
     monitorCapture_log.warn("monitor.etl.error", {
       symbol,
       error: err instanceof Error ? err.message : String(err)
     });
-    return buildFallbackOptionCapture(symbol, response, capturedAtUtc, dataTimestampUtc);
+    return buildFallbackOptionCapture(symbol, response, capturedAtUtc, meta.dataTimestamp);
   }
 }
 
@@ -69177,7 +68879,20 @@ function optionFlow_renderPage(_ctx) {
   };
   return wrapper;
 }
-;// ./src/backend/services/ai/config/defaults.ts
+;// ./src/backend/services/ai/config/AIConfigStore.ts
+
+
+const PREFIX = "ai.config";
+const KEYS = {
+  providers: `${PREFIX}.providers`,
+  models: `${PREFIX}.models`,
+  agentModels: `${PREFIX}.agentModels`,
+  pipeline: `${PREFIX}.pipeline`,
+  general: `${PREFIX}.general`
+};
+
+// ── Defaults ─────────────────────────────────────────────────────────────────
+
 const DEFAULT_PROVIDERS = {
   selected: "anthropic",
   selectedModel: "claude-sonnet-4-6",
@@ -69215,19 +68930,15 @@ const DEFAULT_GENERAL = {
   alphaVantageApiKey: "",
   autoFetchData: true
 };
-;// ./src/backend/services/ai/config/AIConfigStore.ts
 
-const PREFIX = "ai.config";
-const KEYS = {
-  providers: `${PREFIX}.providers`,
-  models: `${PREFIX}.models`,
-  agentModels: `${PREFIX}.agentModels`,
-  pipeline: `${PREFIX}.pipeline`,
-  general: `${PREFIX}.general`
-};
+// ── Tier-shape predicates (defend against corrupt KV payloads) ───────────────
+
 const isProvider = value => value === "anthropic" || value === "openai" || value === "google";
 const isServiceTier = value => value === "auto" || value === "default" || value === "flex" || value === "priority";
 const isPricingTier = value => value === "standard" || value === "flex" || value === "batch";
+
+// ── Store ────────────────────────────────────────────────────────────────────
+
 class AIConfigStore {
   constructor(kv) {
     this.kv = kv;
@@ -69292,19 +69003,30 @@ class AIConfigStore {
     await this.kv.set(KEYS[key], value);
   }
 }
+
+/**
+ * Convenience: load AI provider config in a single call. Eliminates the repeated
+ * DB → KVStore → AIConfigStore → getProviders() boilerplate.
+ */
+async function getAIProviders() {
+  const db = await openAlexQuantDB();
+  const kv = new KVStore(db);
+  return new AIConfigStore(kv).getProviders();
+}
 ;// ./src/backend/core/db/ai/AIAnalysisStore.ts
 
 
 
 const AIAnalysisStore_log = logService.namespace("storage");
+const AIAnalysisStore_STORE = STORES.AI_ANALYSES;
 class AIAnalysisStore {
   constructor(db) {
     this.db = db;
   }
   async save(record) {
-    const tx = this.db.transaction(STORES.AI_ANALYSES, "readwrite");
-    tx.objectStore(STORES.AI_ANALYSES).put(record);
-    await txComplete(tx);
+    await writeTx(this.db, AIAnalysisStore_STORE, s => {
+      s.put(record);
+    });
     AIAnalysisStore_log.debug("aiAnalysis.save", {
       symbol: record.symbol
     });
@@ -69314,30 +69036,28 @@ class AIAnalysisStore {
     return records[0] ?? null;
   }
   async getAllForSymbol(symbol) {
-    const tx = this.db.transaction(STORES.AI_ANALYSES, "readonly");
-    const index = tx.objectStore(STORES.AI_ANALYSES).index("symbol");
-    const records = await txPromise(index.getAll(symbol));
+    const records = await readTx(this.db, AIAnalysisStore_STORE, s => s.index("symbol").getAll(symbol));
     return records.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
   }
   async deleteAnalysis(symbol, id) {
-    const tx = this.db.transaction(STORES.AI_ANALYSES, "readwrite");
-    tx.objectStore(STORES.AI_ANALYSES).delete([symbol, id]);
-    await txComplete(tx);
+    await writeTx(this.db, AIAnalysisStore_STORE, s => {
+      s.delete([symbol, id]);
+    });
     AIAnalysisStore_log.debug("aiAnalysis.delete", {
       symbol,
       id
     });
   }
   async clearAllForSymbol(symbol) {
-    const tx = this.db.transaction(STORES.AI_ANALYSES, "readwrite");
-    const store = tx.objectStore(STORES.AI_ANALYSES);
-    const index = store.index("symbol");
-    const keys = await txPromise(index.getAllKeys(symbol));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    let count = 0;
+    await writeTx(this.db, AIAnalysisStore_STORE, async s => {
+      const keys = await txPromise(s.index("symbol").getAllKeys(symbol));
+      count = keys.length;
+      for (const key of keys) s.delete(key);
+    });
     AIAnalysisStore_log.debug("aiAnalysis.clearAll", {
       symbol,
-      count: keys.length
+      count
     });
   }
 }
@@ -72775,7 +72495,7 @@ function createConnectivitySection(opts) {
       return;
     }
     try {
-      const client = new LLMClient(testConfig);
+      const client = createLLMClient(testConfig);
       const start = Date.now();
       const resp = await client.complete({
         systemPrompt: "You are a test assistant.",
@@ -74244,7 +73964,7 @@ async function runComparison(ctx) {
   resultsSection.innerHTML = "";
   resultsSection.style.display = "none";
   try {
-    const client = new LLMClient(compConfig);
+    const client = createLLMClient(compConfig);
     const dateOlder = formatReportDate(older);
     const dateNewer = formatReportDate(newer);
     const response = await client.complete({
@@ -74290,19 +74010,18 @@ async function runComparison(ctx) {
 ;// ./src/backend/core/db/ai/MemoryStore.ts
 
 
+const MemoryStore_STORE = STORES.AI_MEMORIES;
 class MemoryStore {
   constructor(db) {
     this.db = db;
   }
   async save(entry) {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readwrite");
-    tx.objectStore(STORES.AI_MEMORIES).put(entry);
-    await txComplete(tx);
+    await writeTx(this.db, MemoryStore_STORE, s => {
+      s.put(entry);
+    });
   }
   async getRecentForSymbol(symbol, limit = 5) {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readonly");
-    const index = tx.objectStore(STORES.AI_MEMORIES).index("symbol");
-    const entries = await txPromise(index.getAll(symbol));
+    const entries = await readTx(this.db, MemoryStore_STORE, s => s.index("symbol").getAll(symbol));
     return entries.sort((a, b) => b.date.localeCompare(a.date)).slice(0, limit);
   }
 
@@ -74323,17 +74042,15 @@ class MemoryStore {
     await this.save(entry);
   }
   async clearForSymbol(symbol) {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readwrite");
-    const store = tx.objectStore(STORES.AI_MEMORIES);
-    const index = store.index("symbol");
-    const keys = await txPromise(index.getAllKeys(symbol));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    await writeTx(this.db, MemoryStore_STORE, async s => {
+      const keys = await txPromise(s.index("symbol").getAllKeys(symbol));
+      for (const key of keys) s.delete(key);
+    });
   }
   async clearAll() {
-    const tx = this.db.transaction(STORES.AI_MEMORIES, "readwrite");
-    tx.objectStore(STORES.AI_MEMORIES).clear();
-    await txComplete(tx);
+    await writeTx(this.db, MemoryStore_STORE, s => {
+      s.clear();
+    });
   }
 }
 ;// ./src/frontend/analysis_ai/orchestration/analysisRunner.ts
@@ -74367,7 +74084,7 @@ async function runAnalysis(deps) {
   const store = new AIAnalysisStore(rdb);
   const memStore = new MemoryStore(rdb);
   const phaseModels = pipelineState.getPhaseModels();
-  const makeClient = phase => new LLMClient(resolveClientConfig(phaseModels[phase] || undefined));
+  const makeClient = phase => createLLMClient(resolveClientConfig(phaseModels[phase] || undefined));
   const clients = {
     analysts: makeClient("analysts"),
     debate: makeClient("debate"),
@@ -80736,8 +80453,6 @@ function applyColorTheme(theme = "default") {
 ;// ./src/shared/log/devTools.ts
 
 
-
-
 /**
  * Runtime log control exposed on `window.__alexquantLog`.
  *
@@ -81741,20 +81456,6 @@ function storageOperator(globalStateRefs, kvStore) {
     },
     logger: logStorage
   };
-}
-;// ./src/backend/services/ai/config/getAIProviders.ts
-
-
-
-/**
- * Convenience: load AI provider config in a single call.
- * Eliminates the repeated DB → KVStore → AIConfigStore → getProviders() boilerplate.
- */
-async function getAIProviders() {
-  const db = await openAlexQuantDB();
-  const kv = new KVStore(db);
-  const configStore = new AIConfigStore(kv);
-  return configStore.getProviders();
 }
 ;// ./src/frontend/analysis_optionFlow/monitor/monitorUniverse.ts
 /**

@@ -1,7 +1,6 @@
 # Baseline of time-rule violations to grandfather. Each line is a full violation message.
 # This list may SHRINK over time. It must never grow.
-src/backend/computation/options/monitor/etl/MetaETL.ts:20: Legacy time fields must not be used in live runtime paths
-src/backend/core/db/ai/MemoryStore.ts:31: Legacy time fields must not be used in live runtime paths
+src/backend/core/db/ai/MemoryStore.ts:29: Legacy time fields must not be used in live runtime paths
 src/backend/core/network/yahoo/chart.ts:137: Do not derive business dates from ISO slicing; use canonical date-key helpers in shared/utils/time.ts
 src/backend/services/ai/pipeline/reportBuilder.ts:7: Legacy time fields must not be used in live runtime paths
 src/backend/services/ai/pipeline/reportBuilder.ts:7: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
@@ -10,10 +9,10 @@ src/backend/services/ai/pipeline/reportBuilder.ts:91: Locale-based date/time for
 src/frontend/analysis_ai/components/reportList.ts:178: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_ai/components/reportList.ts:91: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_ai/components/reportList.ts:91: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
-src/frontend/analysis_ai/orchestration/reportComparison.ts:48: Legacy time fields must not be used in live runtime paths
+src/frontend/analysis_ai/orchestration/reportComparison.ts:50: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_ai/pipeline/agentSelector.ts:72: Do not derive business dates from ISO slicing; use canonical date-key helpers in shared/utils/time.ts
 src/frontend/analysis_optionFlow/data/queryEngine.ts:33: Legacy time fields must not be used in live runtime paths
-src/frontend/analysis_optionFlow/monitor/monitorCapture.ts:187: Legacy time fields must not be used in live runtime paths
+src/frontend/analysis_optionFlow/monitor/monitorCapture.ts:180: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_optionFlow/monitor/monitorUniverse.ts:60: Do not use sentinel business dates like 1970-01-01
 src/frontend/analysis_optionFlow/setting_panel/TickerGridManager.ts:294: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_optionFlow/setting_panel/TickerGridManager.ts:417: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
@@ -35,7 +34,7 @@ src/frontend/trade_holdings/setting_panel/settingsPanel.ts:411: Do not derive bu
 src/frontend/trade_portfolio/components/exposure/betaExposureUtils.ts:205: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
 src/frontend/trade_portfolio/components/exposure/betaExposureUtils.ts:211: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
 src/frontend/trade_portfolio/components/overview/PortfolioStateVector.ts:75: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
-src/shared/log/core/LogClock.ts:28: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
-src/shared/log/devTools.ts:140: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
+src/shared/log/core/LogService.ts:269: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
+src/shared/log/devTools.ts:138: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
 src/shared/utils/time/canonical.ts:14: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
 src/shared/utils/time/canonical.ts:15: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
