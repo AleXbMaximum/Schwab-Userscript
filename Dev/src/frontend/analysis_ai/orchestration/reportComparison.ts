@@ -1,7 +1,9 @@
 import { ui_createElement } from "../../components/core/builders/createElement";
 import { DS_TYPOGRAPHY } from "../../components/core/styles/theme";
-import { LLMClient } from "../../../backend/core/network/llm/LLMClient";
-import type { LLMClientConfig } from "../../../backend/core/network/llm/LLMClient";
+import {
+  createLLMClient,
+  type LLMClientConfig,
+} from "../../../backend/core/network/llm/LLMClient";
 import type { AIAnalysisRecord } from "../../../backend/services/ai/types";
 import { buildReport } from "../../../backend/services/ai/pipeline/reportBuilder";
 import { makeCopyBtn } from "../components/reportList";
@@ -88,7 +90,7 @@ export async function runComparison(ctx: ComparisonContext): Promise<void> {
   resultsSection.style.display = "none";
 
   try {
-    const client = new LLMClient(compConfig);
+    const client = createLLMClient(compConfig);
     const dateOlder = formatReportDate(older);
     const dateNewer = formatReportDate(newer);
 

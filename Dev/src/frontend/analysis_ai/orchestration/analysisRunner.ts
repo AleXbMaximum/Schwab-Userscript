@@ -1,5 +1,8 @@
-import type { LLMClientConfig } from "../../../backend/core/network/llm/LLMClient";
-import { LLMClient } from "../../../backend/core/network/llm/LLMClient";
+import {
+  createLLMClient,
+  type LLMClient,
+  type LLMClientConfig,
+} from "../../../backend/core/network/llm/LLMClient";
 import type {
   AIAnalysisConfig,
   AIAnalysisRecord,
@@ -48,7 +51,7 @@ export async function runAnalysis(
 
   const phaseModels = pipelineState.getPhaseModels();
   const makeClient = (phase: string): LLMClient =>
-    new LLMClient(resolveClientConfig(phaseModels[phase] || undefined));
+    createLLMClient(resolveClientConfig(phaseModels[phase] || undefined));
 
   const clients: PipelineClients = {
     analysts: makeClient("analysts"),

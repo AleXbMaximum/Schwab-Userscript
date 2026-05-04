@@ -1,4 +1,4 @@
-import { LLMClient } from "../../core/network/llm/LLMClient";
+import { createLLMClient } from "../../core/network/llm/LLMClient";
 import { getProviderApiKey } from "../ai/config/types";
 import type { AIProvidersConfig } from "../ai/config/types";
 import type { LLMResponse } from "../ai/types";
@@ -76,7 +76,7 @@ export async function summarizeNews(
       : {}),
   } as const;
 
-  const primaryResponse = await new LLMClient({
+  const primaryResponse = await createLLMClient({
     ...baseClientConfig,
     maxTokens: PRIMARY_MAX_TOKENS,
   }).complete({
@@ -93,7 +93,7 @@ export async function summarizeNews(
       (primaryResponse.reasoningTokens ?? 0) > 0);
 
   if (shouldRetry) {
-    const retryResponse = await new LLMClient({
+    const retryResponse = await createLLMClient({
       ...baseClientConfig,
       maxTokens: RETRY_MAX_TOKENS,
     }).complete({

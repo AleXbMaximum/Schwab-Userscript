@@ -1,4 +1,4 @@
-import { LLMClient } from "../../core/network/llm/LLMClient";
+import { createLLMClient } from "../../core/network/llm/LLMClient";
 import { getProviderApiKey } from "../ai/config/types";
 import type { AIProvidersConfig } from "../ai/config/types";
 import type { UnifiedNewsItem } from "./types";
@@ -23,7 +23,7 @@ export async function tagNewsItems(
 
   const headlines = items.map((item, i) => `[${i}] ${item.title}`).join("\n");
 
-  const client = new LLMClient({
+  const client = createLLMClient({
     provider: providerConfig.selected,
     apiKey,
     model: providerConfig.selectedModel,
