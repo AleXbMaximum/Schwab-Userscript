@@ -1,4 +1,4 @@
-import type{ DerivedState } from "../../../shared/types/derived";
+import type{ DerivedState, UnderlyingAggRow } from "../../../shared/types/derived";
 import type{ RebalanceAnchorMode, RebalanceModeId, RebalanceTargetEntry } from "../../../shared/types/core";
 import type { BetaHorizon } from "../beta/types";
 
@@ -76,6 +76,48 @@ function isFiniteNum(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
 }
 
+function finiteOr0(v: unknown): number {
+  return isFiniteNum(v) ? v : 0;
+}
+
+// ── Mode value extraction ──
+
+type ExtractCtx = {
+  acctVal: number;
+  betaData?: Map<string, any>;
+  betaHorizon: BetaHorizon;
+};
+
+type ModeExtractor = (
+  row: UnderlyingAggRow | undefined,
+  key: string,
+  ctx: ExtractCtx,
+) => number;
+
+const fieldExtractor =
+  (field: keyof UnderlyingAggRow): ModeExtractor =>
+  (row) =>
+    finiteOr0(row?.[field]);
+
+const MODE_EXTRACTORS: Record<RebalanceModeId, ModeExtractor> = {
+  deltaDollarPct: (row, _key, ctx) => {
+    const dn = row?.deltaNotionalDol ?? 0;
+    return isFiniteNum(dn) ? (dn / ctx.acctVal) * 100 : 0;
+  },
+  betaPct: (row, key, ctx) => {
+    const dn = row?.deltaNotionalDol ?? 0;
+    const beta = ctx.betaData?.get(key)?.[ctx.betaHorizon]?.beta;
+    const b = isFiniteNum(beta) ? beta : 1;
+    const bn = isFiniteNum(dn) ? dn * b : 0;
+    return (bn / ctx.acctVal) * 100;
+  },
+  shares: fieldExtractor("totalDeltaShares"),
+  deltaDollar: fieldExtractor("deltaNotionalDol"),
+  gamma: fieldExtractor("totalGammaSharesPerDol"),
+  theta: fieldExtractor("totalThetaPerDay"),
+  vega: fieldExtractor("totalVegaPerVolPoint"),
+};
+
 /**
  * Extract current per-underlying values for a given rebalance mode.
  * For percentage modes, values are 0-100 representing concentration %.
@@ -88,71 +130,68 @@ export function extractModeCurrentValues(
   betaHorizon: BetaHorizon = "short",
 ): Map<string, number> {
   const byU = derived.byUnderlying ?? {};
+  const ctx: ExtractCtx = {
+    acctVal: Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1),
+    betaData,
+    betaHorizon,
+  };
+  const extract = MODE_EXTRACTORS[mode];
   const result = new Map<string, number>();
-
-  switch (mode) {
-    case "deltaDollarPct": {
-      const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
-      for (const [key, row] of Object.entries(byU)) {
-        const dn = row?.deltaNotionalDol ?? 0;
-        result.set(key, isFiniteNum(dn) ? (dn / acctVal) * 100 : 0);
-      }
-      break;
-    }
-    case "betaPct": {
-      const acctVal = Math.max(derived.portfolioAgg?.netMarketValue ?? 1, 1);
-      for (const [key, row] of Object.entries(byU)) {
-        const dn = row?.deltaNotionalDol ?? 0;
-        const beta = betaData?.get(key)?.[betaHorizon]?.beta;
-        const b = isFiniteNum(beta) ? beta : 1;
-        const bn = isFiniteNum(dn) ? dn * b : 0;
-        result.set(key, (bn / acctVal) * 100);
-      }
-      break;
-    }
-    case "shares": {
-      for (const [key, row] of Object.entries(byU)) {
-        const v = row?.totalDeltaShares ?? 0;
-        result.set(key, isFiniteNum(v) ? v : 0);
-      }
-      break;
-    }
-    case "deltaDollar": {
-      for (const [key, row] of Object.entries(byU)) {
-        const v = row?.deltaNotionalDol ?? 0;
-        result.set(key, isFiniteNum(v) ? v : 0);
-      }
-      break;
-    }
-    case "gamma": {
-      for (const [key, row] of Object.entries(byU)) {
-        const v = row?.totalGammaSharesPerDol ?? 0;
-        result.set(key, isFiniteNum(v) ? v : 0);
-      }
-      break;
-    }
-    case "theta": {
-      for (const [key, row] of Object.entries(byU)) {
-        const v = row?.totalThetaPerDay ?? 0;
-        result.set(key, isFiniteNum(v) ? v : 0);
-      }
-      break;
-    }
-    case "vega": {
-      for (const [key, row] of Object.entries(byU)) {
-        const v = row?.totalVegaPerVolPoint ?? 0;
-        result.set(key, isFiniteNum(v) ? v : 0);
-      }
-      break;
-    }
+  for (const [key, row] of Object.entries(byU)) {
+    result.set(key, extract(row, key, ctx));
   }
-
   return result;
 }
 
 // ── Linked target computation ──
 
 export type LinkedTargetValues = Record<RebalanceAnchorMode, number>;
+
+type LinkedCtx = {
+  price: number;
+  beta: number;
+  acctVal: number;
+};
+
+function deriveFromDeltaDollar(
+  deltaDollar: number,
+  ctx: LinkedCtx,
+): LinkedTargetValues {
+  const shares = ctx.price > 0 ? deltaDollar / ctx.price : 0;
+  const deltaDollarPct = (deltaDollar / ctx.acctVal) * 100;
+  const betaPct = ((deltaDollar * ctx.beta) / ctx.acctVal) * 100;
+  return { shares, deltaDollar, deltaDollarPct, betaPct };
+}
+
+const LINKED_TARGET_BUILDERS: Record<
+  RebalanceAnchorMode,
+  (entry: RebalanceTargetEntry, ctx: LinkedCtx) => LinkedTargetValues
+> = {
+  shares: (entry, ctx) => {
+    const shares = entry.value;
+    const deltaDollar = ctx.price > 0 ? shares * ctx.price : 0;
+    return {
+      ...deriveFromDeltaDollar(deltaDollar, ctx),
+      shares,
+    };
+  },
+  deltaDollar: (entry, ctx) => deriveFromDeltaDollar(entry.value, ctx),
+  deltaDollarPct: (entry, ctx) => {
+    const deltaDollar = (entry.value / 100) * ctx.acctVal;
+    return {
+      ...deriveFromDeltaDollar(deltaDollar, ctx),
+      deltaDollarPct: entry.value,
+    };
+  },
+  betaPct: (entry, ctx) => {
+    const deltaDollar =
+      Math.abs(ctx.beta) > 0.01 ? ((entry.value / 100) * ctx.acctVal) / ctx.beta : 0;
+    return {
+      ...deriveFromDeltaDollar(deltaDollar, ctx),
+      betaPct: entry.value,
+    };
+  },
+};
 
 /**
  * Given a user-set anchor target for one exposure mode, derive all four
@@ -168,45 +207,10 @@ export function computeLinkedTargets(
   beta: number,
   accountValue: number,
 ): LinkedTargetValues {
-  const price =
-    isFiniteNum(underlyingPrice) && underlyingPrice > 0 ? underlyingPrice : 0;
-  const b = isFiniteNum(beta) && Math.abs(beta) > 0.01 ? beta : 1;
-  const acctVal = Math.max(accountValue, 1);
-
-  let shares = 0;
-  let deltaDollar = 0;
-  let deltaDollarPct = 0;
-  let betaPct = 0;
-
-  switch (entry.anchor) {
-    case "shares":
-      shares = entry.value;
-      deltaDollar = price > 0 ? shares * price : 0;
-      deltaDollarPct = (deltaDollar / acctVal) * 100;
-      betaPct = ((deltaDollar * b) / acctVal) * 100;
-      break;
-
-    case "deltaDollar":
-      deltaDollar = entry.value;
-      shares = price > 0 ? deltaDollar / price : 0;
-      deltaDollarPct = (deltaDollar / acctVal) * 100;
-      betaPct = ((deltaDollar * b) / acctVal) * 100;
-      break;
-
-    case "deltaDollarPct":
-      deltaDollarPct = entry.value;
-      deltaDollar = (deltaDollarPct / 100) * acctVal;
-      shares = price > 0 ? deltaDollar / price : 0;
-      betaPct = ((deltaDollar * b) / acctVal) * 100;
-      break;
-
-    case "betaPct":
-      betaPct = entry.value;
-      deltaDollar = Math.abs(b) > 0.01 ? ((betaPct / 100) * acctVal) / b : 0;
-      shares = price > 0 ? deltaDollar / price : 0;
-      deltaDollarPct = (deltaDollar / acctVal) * 100;
-      break;
-  }
-
-  return { shares, deltaDollar, deltaDollarPct, betaPct };
+  const ctx: LinkedCtx = {
+    price: isFiniteNum(underlyingPrice) && underlyingPrice > 0 ? underlyingPrice : 0,
+    beta: isFiniteNum(beta) && Math.abs(beta) > 0.01 ? beta : 1,
+    acctVal: Math.max(accountValue, 1),
+  };
+  return LINKED_TARGET_BUILDERS[entry.anchor](entry, ctx);
 }
