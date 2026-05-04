@@ -1,4 +1,5 @@
-import type { KVStore } from "backend/core/db/core/KVStore";
+import { openAlexQuantDB } from "backend/core/db/core/AlexQuantDB";
+import { KVStore } from "backend/core/db/core/KVStore";
 import type{
   AIModelProfile,
   AIProviderKind,
@@ -13,12 +14,6 @@ import type {
   AIPipelineConfig,
   AIGeneralConfig,
 } from "./types";
-import {
-  DEFAULT_PROVIDERS,
-  DEFAULT_AGENT_MODELS,
-  DEFAULT_PIPELINE,
-  DEFAULT_GENERAL,
-} from "./defaults";
 
 const PREFIX = "ai.config";
 
@@ -29,6 +24,52 @@ const KEYS = {
   pipeline: `${PREFIX}.pipeline`,
   general: `${PREFIX}.general`,
 } as const;
+
+// ── Defaults ─────────────────────────────────────────────────────────────────
+
+export const DEFAULT_PROVIDERS: AIProvidersConfig = {
+  selected: "anthropic",
+  selectedModel: "claude-sonnet-4-6",
+  newsModel: "",
+  anthropic: { apiKey: "" },
+  openai: { apiKey: "", serviceTier: "auto", pricingTier: "standard" },
+  google: { apiKey: "" },
+};
+
+export const DEFAULT_AGENT_MODELS: AIAgentModelsConfig = {
+  analysts: "",
+  debate: "",
+  trader: "",
+  risk: "",
+};
+
+export const DEFAULT_PIPELINE: AIPipelineConfig = {
+  selectedAnalysts: [
+    "market",
+    "fundamentals",
+    "sentiment_company",
+    "sentiment_macro",
+    "technicals",
+    "financial_quality",
+    "sellside",
+    "ownership",
+  ],
+  debateRounds: 2,
+  riskRounds: 2,
+  debateIntensity: "moderate",
+  debateHeat: 0.3,
+  enableMemory: true,
+  enableToolCalling: true,
+};
+
+export const DEFAULT_GENERAL: AIGeneralConfig = {
+  maxTokens: 4096,
+  temperature: 0.3,
+  alphaVantageApiKey: "",
+  autoFetchData: true,
+};
+
+// ── Tier-shape predicates (defend against corrupt KV payloads) ───────────────
 
 const isProvider = (value: unknown): value is AIProviderKind =>
   value === "anthropic" || value === "openai" || value === "google";
@@ -41,6 +82,8 @@ const isServiceTier = (value: unknown): value is OpenAIServiceTier =>
 
 const isPricingTier = (value: unknown): value is OpenAIPricingTier =>
   value === "standard" || value === "flex" || value === "batch";
+
+// ── Store ────────────────────────────────────────────────────────────────────
 
 export class AIConfigStore {
   constructor(private kv: KVStore) {}
@@ -120,4 +163,14 @@ export class AIConfigStore {
   ): Promise<void> {
     await this.kv.set(KEYS[key], value);
   }
+}
+
+/**
+ * Convenience: load AI provider config in a single call. Eliminates the repeated
+ * DB → KVStore → AIConfigStore → getProviders() boilerplate.
+ */
+export async function getAIProviders(): Promise<AIProvidersConfig> {
+  const db = await openAlexQuantDB();
+  const kv = new KVStore(db);
+  return new AIConfigStore(kv).getProviders();
 }

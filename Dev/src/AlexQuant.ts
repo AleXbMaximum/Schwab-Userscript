@@ -36,7 +36,7 @@ import { storageOperator } from "./backend/core/setting/settingsStorage";
 import { openAlexQuantDB } from "./backend/core/db/core/AlexQuantDB";
 import { KVStore } from "./backend/core/db/core/KVStore";
 import { newsService } from "./backend/services/news/NewsService";
-import { getAIProviders } from "./backend/services/ai/config/getAIProviders";
+import { getAIProviders } from "./backend/services/ai/config/AIConfigStore";
 import { MonitorController } from "./frontend/analysis_optionFlow/monitor/MonitorController";
 import { AccountSnapshotRecorder } from "./backend/pipeline/snapshot/AccountSnapshotRecorder";
 import type{
