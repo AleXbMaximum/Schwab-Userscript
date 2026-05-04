@@ -1,28 +1,23 @@
 import { STORES } from "../core/AlexQuantDB";
-import { txPromise, txComplete } from "../core/idbUtils";
+import { readTx, txPromise, writeTx } from "../core/idbUtils";
 import type { OptionCaptureFeatureLabelRow } from "./optionMonitorTypes";
 
-export class CaptureLabelStore {
-  private db: IDBDatabase;
+const STORE = STORES.FEATURE_LABELS;
 
-  constructor(db: IDBDatabase) {
-    this.db = db;
-  }
+export class CaptureLabelStore {
+  constructor(private db: IDBDatabase) {}
 
   async put(row: OptionCaptureFeatureLabelRow): Promise<void> {
-    const tx = this.db.transaction(STORES.FEATURE_LABELS, "readwrite");
-    tx.objectStore(STORES.FEATURE_LABELS).put(row);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      s.put(row);
+    });
   }
 
   async get(
     openingId: string,
     symbol: string,
   ): Promise<OptionCaptureFeatureLabelRow | undefined> {
-    const tx = this.db.transaction(STORES.FEATURE_LABELS, "readonly");
-    return txPromise(
-      tx.objectStore(STORES.FEATURE_LABELS).get([openingId, symbol]),
-    );
+    return readTx(this.db, STORE, (s) => s.get([openingId, symbol]));
   }
 
   async patchField(
@@ -38,12 +33,12 @@ export class CaptureLabelStore {
   }
 
   async deleteByOpeningId(openingId: string): Promise<void> {
-    const tx = this.db.transaction(STORES.FEATURE_LABELS, "readwrite");
-    const store = tx.objectStore(STORES.FEATURE_LABELS);
-    const index = store.index("openingId");
-    const keys = await txPromise<IDBValidKey[]>(index.getAllKeys(openingId));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, async (s) => {
+      const keys = await txPromise<IDBValidKey[]>(
+        s.index("openingId").getAllKeys(openingId),
+      );
+      for (const key of keys) s.delete(key);
+    });
   }
 
   async getOrCreate(
@@ -53,7 +48,7 @@ export class CaptureLabelStore {
     const existing = await this.get(openingId, symbol);
     if (existing) return existing;
     const row: OptionCaptureFeatureLabelRow = {
-      openingId: openingId,
+      openingId,
       symbol,
       fwdRet10m: null,
       fwdRet30m: null,

@@ -1,74 +1,56 @@
 import { STORES } from "../core/AlexQuantDB";
-import { txPromise, txComplete } from "../core/idbUtils";
+import { readTx, txPromise, writeTx, writeTxResult } from "../core/idbUtils";
 import type { AccountHistoryPoint } from "./accountHistoryTypes";
 import { logService } from "shared/log/core/LogService";
 
 const log = logService.namespace("storage");
+const STORE = STORES.ACCOUNT_SNAPSHOT_HISTORY;
 
 export class AccountHistoryStore {
-  private db: IDBDatabase;
-
-  constructor(db: IDBDatabase) {
-    this.db = db;
-  }
+  constructor(private db: IDBDatabase) {}
 
   async getAll(): Promise<AccountHistoryPoint[]> {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readonly");
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).getAll());
+    return readTx(this.db, STORE, (s) => s.getAll());
   }
 
   async getRange(
     startTs: number,
     endTs: number,
   ): Promise<AccountHistoryPoint[]> {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readonly");
     const range = IDBKeyRange.bound(startTs, endTs);
-    return txPromise(
-      tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).getAll(range),
-    );
+    return readTx(this.db, STORE, (s) => s.getAll(range));
   }
 
   async put(point: AccountHistoryPoint): Promise<void> {
-    const tx = this.db.transaction(
-      STORES.ACCOUNT_SNAPSHOT_HISTORY,
-      "readwrite",
-    );
-    tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).put(point);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      s.put(point);
+    });
     log.debug("accountHistory.put", { ts: point.ts });
   }
 
   async putBatch(points: AccountHistoryPoint[]): Promise<void> {
     if (points.length === 0) return;
-    const tx = this.db.transaction(
-      STORES.ACCOUNT_SNAPSHOT_HISTORY,
-      "readwrite",
-    );
-    const store = tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY);
-    for (const point of points) store.put(point);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      for (const point of points) s.put(point);
+    });
     log.debug("accountHistory.putBatch", { count: points.length });
   }
 
   async deleteOlderThan(cutoffTs: number): Promise<number> {
-    const tx = this.db.transaction(
-      STORES.ACCOUNT_SNAPSHOT_HISTORY,
-      "readwrite",
-    );
-    const store = tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY);
-    const range = IDBKeyRange.upperBound(cutoffTs, true);
-    const keys = await txPromise<IDBValidKey[]>(store.getAllKeys(range));
-    for (const key of keys) store.delete(key);
-    await txComplete(tx);
+    const deleted = await writeTxResult(this.db, STORE, async (s) => {
+      const range = IDBKeyRange.upperBound(cutoffTs, true);
+      const keys = await txPromise<IDBValidKey[]>(s.getAllKeys(range));
+      for (const key of keys) s.delete(key);
+      return keys.length;
+    });
     log.debug("accountHistory.deleteOlderThan", {
       cutoffTs,
-      deletedCount: keys.length,
+      deletedCount: deleted,
     });
-    return keys.length;
+    return deleted;
   }
 
   async count(): Promise<number> {
-    const tx = this.db.transaction(STORES.ACCOUNT_SNAPSHOT_HISTORY, "readonly");
-    return txPromise(tx.objectStore(STORES.ACCOUNT_SNAPSHOT_HISTORY).count());
+    return readTx(this.db, STORE, (s) => s.count());
   }
 }

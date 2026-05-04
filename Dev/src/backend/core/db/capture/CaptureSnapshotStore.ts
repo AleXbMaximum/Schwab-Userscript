@@ -1,5 +1,5 @@
 import { STORES } from "../core/AlexQuantDB";
-import { txPromise, txComplete } from "../core/idbUtils";
+import { readTx, writeTx } from "../core/idbUtils";
 import type {
   OptionCaptureSnapshotRow,
   OptionCaptureMetaRow,
@@ -7,6 +7,8 @@ import type {
   EmbeddedExpiryMetrics,
 } from "./optionMonitorTypes";
 import { normalizeMarketTimeCT } from "shared/utils/time";
+
+const STORE = STORES.SNAPSHOTS;
 
 function normalizeSnapshot(row: OptionCaptureSnapshotRow): OptionCaptureSnapshotRow {
   if (!row) return row;
@@ -68,22 +70,19 @@ export function buildSnapshotRow(
 }
 
 export class CaptureSnapshotStore {
-  private db: IDBDatabase;
-
-  constructor(db: IDBDatabase) {
-    this.db = db;
-  }
+  constructor(private db: IDBDatabase) {}
 
   async put(row: OptionCaptureSnapshotRow): Promise<void> {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readwrite");
-    tx.objectStore(STORES.SNAPSHOTS).put(row);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      s.put(row);
+    });
   }
 
   async get(openingId: string): Promise<OptionCaptureSnapshotRow | undefined> {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readonly");
-    const row = await txPromise(
-      tx.objectStore(STORES.SNAPSHOTS).get(openingId),
+    const row = await readTx<OptionCaptureSnapshotRow | undefined>(
+      this.db,
+      STORE,
+      (s) => s.get(openingId),
     );
     return row ? normalizeSnapshot(row) : undefined;
   }
@@ -92,17 +91,19 @@ export class CaptureSnapshotStore {
     symbol: string,
     dataTimestamp: string,
   ): Promise<OptionCaptureSnapshotRow | undefined> {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readonly");
-    const index = tx.objectStore(STORES.SNAPSHOTS).index("symbolDataTs");
-    const row = await txPromise(index.get([symbol, dataTimestamp]));
+    const row = await readTx<OptionCaptureSnapshotRow | undefined>(
+      this.db,
+      STORE,
+      (s) => s.index("symbolDataTs").get([symbol, dataTimestamp]),
+    );
     return row ? normalizeSnapshot(row) : undefined;
   }
 
   async getBySymbol(symbol: string): Promise<OptionCaptureSnapshotRow[]> {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readonly");
-    const index = tx.objectStore(STORES.SNAPSHOTS).index("symbolCaptured");
-    const range = IDBKeyRange.bound([symbol, ""], [symbol, "\uffff"]);
-    const rows = await txPromise(index.getAll(range));
+    const range = IDBKeyRange.bound([symbol, ""], [symbol, "￿"]);
+    const rows = await readTx<OptionCaptureSnapshotRow[]>(this.db, STORE, (s) =>
+      s.index("symbolCaptured").getAll(range),
+    );
     return rows.map(normalizeSnapshot);
   }
 
@@ -134,8 +135,8 @@ export class CaptureSnapshotStore {
   }
 
   async delete(openingId: string): Promise<void> {
-    const tx = this.db.transaction(STORES.SNAPSHOTS, "readwrite");
-    tx.objectStore(STORES.SNAPSHOTS).delete(openingId);
-    await txComplete(tx);
+    await writeTx(this.db, STORE, (s) => {
+      s.delete(openingId);
+    });
   }
 }
