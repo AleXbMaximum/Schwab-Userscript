@@ -19,9 +19,19 @@
 
 ## Key Entry Files
 
-- [`core/AlexQuantDB.ts`](core/AlexQuantDB.ts)
-- [`core/KVStore.ts`](core/KVStore.ts)
+- [`core/AlexQuantDB.ts`](core/AlexQuantDB.ts) - IndexedDB schema bootstrap
+- [`core/KVStore.ts`](core/KVStore.ts) - key-value abstraction
+- [`core/idbUtils.ts`](core/idbUtils.ts) - shared transaction helpers (`readTx`, `writeTx`, `writeTxResult`, `txPromise`); every store class in `account/`, `ai/`, and `capture/` is built on these
+- [`core/dbStats.ts`](core/dbStats.ts) - per-store size and row-count probes
 - [`STORAGE.md`](STORAGE.md)
+
+## Store Classes
+
+| Subfolder | Stores |
+| --- | --- |
+| `account/` | `AccountHistoryStore`, `AccountHistoryArchiveStore` (+ `accountHistoryTypes.ts`) |
+| `ai/` | `AIAnalysisStore`, `MemoryStore` |
+| `capture/` | `MonitorCaptureStore`, `CaptureSnapshotStore`, `CaptureStrikeStore`, `CaptureStrikeAggregateStore`, `CaptureLabelStore`, `TimestampCaptureStore` (+ `optionMonitorTypes.ts`) |
 
 ## Dependency Direction
 

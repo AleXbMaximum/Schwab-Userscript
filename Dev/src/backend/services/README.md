@@ -17,10 +17,16 @@
 
 ## Key Entry Files
 
-- [`ai/AIService.ts`](ai/AIService.ts)
-- [`ai/AIOrchestrator.ts`](ai/AIOrchestrator.ts)
+- [`ai/AIService.ts`](ai/AIService.ts) - session lifecycle façade
+- [`ai/AIOrchestrator.ts`](ai/AIOrchestrator.ts) - thin coordinator that delegates phase logic to `service/aiPhaseAnalysts.ts`, `service/aiPhaseDebate.ts`, and `service/aiAgentRunner.ts`
+- [`ai/config/AIConfigStore.ts`](ai/config/AIConfigStore.ts) - provider/model defaults plus the `getAIProviders()` accessor (the previous standalone `config/getAIProviders.ts` was merged in)
+- [`ai/pipeline/`](ai/pipeline/) - data-prep helpers (`DataFetcher.ts`, `prepareBundle.ts`, plus formatters/parsers/summarizers/technicals/contextBuilders/dataPreprocessing/reportBuilder)
+- [`ai/prompts/`](ai/prompts/) - `prompts.ts` barrel, `intensity.ts`, `tools.ts`, and per-agent prompts under `prompts/agents/`
+- [`ai/tools/toolExecutor.ts`](ai/tools/toolExecutor.ts) - tool-call dispatch
 - [`news/NewsService.ts`](news/NewsService.ts)
 - [`news/NewsLifecycleCoordinator.ts`](news/NewsLifecycleCoordinator.ts)
+- [`news/newsFetchHelpers.ts`](news/newsFetchHelpers.ts) and [`news/newsItemHelpers.ts`](news/newsItemHelpers.ts) - extracted helpers
+- [`news/NewsTagging.ts`](news/NewsTagging.ts), [`news/NewsSummarizer.ts`](news/NewsSummarizer.ts), [`news/NewsMemoryStore.ts`](news/NewsMemoryStore.ts)
 
 ## Dependency Direction
 

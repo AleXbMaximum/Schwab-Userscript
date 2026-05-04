@@ -18,9 +18,13 @@
 
 ## Key Entry Files
 
-- [`db/index.ts`](db/index.ts)
-- [`network/index.ts`](network/index.ts)
-- [`setting/settingsStorage.ts`](setting/settingsStorage.ts)
+- [`db/core/AlexQuantDB.ts`](db/core/AlexQuantDB.ts) - IndexedDB bootstrap entry
+- [`db/core/KVStore.ts`](db/core/KVStore.ts) - key-value abstraction
+- [`db/core/idbUtils.ts`](db/core/idbUtils.ts) - shared `readTx`/`writeTx`/`writeTxResult`/`txPromise` helpers (adopted across capture, AI, and account stores)
+- [`network/schwab/SchwabNetworkSource.ts`](network/schwab/SchwabNetworkSource.ts) - Schwab transport entry
+- [`network/types.ts`](network/types.ts) - cross-adapter network types
+- [`setting/settingsStorage.ts`](setting/settingsStorage.ts) - storage operator factory
+- [`setting/config/`](setting/config/) - state-mapping and storage-config tables
 
 ## Dependency Direction
 

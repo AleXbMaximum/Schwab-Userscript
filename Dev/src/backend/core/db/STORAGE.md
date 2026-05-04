@@ -76,18 +76,18 @@ Generic KV store for small config and settings data.
 
 **Keys in use:**
 
-| Key pattern                     | Writer                         | Purpose                                                                                |
-| ------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `state.{key}.{token}`           | State Layer (`persistence.ts`) | Per-user app state (authToken, accountId, settings, lastUpdate, rawHoldings, betaData) |
-| `ui.holdingsTableSort`          | `trade_holdings/page.ts`       | Holdings table sort column/direction                                                   |
-| `monitor.settings`              | `monitor.ts`                   | Monitor configuration (enabled, symbols, intervals)                                    |
-| `monitor.lastCycleAt`           | `monitor.ts`                   | Timestamp of last monitor refresh cycle                                                |
-| `ui.movingBetaWatchlist`        | `MovingBetaChart.ts`           | Moving Beta chart watchlist ticker list                                                |
-| `ui.movingBetaIndicators`       | `MovingBetaChart.ts`           | Moving Beta chart indicator ticker list                                                |
-| `ui.crossAssetMatrixRowTickers` | `CorrelationBetaHeatmap.ts`    | Cross-Asset Matrix row ticker list                                                     |
-| `ui.crossAssetMatrixColTickers` | `CorrelationBetaHeatmap.ts`    | Cross-Asset Matrix column ticker list                                                  |
-| `ui.themeMode`                  | `axTheme/controller.ts`        | Light/dark mode (canonical; mirrored to `localStorage:alexquant.themeMode` for boot)    |
-| `ui.renderMode`                 | `axTheme/renderMode/controller.ts` | Full/Eco render mode (canonical; mirrored to `localStorage:alexquant.renderMode` for boot) |
+| Key pattern                     | Writer                                                              | Purpose                                                                                |
+| ------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `state.{key}.{token}`           | State Layer (`backend/core/setting/persistence.ts`)                  | Per-user app state (authToken, accountId, settings, lastUpdate, rawHoldings, betaData) |
+| `ui.holdingsTableSort`          | `frontend/trade_holdings/page.ts`                                    | Holdings table sort column/direction                                                   |
+| `monitor.settings`              | `frontend/analysis_optionFlow/monitor/monitorSettings.ts`            | Monitor configuration (enabled, symbols, intervals)                                    |
+| `monitor.lastCycleAt`           | `frontend/analysis_optionFlow/monitor/monitorScheduler.ts`           | Timestamp of last monitor refresh cycle                                                |
+| `ui.movingBetaWatchlist`        | `frontend/analysis_visualize/timeseries/moving_beta/MovingBetaStorage.ts` | Moving Beta chart watchlist ticker list                                            |
+| `ui.movingBetaIndicators`       | `frontend/analysis_visualize/timeseries/moving_beta/MovingBetaStorage.ts` | Moving Beta chart indicator ticker list                                            |
+| `ui.crossAssetMatrixRowTickers` | `frontend/analysis_visualize/heatmap/HeatmapStorage.ts`              | Cross-Asset Matrix row ticker list                                                     |
+| `ui.crossAssetMatrixColTickers` | `frontend/analysis_visualize/heatmap/HeatmapStorage.ts`              | Cross-Asset Matrix column ticker list                                                  |
+| `ui.themeMode`                  | `frontend/components/core/axTheme/controller.ts`                     | Light/dark mode (canonical; mirrored to `localStorage:alexquant.themeMode` for boot)    |
+| `ui.renderMode`                 | `frontend/components/core/axTheme/renderMode/controller.ts`          | Full/Eco render mode (canonical; mirrored to `localStorage:alexquant.renderMode` for boot) |
 
 ---
 
@@ -372,20 +372,21 @@ Lightweight historical summaries extracted from completed analyses. Used as cont
 Schwab API
     │
     ▼
-MonitorController  ──fetch + ETL──▶  IndexedDB
-    │                                     │
-    │        ┌──────────────┬─────────────┤
-    │        ▼              ▼             ▼
-    │   SnapshotETL    StrikeLegsETL   StrikeAggregateETL
-    │   (meta+expiry)       │          (GEX + OI merged)
-    │        │              ▼             │
-    │        ▼         StrikeStore        ▼
-    │   SnapshotStore              AggregateStore
-    │        │
-    │        ▼
-    │   LabelBackfill ──▶ LabelStore
+MonitorController ──monitorCapture──▶  IndexedDB
+    │                                       │
+    │   buildMetaRow + ExpiryMetricsETL     │
+    │   (meta and per-expiry rows assembled in monitorCapture.ts)
+    │                  │                    │
+    │                  ▼                    │
+    │            buildSnapshotRow ──▶ CaptureSnapshotStore (opening_snapshots)
+    │                                       │
+    │   StrikeLegs ──▶ CaptureStrikeStore (options_opening_strike_legs)
+    │                                       │
+    │   strike aggregation ──▶ CaptureStrikeAggregateStore (opening_strike_aggregates)
+    │                                       │
+    │   LabelBackfill ──▶ CaptureLabelStore (options_feature_labels)
     │
-    ├──snapshots──▶ MonitorCaptureStore
+    ├──snapshots──▶ MonitorCaptureStore (monitor_openings)
     │
     ├──metrics──▶ AccountHistoryStore / AccountHistoryArchiveStore
     │
@@ -400,6 +401,13 @@ BetaService       ──betaData──▶ KVStore  (via State Layer, hydrated on
 AI Pipeline       ──analyses──▶ AIAnalysisStore (ai_analyses)
                   ──memories──▶ MemoryStore (ai_memories)
 ```
+
+Notes on the capture pipeline:
+
+- `buildMetaRow` is inlined in `frontend/analysis_optionFlow/monitor/monitorCapture.ts` (the previous standalone `MetaETL` was deleted as part of the refactor).
+- Per-expiry rows are produced by `backend/computation/options/monitor/etl/ExpiryMetricsETL.ts`.
+- Per-strike chain rows are produced by `backend/computation/options/monitor/StrikeLegs.ts`.
+- Forward-return labels are written by `backend/computation/options/monitor/etl/LabelBackfill.ts` after subsequent captures arrive.
 
 ## Critical Invariants
 

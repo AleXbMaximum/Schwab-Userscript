@@ -2,20 +2,22 @@
 
 ## Purpose
 
-`frontend/trade_holdings/` owns the Holdings page, including the page shell, holdings-table rendering, mobile layout, settings UI, and account snapshot rendering.
+`frontend/trade_holdings/` owns the Holdings page itself: page shell, holdings-table rendering, mobile layout, and the holdings-page settings panel.
 
 ## Owns
 
 - page shell and settings in `page.ts`
 - desktop and mobile table presentation in `holding_table/`
-- account timeline, charting, and history recording in `snapshot/`
 - holdings-page formatting helpers
+- holdings settings UI in `setting_panel/`
 
 ## Does Not Own
 
 - holdings ingestion and dirty tracking
 - derived metric calculations
 - shared holdings column ownership
+- the floating account snapshot widget and the account-history timeline (now in [`../snapshot/`](../snapshot/), a sibling top-level frontend directory)
+- the account-history recorder/persistence (now in [`../../backend/pipeline/snapshot/`](../../backend/pipeline/snapshot/), owned by the backend pipeline)
 
 ## Key Entry Files
 
@@ -23,8 +25,7 @@
 - [`holding_table/controller/TableController.ts`](holding_table/controller/TableController.ts)
 - [`holding_table/render/TableReconciler.ts`](holding_table/render/TableReconciler.ts)
 - [`holding_table/table/rowValues.ts`](holding_table/table/rowValues.ts)
-- [`snapshot/accountTimeline.ts`](snapshot/accountTimeline.ts)
-- [`snapshot/AccountSnapshotRecorder.ts`](snapshot/AccountSnapshotRecorder.ts)
+- [`setting_panel/`](setting_panel/) - holdings-page settings UI composition
 
 ## Dependency Direction
 
@@ -36,8 +37,12 @@ The Holdings page consumes derived state from the backend pipeline and shared co
   See [`holding_table/README.md`](holding_table/README.md) for the internal layer map.
 - `holding_table/table/` owns row projection, table-only builder config, warning/derived selectors, and column metadata.
 - `holding_table/render/` owns DOM reconciliation, cell rendering, flash behavior, and injected table CSS.
-- `snapshot/` owns account history persistence, timeline chart rendering, stitched time-axis helpers, and snapshot runtime preferences.
 - `setting_panel/` owns holdings-page settings UI composition.
+
+The previous `trade_holdings/snapshot/` subdirectory has been split:
+
+- UI rendering (timeline chart, slide panel, metric DOM, floating snapshot) now lives in [`../snapshot/`](../snapshot/) (`FloatingSnapshot.ts`, `panel/`, `metrics/`, `timeline/`).
+- Account-history recording, archive, compaction, and persistence now live in [`../../backend/pipeline/snapshot/`](../../backend/pipeline/snapshot/) (`AccountSnapshotRecorder.ts`, `historyCache.ts`, `historyCompaction.ts`, `historyPersistence.ts`, `historyPoint.ts`).
 
 ## Related Topic Docs
 

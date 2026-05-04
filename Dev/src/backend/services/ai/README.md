@@ -20,12 +20,15 @@
 
 ## Key Entry Files
 
-- [`AIService.ts`](AIService.ts)
-- [`AIOrchestrator.ts`](AIOrchestrator.ts)
+- [`AIService.ts`](AIService.ts) - application-wide singleton, session lifecycle, stream/progress fan-out
+- [`AIOrchestrator.ts`](AIOrchestrator.ts) - thin coordinator over the `service/` phase modules
 - [`types.ts`](types.ts)
-- [`config/AIConfigStore.ts`](config/AIConfigStore.ts)
-- [`config/getAIProviders.ts`](config/getAIProviders.ts)
-- [`pipeline/DataFetcher.ts`](pipeline/DataFetcher.ts)
+- [`config/AIConfigStore.ts`](config/AIConfigStore.ts) - KV-backed provider/model config; exports `DEFAULT_PROVIDERS`, `DEFAULT_AGENT_MODELS`, `DEFAULT_PIPELINE`, `DEFAULT_GENERAL`, and the top-level `getAIProviders()` accessor (formerly in a separate file)
+- [`config/clientConfigFactory.ts`](config/clientConfigFactory.ts), [`config/modelCatalog.ts`](config/modelCatalog.ts), [`config/pricing.ts`](config/pricing.ts), [`config/types.ts`](config/types.ts)
+- [`pipeline/DataFetcher.ts`](pipeline/DataFetcher.ts) and [`pipeline/prepareBundle.ts`](pipeline/prepareBundle.ts) - market-data fan-out and bundle preparation
+- [`service/aiPhaseAnalysts.ts`](service/aiPhaseAnalysts.ts), [`service/aiPhaseDebate.ts`](service/aiPhaseDebate.ts), [`service/aiAgentRunner.ts`](service/aiAgentRunner.ts) - phase-specific orchestration delegated by `AIOrchestrator`
+- [`prompts/prompts.ts`](prompts/prompts.ts) (barrel), [`prompts/intensity.ts`](prompts/intensity.ts), [`prompts/tools.ts`](prompts/tools.ts), and per-agent files under [`prompts/agents/`](prompts/agents/)
+- [`tools/toolExecutor.ts`](tools/toolExecutor.ts)
 - [`ai-workflow.md`](ai-workflow.md)
 
 ## Dependency Direction

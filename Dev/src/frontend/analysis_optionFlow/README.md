@@ -7,14 +7,16 @@
 ## Owns
 
 - page layout and lifecycle in `page.ts`
-- monitor-page integration in `monitor/MonitorController.ts`, `monitor/monitorCapture.ts`, and `monitor/monitorUniverse.ts`
-- dashboard query and local state in `data/queryEngine.ts` and `store.ts`
-- option flow charts, heatmaps, and signal panels
+- monitor runtime in `monitor/` (`MonitorController.ts`, `monitorCapture.ts`, `monitorRuntime.ts`, `monitorScheduler.ts`, `monitorSettings.ts`, `monitorFetchPipeline.ts`, `monitorUniverse.ts`)
+- dashboard query and local state in `data/queryEngine.ts`, `data/monitorHistory.ts`, and `store.ts`
+- option flow charts in `components/charts/`, heatmaps in `components/heatmaps/`, and supporting panels (`SignalPanel.ts`, `IVCorrelation.ts`, `ControlBar.ts`, `ZoneControlBar.ts`, `chartData.ts`, `chartProfiles.ts`)
+- signal engine in `signals/` (`signalEngine.ts`, `types.ts`)
+- monitor settings UI in `setting_panel/` (`settingsPanel.ts`, `flowPageSetting.ts`, `monitoredTickers_infoPanel.ts`, `TickerGridManager.ts`, `DatabaseInfoModal.ts`)
 
 ## Does Not Own
 
-- IndexedDB schema for monitor stores
-- options ETL or label backfill ownership
+- IndexedDB schema for monitor stores (lives in `backend/core/db/capture/`)
+- options ETL or label backfill ownership (lives in `backend/computation/options/monitor/`)
 - transport-level options fetching
 
 ## Key Entry Files
@@ -22,8 +24,11 @@
 - [`page.ts`](page.ts)
 - [`store.ts`](store.ts)
 - [`monitor/MonitorController.ts`](monitor/MonitorController.ts)
-- [`monitor/monitorCapture.ts`](monitor/monitorCapture.ts)
+- [`monitor/monitorCapture.ts`](monitor/monitorCapture.ts) - includes the inlined `buildMetaRow` (former `MetaETL`)
+- [`monitor/monitorScheduler.ts`](monitor/monitorScheduler.ts) - writes `monitor.lastCycleAt` to KV
+- [`monitor/monitorSettings.ts`](monitor/monitorSettings.ts) - writes `monitor.settings` to KV
 - [`data/queryEngine.ts`](data/queryEngine.ts)
+- [`signals/signalEngine.ts`](signals/signalEngine.ts)
 
 ## Dependency Direction
 

@@ -7,10 +7,10 @@
 ## Owns
 
 - `NewsService` state and polling cadence
-- `NewsLifecycleCoordinator`
-- source fan-out in `newsFetchers.ts`
-- summarization and tagging helpers
-- news memory persistence glue
+- `NewsLifecycleCoordinator` (symbol-scope synchronization driven by holdings deltas)
+- source fan-out in `newsFetchers.ts`, with extracted helpers in `newsFetchHelpers.ts` and per-item normalization in `newsItemHelpers.ts`
+- tagging (`NewsTagging.ts`) and summarization (`NewsSummarizer.ts`) helpers
+- news memory persistence glue (`NewsMemoryStore.ts`)
 
 ## Does Not Own
 
@@ -23,7 +23,11 @@
 - [`NewsService.ts`](NewsService.ts)
 - [`NewsLifecycleCoordinator.ts`](NewsLifecycleCoordinator.ts)
 - [`newsFetchers.ts`](newsFetchers.ts)
+- [`newsFetchHelpers.ts`](newsFetchHelpers.ts) - extracted from `NewsService` during the recent refactor
+- [`newsItemHelpers.ts`](newsItemHelpers.ts) - extracted from `NewsService` during the recent refactor
+- [`NewsTagging.ts`](NewsTagging.ts)
 - [`NewsSummarizer.ts`](NewsSummarizer.ts)
+- [`NewsMemoryStore.ts`](NewsMemoryStore.ts)
 - [`types.ts`](types.ts)
 
 ## Dependency Direction

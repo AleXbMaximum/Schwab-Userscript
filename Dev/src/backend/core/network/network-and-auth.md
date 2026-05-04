@@ -22,17 +22,18 @@ This document describes external transport, auth, parser normalization, streamer
 
 - [`types.ts`](types.ts)
 - [`schwab/SchwabNetworkSource.ts`](schwab/SchwabNetworkSource.ts)
-- Schwab endpoint modules in `schwab/`
+- per-endpoint REST modules under [`schwab/endpoints/`](schwab/endpoints/) (`balances.ts`, `holdings.ts`, `quotes.ts`, `options.ts`, `marketData.ts`, `news.ts`, `calendar.ts`, `indicesHistory.ts`, `symbol_quotes_history.ts`)
+- shared transport infra under [`schwab/infra/`](schwab/infra/) (`auth.ts`, `httpUtils.ts`, `initContext.ts`)
 
 These adapters provide holdings, quotes, balances, options, and streamer data to the holdings pipeline.
 
 ### Enrichment And Auxiliary Adapters
 
 - Yahoo adapters in `yahoo/`
-- Barron's fetchers in `barrons/`
-- LLM transport in `llm/LLMClient.ts` (non-streaming `complete()` + streaming `completeStream()`)
-- SSE stream parser in `llm/sseParser.ts`
-- news fan-out in [`../../services/news/newsFetchers.ts`](../../services/news/newsFetchers.ts)
+- Barron's fetchers in `barrons/` — `BarronsFetcher.ts` is now a thin coordinator over `transport.ts`, `urls.ts`, and `extractors.ts`
+- LLM transport in [`llm/LLMClient.ts`](llm/LLMClient.ts): `LLMClient` is a type and `createLLMClient(config)` returns a client that exposes `complete(options)` and `completeStream(options)`. The factory dispatches into per-provider modules: [`llm/anthropicProvider.ts`](llm/anthropicProvider.ts), [`llm/geminiProvider.ts`](llm/geminiProvider.ts), [`llm/openaiProvider.ts`](llm/openaiProvider.ts).
+- SSE stream parser in [`llm/sseParser.ts`](llm/sseParser.ts)
+- News fan-out across [`../../services/news/newsFetchers.ts`](../../services/news/newsFetchers.ts), [`../../services/news/newsFetchHelpers.ts`](../../services/news/newsFetchHelpers.ts), and [`../../services/news/newsItemHelpers.ts`](../../services/news/newsItemHelpers.ts)
 
 These sources are fail-soft. Optional source failures should not break the primary holdings runtime.
 
@@ -52,14 +53,14 @@ Key rules:
 
 ## REST Transport Rules
 
-- `withTokenRefresh()` retries once on `401` plus `invalid_token`.
-- Schwab endpoint modules keep required Schwab headers and correlators intact during refactors.
+- `withTokenRefresh()` (defined in [`schwab/infra/httpUtils.ts`](schwab/infra/httpUtils.ts)) retries once on `401` plus `invalid_token`.
+- Schwab endpoint modules under [`schwab/endpoints/`](schwab/endpoints/) keep required Schwab headers and correlators intact during refactors.
 - Options chain fetching supports optional expiration narrowing without changing the default all-expirations behavior.
-- Parser modules own unit conversion and sentinel cleanup. UI and pipeline layers should not compensate for raw payload quirks.
+- Parser modules under [`schwab/parsing/`](schwab/parsing/) own unit conversion and sentinel cleanup. UI and pipeline layers should not compensate for raw payload quirks.
 
 ## Balances API
 
-[`schwab/balances.ts`](schwab/balances.ts) polls the balances snapshot used by the header and account-history features.
+[`schwab/endpoints/balances.ts`](schwab/endpoints/balances.ts) polls the balances snapshot used by the header and account-history features.
 
 - registered under the `balances` scheduler key
 - active during market, after-hours, and pre-market phases
@@ -92,6 +93,8 @@ Parser files include:
 - `schwab/parsing/quotesParser.ts`
 - `schwab/parsing/streamerParser.ts`
 - `schwab/parsing/chartNormalizer.ts`
+- `schwab/parsing/calendarParser.ts`
+- `schwab/parsing/numberParsers.ts`
 
 Rules:
 

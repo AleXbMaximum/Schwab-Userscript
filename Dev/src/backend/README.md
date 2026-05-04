@@ -18,8 +18,10 @@
 
 ## Key Entry Files
 
-- [`pipeline/BackendOrchestrator.ts`](pipeline/BackendOrchestrator.ts) - runtime composition root
+- [`pipeline/orchestration/BackendOrchestrator.ts`](pipeline/orchestration/BackendOrchestrator.ts) - runtime composition root (relocated under `pipeline/orchestration/` along with `EventBus`, `PhaseManager`, `PollingScheduler`, `pollingOrchestrator`, `settingsRouter`, `sourceOverrideManager`, `DerivedStatePipeline`)
 - [`pipeline/HoldingsDataService.ts`](pipeline/HoldingsDataService.ts) - holdings pipeline core service
+- [`pipeline/HoldingsFrameEmitter.ts`](pipeline/HoldingsFrameEmitter.ts) - frame emitter feeding the frontend
+- [`pipeline/snapshot/AccountSnapshotRecorder.ts`](pipeline/snapshot/AccountSnapshotRecorder.ts) - account-history recorder (moved from frontend in the recent refactor)
 
 ## Dependency Direction
 

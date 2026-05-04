@@ -216,7 +216,7 @@ The local loader expects the bundle at `http://127.0.0.1:5500/.dist/AlexQuant.us
 flowchart TB
     Page["Schwab positions page"] --> Script["Dev/src/AlexQuant.ts"]
     Script --> Coordinator["frontend/components/DataPipelineCoordinator.ts"]
-    Coordinator --> Orchestrator["backend/pipeline/BackendOrchestrator.ts"]
+    Coordinator --> Orchestrator["backend/pipeline/orchestration/BackendOrchestrator.ts"]
     Coordinator --> Renderer["frontend/RenderEngine.ts"]
     Orchestrator --> Backend["backend/<br/>transport, persistence, orchestration, computation, services"]
     Renderer --> Frontend["frontend/<br/>pages, components, charts, settings panels"]
@@ -300,9 +300,16 @@ Run all npm commands from `Dev/`.
 └── Dev/
     ├── package.json
     ├── webpack.config.js
+    ├── tsconfig.json
+    ├── eslint.config.cjs
+    ├── jest.config.cjs
+    ├── 0header.js
+    ├── scripts/
+    ├── __tests__/
     ├── .dist/
     └── src/
         ├── AlexQuant.ts
+        ├── boot/
         ├── backend/
         ├── frontend/
         └── shared/

@@ -10,17 +10,19 @@ Run userscript npm commands from `Dev/`. The userscript `package.json`, `package
 
 ```text
 AlexQuant.ts
+├── boot/      init-context discovery + DOM-ready waiter
 ├── backend/   runtime orchestration, transport, persistence, computation
 ├── frontend/  page renderers, shared UI scaffolding, chart rendering primitives
-└── shared/    cross-layer types, table columns, logging, utilities
+└── shared/    cross-layer types, table columns, logging, settings, metrics, utilities
 ```
 
 The top-level bootstrap path is:
 
 ```text
 AlexQuant.ts
+  -> boot/initContextWaiter.ts (waitForDomReady, waitForInitContext)
   -> frontend/components/DataPipelineCoordinator.ts
-  -> backend/pipeline/BackendOrchestrator.ts
+  -> backend/pipeline/orchestration/BackendOrchestrator.ts
   -> frontend/RenderEngine.ts
 ```
 
@@ -69,6 +71,8 @@ AlexQuant.ts
 - [`frontend/trade_holdings/README.md`](frontend/trade_holdings/README.md)
 - [`frontend/trade_holdings/holding_table/README.md`](frontend/trade_holdings/holding_table/README.md)
 - [`frontend/trade_portfolio/README.md`](frontend/trade_portfolio/README.md)
+
+`frontend/news_page/` and `frontend/snapshot/` (floating snapshot widget + account-history timeline) are real top-level surfaces; see [`frontend/README.md`](frontend/README.md) for ownership notes — both are intentionally covered by the parent README until they grow a non-obvious local contract.
 
 ### Shared
 

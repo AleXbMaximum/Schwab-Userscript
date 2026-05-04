@@ -18,11 +18,13 @@ This document covers the end-to-end Holdings data path from upstream fetches and
 
 ## Key Files
 
-- [`BackendOrchestrator.ts`](BackendOrchestrator.ts)
+- [`orchestration/BackendOrchestrator.ts`](orchestration/BackendOrchestrator.ts)
 - [`HoldingsDataService.ts`](HoldingsDataService.ts)
 - [`ingestion/IngestionCoordinator.ts`](ingestion/IngestionCoordinator.ts)
-- [`DerivedStatePipeline.ts`](DerivedStatePipeline.ts)
+- [`ingestion/DataIngestion.ts`](ingestion/DataIngestion.ts) and [`ingestion/streamerIngestion.ts`](ingestion/streamerIngestion.ts)
+- [`orchestration/DerivedStatePipeline.ts`](orchestration/DerivedStatePipeline.ts)
 - [`HoldingsFrameEmitter.ts`](HoldingsFrameEmitter.ts)
+- [`bridges/StreamerBridge.ts`](bridges/StreamerBridge.ts), [`bridges/OvernightBridge.ts`](bridges/OvernightBridge.ts)
 - [`../../frontend/trade_holdings/holding_table/controller/TableController.ts`](../../frontend/trade_holdings/holding_table/controller/TableController.ts)
 
 ## End-to-End Flow
@@ -37,13 +39,14 @@ Settings     -----> warnings and view config --------------------------------/
 
 ## Runtime Composition
 
-`AlexQuant.ts` creates `DataPipelineCoordinator`, which owns a `BackendOrchestrator`. The orchestrator composes:
+`AlexQuant.ts` creates `DataPipelineCoordinator`, which owns a `BackendOrchestrator` (in `pipeline/orchestration/`). The orchestrator composes:
 
 - `HoldingsDataService` for ingestion, derived-state rebuilds, and holdings frame emission
-- `PollingScheduler` for holdings, quotes, balances, and beta cadence
+- `orchestration/PollingScheduler` and `orchestration/pollingOrchestrator` for holdings, quotes, balances, and beta cadence
+- `orchestration/settingsRouter` and `orchestration/sourceOverrideManager` for settings-driven cadence and source-override routing
 - `BetaManager` and `BetaService` for benchmark enrichment
-- `StreamerBridge` for Schwab streamer lifecycle
-- `OvernightBridge` for Yahoo overnight updates
+- `bridges/StreamerBridge` for Schwab streamer lifecycle
+- `bridges/OvernightBridge` for Yahoo overnight updates
 - `NewsLifecycleCoordinator` for symbol-scoped news lifecycle
 
 ## Pipeline Stages
@@ -63,13 +66,15 @@ Settings     -----> warnings and view config --------------------------------/
 ### 3. Raw Ingestion And Dirty Tracking
 
 - `ingestion/DataIngestion.ts` and `ingestion/IngestionCoordinator.ts` own raw holdings state and touched-key tracking.
+- `ingestion/streamerIngestion.ts` (extracted from `DataIngestion`) owns the streamer-specific ingestion path.
+- `ingestion/SentinelNormalizer.ts` and `ingestion/FieldMergePolicy.ts` keep field-level normalization and merge rules near ingestion.
 - Full holdings ingests mark the pipeline for a full rebuild.
 - Streamer and overnight ingests track touched holdings and touched underlyings so downstream work can remain incremental when safe.
-- `IngestionCoordinator` caches symbol and holdings indexes so incremental updates do not rebuild lookup maps unnecessarily.
+- `ingestion/HoldingsIndexBuilder.ts` caches symbol and holdings indexes so incremental updates do not rebuild lookup maps unnecessarily.
 
 ### 4. Derived State And Hierarchy
 
-- `DerivedStatePipeline.ts` coordinates derived calculations and hierarchy rebuilds.
+- `orchestration/DerivedStatePipeline.ts` coordinates derived calculations and hierarchy rebuilds.
 - `backend/computation/holdings/` owns derived metrics, aggregations, hierarchy rows, and warnings.
 - Incremental rebuilds recompute only affected holdings and underlyings, then refresh aggregate context.
 - `BetaManager` enriches derived state with benchmark and factor data after the core holdings rebuild.
@@ -88,7 +93,7 @@ Settings     -----> warnings and view config --------------------------------/
 
 ## Phase Model
 
-`PhaseManager` divides runtime behavior into market, after-hours, pre-market, overnight, and closed phases.
+`orchestration/PhaseManager` divides runtime behavior into market, after-hours, pre-market, overnight, and closed phases.
 
 | Phase | Holdings Fetch | Schwab Streamer | Polling | Yahoo Overnight |
 | --- | --- | --- | --- | --- |
@@ -113,7 +118,7 @@ The phase model is coordinated with [`../core/network/network-and-auth.md`](../c
 - Parser and adapter normalization must happen before data reaches ingestion logic.
 - Incremental rebuild safety is more important than avoiding a full rebuild. If touched-key coverage is uncertain, rebuild fully.
 - Streamer and overnight flows must not silently overwrite dedicated after-hours or overnight fields.
-- Table reconciliation assumes stable row keys and consistent column IDs from `shared/holdingsTableColumns.ts`.
+- Table reconciliation assumes stable row keys and consistent column IDs from `shared/types/holdingsTableColumns.ts`.
 
 ## Related Local Docs
 

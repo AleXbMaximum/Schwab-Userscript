@@ -20,18 +20,21 @@ This document describes the multi-agent AI analysis pipeline, including page int
 
 | Layer | Files |
 | --- | --- |
-| Frontend page | [`../../../frontend/analysis_ai/page.ts`](../../../frontend/analysis_ai/page.ts), `pipelineConfigPanel.ts`, `pipelineFlow.ts`, `reportList.ts` |
-| Frontend components | [`../../../frontend/analysis_ai/components/StageCard.ts`](../../../frontend/analysis_ai/components/StageCard.ts), `DecisionSummary.ts` |
-| Frontend settings | [`../../../frontend/analysis_ai/setting_panel/settingsPanel.ts`](../../../frontend/analysis_ai/setting_panel/settingsPanel.ts), `customModelSection.ts`, `connectivitySection.ts` |
-| Runtime service | [`AIService.ts`](AIService.ts), [`AIOrchestrator.ts`](AIOrchestrator.ts), [`types.ts`](types.ts), [`prompts/prompts.ts`](prompts/prompts.ts) |
-| Data pipeline | [`pipeline/DataFetcher.ts`](pipeline/DataFetcher.ts), `contextBuilders.ts`, `dataPreprocessing.ts`, `formatters.ts`, `parsers.ts`, `summarizers.ts`, `technicals.ts`, `reportBuilder.ts` |
-| LLM transport | [`../../core/network/llm/LLMClient.ts`](../../core/network/llm/LLMClient.ts) |
+| Frontend page | [`../../../frontend/analysis_ai/page.ts`](../../../frontend/analysis_ai/page.ts), `pipeline/pipelineConfigPanel.ts`, `pipeline/pipelineFlow.ts`, `pipeline/agentSelector.ts`, `pipeline/debateConfig.ts`, `components/reportList.ts` |
+| Frontend components | [`../../../frontend/analysis_ai/components/StageCard.ts`](../../../frontend/analysis_ai/components/StageCard.ts), `components/DecisionSummary.ts`, `components/LiveResultsPanel.ts` |
+| Frontend orchestration | `orchestration/analysisRunner.ts`, `orchestration/reportComparison.ts`, `orchestration/symbolInput.ts` |
+| Frontend settings | `setting_panel/settingsPanel.ts`, `setting_panel/customModelSection.ts`, `setting_panel/modelSection.ts`, `setting_panel/providerSection.ts`, `setting_panel/connectivitySection.ts` |
+| Runtime service | [`AIService.ts`](AIService.ts), [`AIOrchestrator.ts`](AIOrchestrator.ts) (thin coordinator), [`service/aiPhaseAnalysts.ts`](service/aiPhaseAnalysts.ts), [`service/aiPhaseDebate.ts`](service/aiPhaseDebate.ts), [`service/aiAgentRunner.ts`](service/aiAgentRunner.ts), [`types.ts`](types.ts) |
+| Prompts | [`prompts/prompts.ts`](prompts/prompts.ts) (barrel re-exporting per-agent files), [`prompts/intensity.ts`](prompts/intensity.ts), [`prompts/tools.ts`](prompts/tools.ts), `prompts/agents/*` |
+| Tools | [`tools/toolExecutor.ts`](tools/toolExecutor.ts) |
+| Data pipeline | [`pipeline/DataFetcher.ts`](pipeline/DataFetcher.ts), [`pipeline/prepareBundle.ts`](pipeline/prepareBundle.ts), `pipeline/contextBuilders.ts`, `pipeline/dataPreprocessing.ts`, `pipeline/formatters.ts`, `pipeline/parsers.ts`, `pipeline/summarizers.ts`, `pipeline/technicals.ts`, `pipeline/reportBuilder.ts` |
+| LLM transport | [`../../core/network/llm/LLMClient.ts`](../../core/network/llm/LLMClient.ts) - `createLLMClient(config)` returns a client with `complete()` / `completeStream()`; provider dispatch lives in `anthropicProvider.ts`, `geminiProvider.ts`, `openaiProvider.ts` |
 | Persistence | [`../../core/db/ai/AIAnalysisStore.ts`](../../core/db/ai/AIAnalysisStore.ts), [`../../core/db/ai/MemoryStore.ts`](../../core/db/ai/MemoryStore.ts), `config/*` |
 
 ## Runtime Model
 
 - `AIService` is the application-wide singleton. It preserves one active run across page navigation and allows the page to re-subscribe after remount.
-- `AIOrchestrator` owns stage transitions, cancellation checks, persistence checkpoints, and tool iteration limits.
+- `AIOrchestrator` is a thin coordinator: it owns top-level stage sequencing, cancellation checks, and persistence checkpoints, but delegates analyst execution to `service/aiPhaseAnalysts.ts`, debate to `service/aiPhaseDebate.ts`, and per-agent ReAct loops (with tool iteration limits) to `service/aiAgentRunner.ts`.
 - The page layer owns layout and interaction, but not stage semantics or run lifecycle policy.
 
 ## Stage Lifecycle
@@ -83,8 +86,8 @@ When `enableStreaming: true` in `AIAnalysisConfig`:
 
 - The orchestrator accepts an optional `onStream: AIStreamCallback` alongside the existing `onProgress`.
 - `AIService.subscribeStream()` registers stream event listeners (separate from progress listeners).
-- During `runAgentWithTools`, the **final iteration** of the ReAct loop uses `LLMClient.completeStream()` instead of `complete()`. Earlier iterations (tool-calling rounds) still use non-streaming `complete()` because full responses are needed to parse tool calls.
-- Stream events (`AIStreamEvent`) flow: `LLMClient` -> `AIOrchestrator` -> `AIService` -> page subscriber.
+- During the per-agent ReAct loop in `service/aiAgentRunner.ts`, the **final iteration** uses the client's `completeStream()` (returned by `createLLMClient`) instead of `complete()`. Earlier iterations (tool-calling rounds) still use non-streaming `complete()` because full responses are needed to parse tool calls.
+- Stream events (`AIStreamEvent`) flow: provider module -> `LLMClient` (factory output) -> `service/aiAgentRunner` -> `AIOrchestrator` -> `AIService` -> page subscriber.
 - Event types: `stage_text`, `stage_thinking`, `stage_annotation`, `stage_done`.
 - Frontend renders streaming content via `createStreamingStageCard()` with `requestAnimationFrame` throttling.
 - Cancellation propagates through `AbortController` -> `AbortSignal` -> `parseSSEStream` reader.
@@ -101,7 +104,7 @@ When `enableWebSearch: true`:
 
 ## Markdown Rendering
 
-- AI output is rendered through `renderMarkdown()` in `shared/utils/markdown.ts`.
+- AI output is rendered through `renderMarkdown()` in `shared/utils/format/markdown.ts`.
 - HTML entities are escaped before markdown processing (XSS-safe).
 - StageCard and DecisionSummary both use markdown rendering.
 - Markdown CSS is injected once via `injectStylesheet()`.

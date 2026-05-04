@@ -7,22 +7,27 @@
 ## Owns
 
 - page assembly in `page.ts`
-- pipeline configuration UI
-- stage cards and decision summary components
-- history/report list presentation
+- analysis run orchestration glue in `orchestration/` (`analysisRunner.ts`, `reportComparison.ts`, `symbolInput.ts`)
+- pipeline configuration UI in `pipeline/` (`pipelineConfigPanel.ts`, `pipelineFlow.ts`, `agentSelector.ts`, `debateConfig.ts`)
+- stage cards, live results panel, decision summary, and history list in `components/`
+- AI settings UI in `setting_panel/` (`settingsPanel.ts`, `providerSection.ts`, `modelSection.ts`, `customModelSection.ts`, `connectivitySection.ts`)
 
 ## Does Not Own
 
-- multi-agent execution policy
+- multi-agent execution policy (lives in `backend/services/ai/service/`)
 - provider/network transport
 - AI persistence schema
 
 ## Key Entry Files
 
 - [`page.ts`](page.ts)
-- [`pipelineConfigPanel.ts`](pipelineConfigPanel.ts)
-- [`pipelineFlow.ts`](pipelineFlow.ts)
-- [`reportList.ts`](reportList.ts)
+- [`orchestration/analysisRunner.ts`](orchestration/analysisRunner.ts)
+- [`pipeline/pipelineConfigPanel.ts`](pipeline/pipelineConfigPanel.ts)
+- [`pipeline/pipelineFlow.ts`](pipeline/pipelineFlow.ts)
+- [`components/StageCard.ts`](components/StageCard.ts)
+- [`components/LiveResultsPanel.ts`](components/LiveResultsPanel.ts)
+- [`components/DecisionSummary.ts`](components/DecisionSummary.ts)
+- [`components/reportList.ts`](components/reportList.ts)
 - [`setting_panel/settingsPanel.ts`](setting_panel/settingsPanel.ts)
 
 ## Dependency Direction

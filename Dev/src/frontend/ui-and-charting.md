@@ -12,28 +12,49 @@ This document defines the shared UI design-system boundary, chart rendering life
 
 1. [`../README.md`](../README.md)
 2. [`components/README.md`](components/README.md)
-3. [`components/core/theme.ts`](components/core/theme.ts)
-4. [`charts/ChartManager.ts`](charts/ChartManager.ts)
+3. [`components/core/styles/theme.ts`](components/core/styles/theme.ts)
+4. [`components/core/axTheme/index.ts`](components/core/axTheme/index.ts)
+5. [`charts/ChartManager.ts`](charts/ChartManager.ts)
 
 ## Source Of Truth
 
 | File | Role |
 | --- | --- |
-| [`components/core/theme.ts`](components/core/theme.ts) | exported design tokens, typography presets, layout helpers, and component style presets |
-| [`components/core/ui_styles.ts`](components/core/ui_styles.ts) | runtime CSS variable injection |
-| [`components/core/ui_builders.ts`](components/core/ui_builders.ts) | shared DOM builders and reusable UI fragments |
+| [`components/core/styles/theme.ts`](components/core/styles/theme.ts) | exported design tokens, typography presets, layout helpers, and component style presets |
+| [`components/core/styles/ui_styles.ts`](components/core/styles/ui_styles.ts) | global stylesheet helpers (`addGlobalStyle`, `addAnimationStyles`, `applyColorTheme`); now a thin shim that delegates CSS-var injection to `axTheme/runtime.ts` |
+| [`components/core/builders/ui_builders.ts`](components/core/builders/ui_builders.ts) | shared DOM builders and reusable UI fragments |
+| [`components/core/builders/sectionLayout.ts`](components/core/builders/sectionLayout.ts) | unit-based responsive section grid with collapsible sections, sticky nav, and autoHeight support |
+| [`components/core/axTheme/index.ts`](components/core/axTheme/index.ts) | barrel that re-exports the canonical theme API (`axCssVars`, `ensureAxUICss`, `cx`, `initTheme`, `setTheme`, `isDarkTheme`, `hydrateThemeFromKV`, `hydrateRenderModeFromKV`, `attachLiquidGlassRim`, `ensureLiquidGlassFilter`, `setLiquidGlassEnabled`) |
+| [`components/core/axTheme/cssVars.ts`](components/core/axTheme/cssVars.ts) and [`components/core/axTheme/runtime.ts`](components/core/axTheme/runtime.ts) | runtime CSS variable injection and theme bootstrap |
+| [`components/core/axTheme/renderMode/`](components/core/axTheme/renderMode/) | Full / Eco render-mode controller persisted to KV (`ui.renderMode`) |
+| [`components/core/axTheme/liquidGlass.ts`](components/core/axTheme/liquidGlass.ts) | SVG-filter-driven liquid-glass surface effect |
+| [`components/core/axTokens/`](components/core/axTokens/) | typed primitive tokens: `colors.ts`, `spacing.ts`, `radius.ts`, `motion.ts`, `opacity.ts`, `surfaces.ts`, `typography.ts`, `glass.ts`, `zIndex.ts` |
+| [`components/core/behaviors/layoutMode.ts`](components/core/behaviors/layoutMode.ts) | shared layout-mode detection (desktop / mobile) |
 | [`components/core/settingsFramework.ts`](components/core/settingsFramework.ts) | shared settings-panel scaffolding |
 | [`charts/ChartTheme.ts`](charts/ChartTheme.ts) | canvas and Chart.js colors, `CHART_FONTS`, animation/tooltip/legend presets |
 | [`charts/ChartUtils.ts`](charts/ChartUtils.ts) | `setupCanvas` (hi-DPI helper), `ladderValue` (key-level lookup), `traceRoundRect`, validation |
 | [`charts/ChartManager.ts`](charts/ChartManager.ts) | chart-instance lifecycle and update coordination |
 | [`charts/chartPanel.ts`](charts/chartPanel.ts) | shared 4-zone chart panel (header → controls → info → canvas) and legacy compat wrapper |
-| [`components/core/sectionLayout.ts`](components/core/sectionLayout.ts) | unit-based responsive section grid with collapsible sections, sticky nav, and autoHeight support |
+| [`charts/types/HeatmapChart.ts`](charts/types/HeatmapChart.ts) + [`HeatmapFactory.ts`](charts/types/HeatmapFactory.ts) | heatmap entry; rendering is split into `heatmapRenderer.ts`, `heatmapDecorations.ts`, `heatmapTooltip.ts`, and `heatmapInterpolation.ts` |
+
+## components/core Bucketization
+
+`components/core/` was reorganized into role-specific buckets. New code should import from these locations:
+
+| Bucket | Contents |
+| --- | --- |
+| `core/styles/` | `theme.ts` (design tokens) and `ui_styles.ts` (global stylesheet helpers; thin shim over `axTheme/runtime`) |
+| `core/builders/` | `ui_builders.ts`, `sectionLayout.ts`, `pillGroup.ts`, `createElement.ts` |
+| `core/behaviors/` | `layoutMode.ts`, `clipboard.ts`, `windowBehaviors.ts` |
+| `core/axTheme/` | canonical theme system (light/dark + Full/Eco + liquid glass); use `axTheme/index.ts` as the public entry |
+| `core/axTokens/` | typed primitive tokens (colors, spacing, radius, motion, …) |
+| `core/settingsFramework.ts`, `core/settingsJsonEditorModal.ts`, `core/settingsPhaseMatrix.ts` | settings-panel scaffolding (root level, not bucketed) |
 
 ## Design-System Contracts
 
 - `DS_*` exports are the primary shared token surfaces.
 - `ds_*()` helpers return style strings or derived token values and should be preferred over local inline style constants.
-- Shared UI builders belong in `components/core/ui_builders.ts`; page-local one-off DOM creation belongs in the page directory.
+- Shared UI builders belong in `components/core/builders/ui_builders.ts`; page-local one-off DOM creation belongs in the page directory.
   - `ui_formRow({ label, control, helper? })` — settings panel form row (label left, control right, optional helper text below).
   - `ui_badge(text, variant)` — semantic badge/chip with color variants (`positive`, `negative`, `neutral`, `info`, `muted`).
   - `createEventManager()` — auto-tracking event listener manager; call `.add(el, event, handler)` to register, `.removeAll()` to bulk-cleanup on teardown.
@@ -58,7 +79,7 @@ When a new token or pattern becomes shared across pages, it should move into the
 
 ## Markdown Rendering
 
-`shared/utils/markdown.ts` provides a lightweight markdown-to-HTML renderer for AI output. CSS classes are injected once via `injectStylesheet("alexquant-md-styles", ...)` in `StageCard.ts`.
+`shared/utils/format/markdown.ts` provides a lightweight markdown-to-HTML renderer for AI output. CSS classes are injected once via `injectStylesheet("alexquant-md-styles", ...)` in `analysis_ai/components/StageCard.ts`.
 
 | Class | Purpose |
 | --- | --- |
@@ -105,7 +126,7 @@ When a new token or pattern becomes shared across pages, it should move into the
 
 ## Chart Theme Sync Contract
 
-- Base semantic colors in `components/core/theme.ts`, `components/core/ui_styles.ts`, and `charts/ChartTheme.ts` must stay aligned.
+- Base semantic colors in `components/core/styles/theme.ts`, `components/core/axTheme/cssVars.ts`, and `charts/ChartTheme.ts` must stay aligned.
 - When a base semantic color changes, update both the DOM token layer and the chart theme layer in the same change.
 - Chart components should consume shared theme constants instead of embedding duplicated raw color literals.
 - Canvas font strings must use `CHART_FONTS.*` from `ChartTheme.ts` instead of inline font literals. All `ctx.font` assignments MUST use `CHART_FONTS` constants; no inline font strings.
@@ -114,8 +135,8 @@ When a new token or pattern becomes shared across pages, it should move into the
 
 ## Layout And Responsiveness
 
-- `components/core/layoutMode.ts` is the shared source for layout-mode detection.
-- `components/core/sectionLayout.ts` provides the unit-based responsive grid used by `analysis_options` and `trade_portfolio` pages.
+- `components/core/behaviors/layoutMode.ts` is the shared source for layout-mode detection.
+- `components/core/builders/sectionLayout.ts` provides the unit-based responsive grid used by `analysis_options` and `trade_portfolio` pages.
   - Grid rows use `minmax(unitH, auto)` — charts fill exactly one unit height, while text/table panels can grow beyond it.
   - `unitHeight` option sets a fixed pixel height per grid row, overriding the default `unitAspectRatio`-based calculation. Use this when charts need a consistent height regardless of column width.
   - `getCardSlot(sectionId, cardId, span, nature, rowSpan?, autoHeight?)` — set `autoHeight: true` for full-width panels (tables, heatmaps) whose height should be driven by content instead of the fixed unit grid.
@@ -130,7 +151,7 @@ When a new token or pattern becomes shared across pages, it should move into the
 
 ## Interactive States
 
-Global CSS (`ui_styles.ts`) provides default interactive states for form controls:
+Global CSS (injected via `components/core/styles/ui_styles.ts` → `axTheme/runtime.ts`) provides default interactive states for form controls:
 
 - `:focus` on inputs, selects, and textareas: blue border + `box-shadow` ring.
 - `:disabled` on interactive elements: `opacity: 0.6` + `cursor: not-allowed`.
@@ -139,8 +160,9 @@ Do not override these unless a component has a specific design reason.
 
 ## Critical Invariants
 
-- `theme.ts` is the source of truth for DOM-facing design tokens.
+- `components/core/styles/theme.ts` is the source of truth for DOM-facing design tokens.
 - `ChartTheme.ts` must remain semantically aligned with the raw token colors used by canvas and Chart.js.
+- The `axTheme/` barrel is the only public entry for theme/render-mode/liquid-glass concerns; pages should not reach into individual sibling files in that bucket.
 - Shared UI patterns should graduate into `components/` when more than one page depends on them.
 - UI code must not patch over backend unit or normalization issues that belong in adapter or shared layers.
 

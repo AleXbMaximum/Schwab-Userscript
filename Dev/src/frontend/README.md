@@ -7,8 +7,10 @@
 ## Owns
 
 - page switching in `RenderEngine.ts`
-- feature pages under `analysis_*`, `trade_*`, and `news_page/`
-- shared chart rendering primitives in `charts/`
+- feature pages under `analysis_*` and `trade_*`
+- the news page surface in `news_page/` (entry: `page.ts`; subdirs: `ai/`, `components/`, `panel/`, `settings/`, `shared/`, `toolbar/`)
+- the floating account snapshot + history timeline in `snapshot/` (entry: `FloatingSnapshot.ts`; subdirs: `metrics/`, `panel/`, `timeline/`)
+- shared chart rendering primitives in `charts/` (lifecycle in `ChartManager.ts`, panels in `chartPanel.ts`, type-specific renderers in `charts/types/`, plugins in `charts/plugins/`)
 - shared UI building blocks in `components/`
 
 ## Does Not Own
@@ -39,4 +41,4 @@ Pages consume `shared/` contracts and selected backend public APIs. Shared compo
 
 - Read [`components/README.md`](components/README.md) for shared UI conventions before adding new patterns.
 - Read the owning page README before changing a local page contract.
-- `news_page/` is intentionally covered by this file in the first pass; add a page-local README only if it develops a non-obvious contract.
+- `news_page/` and `snapshot/` are intentionally covered by this file in the first pass; add a page-local README only if either develops a non-obvious contract. The account snapshot recorder lives in [`../backend/pipeline/snapshot/`](../backend/pipeline/snapshot/) — `frontend/snapshot/` only owns UI rendering and timeline composition.
