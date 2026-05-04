@@ -4,7 +4,10 @@ import type{ StreamerLike } from "../../../shared/types/streamer";
 import type { Logger } from "../../../shared/log/Logger";
 import { logService } from "../../../shared/log/core/LogService";
 
-import { TypedEventBus } from "../../../shared/utils/state/TypedEventBus";
+import {
+  createEventBus,
+  type TypedEventBus,
+} from "../../../shared/utils/state/TypedEventBus";
 import type { BackendEvents } from "./EventBus";
 import { systemClock } from "../../../shared/utils/async/Clock";
 
@@ -82,7 +85,7 @@ export class BackendOrchestrator {
     this.logger = logService.namespace("pipeline");
 
     // Core infrastructure
-    this.eventBus = new TypedEventBus<BackendEvents>();
+    this.eventBus = createEventBus<BackendEvents>();
     this.persistor = new PipelineStatePersistor(
       logService.namespace("storage"),
       () => this.ctx.storage,
