@@ -1,7 +1,7 @@
 import { ui_createElement } from "../components/core/builders/createElement";
 import { DS_TYPOGRAPHY } from "../components/core/styles/theme";
 import type { HoldingsViewCtx } from "shared/types/core";
-import { RiskMetricsCalculator } from "backend/computation/risk/RiskMetricsCalculator";
+import { computeRiskMetrics } from "backend/computation/risk/RiskMetricsCalculator";
 import type { BetaFactorScenarioInput } from "backend/computation/risk/RiskMetricsCalculator";
 import { logService } from "shared/log/core/LogService";
 import { renderPortfolioHealthScore } from "./components/overview/PortfolioHealthScore";
@@ -173,7 +173,6 @@ export function riskManagement_renderPage(
   const { cleanupComponent, cleanupAllComponents, updateOrCreate, ensureSectionLayout } =
     lifecycle;
 
-  const riskCalculator = new RiskMetricsCalculator();
 
   const makeChip = (text: string): HTMLElement => {
     return ui_createElement("span", {
@@ -307,7 +306,7 @@ export function riskManagement_renderPage(
         customScenario: customScenarioInput,
       };
 
-      const riskMetrics = riskCalculator.computeRiskMetrics(
+      const riskMetrics = computeRiskMetrics(
         derived,
         account,
         totals,
