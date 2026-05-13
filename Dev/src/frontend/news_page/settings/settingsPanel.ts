@@ -23,13 +23,16 @@ type NewsRefreshSettingKey =
   | "newsYahooMacroRefreshInterval"
   | "newsYahooSymbolRefreshInterval"
   | "newsBarronsRefreshInterval"
-  | "newsFinancialJuiceRefreshInterval";
+  | "newsFinancialJuiceRssRefreshInterval"
+  | "newsSchwabRefreshInterval";
 
 type NewsEnableSettingKey =
   | "newsYahooMacroEnabled"
   | "newsYahooSymbolEnabled"
   | "newsBarronsEnabled"
-  | "newsFinancialJuiceEnabled";
+  | "newsFinancialJuiceRssEnabled"
+  | "newsFinancialJuiceStreamEnabled"
+  | "newsSchwabEnabled";
 
 export interface NewsSettingsPanelResult {
   root: HTMLElement;
@@ -113,6 +116,27 @@ export function createNewsSettingsPanel(opts: {
     intervalInput.setDisabled(!toggle.isOn());
   };
 
+  const createNewsToggleOnlyRow = (
+    body: HTMLElement,
+    label: string,
+    enableKey: NewsEnableSettingKey,
+    paramLabel: string,
+  ): void => {
+    const toggle = createSettingsToggleButton(
+      (settings as any)[enableKey] !== false,
+      (next) => {
+        setBooleanSetting(enableKey, next);
+      },
+    );
+    appendSettingsMatrixRow({
+      body,
+      label,
+      toggleEl: toggle.element,
+      paramLabel,
+      controlEl: ui_createElement("span"),
+    });
+  };
+
   // -- Data Refresh --------------------------------------------------------
   const newsRefreshSection = createSettingsSectionCard("Data Refresh");
   createNewsSourceRow(
@@ -138,10 +162,23 @@ export function createNewsSettingsPanel(opts: {
   );
   createNewsSourceRow(
     newsRefreshSection.body,
-    "FinancialJuice",
-    "newsFinancialJuiceEnabled",
-    "newsFinancialJuiceRefreshInterval",
+    "FJ RSS",
+    "newsFinancialJuiceRssEnabled",
+    "newsFinancialJuiceRssRefreshInterval",
     45_000,
+  );
+  createNewsToggleOnlyRow(
+    newsRefreshSection.body,
+    "FJ Stream",
+    "newsFinancialJuiceStreamEnabled",
+    "realtime",
+  );
+  createNewsSourceRow(
+    newsRefreshSection.body,
+    "Schwab",
+    "newsSchwabEnabled",
+    "newsSchwabRefreshInterval",
+    120_000,
   );
   panel.appendChild(newsRefreshSection.section);
 

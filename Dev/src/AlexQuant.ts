@@ -104,14 +104,14 @@ function syncRecorderSettings(
       yahooMacroMs: settings.newsYahooMacroRefreshInterval,
       yahooSymbolMs: settings.newsYahooSymbolRefreshInterval,
       barronsMs: settings.newsBarronsRefreshInterval,
-      financialJuiceMs: settings.newsFinancialJuiceRefreshInterval,
+      financialJuiceRssMs: settings.newsFinancialJuiceRssRefreshInterval,
       schwabMs: settings.newsSchwabRefreshInterval,
     });
     newsService.setSourceEnabled({
       yahooMacro: settings.newsYahooMacroEnabled !== false,
       yahooSymbol: settings.newsYahooSymbolEnabled !== false,
       barrons: settings.newsBarronsEnabled !== false,
-      financialJuice: settings.newsFinancialJuiceEnabled !== false,
+      financialJuice: settings.newsFinancialJuiceRssEnabled !== false,
       schwab: settings.newsSchwabEnabled !== false,
     });
   };

@@ -30,13 +30,14 @@ export const defaultSettings: Settings = {
   newsYahooSymbolRefreshInterval:
     DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs,
   newsBarronsRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs,
-  newsFinancialJuiceRefreshInterval:
-    DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs,
+  newsFinancialJuiceRssRefreshInterval:
+    DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs,
   newsSchwabRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
   newsYahooMacroEnabled: true,
   newsYahooSymbolEnabled: true,
   newsBarronsEnabled: true,
-  newsFinancialJuiceEnabled: true,
+  newsFinancialJuiceRssEnabled: true,
+  newsFinancialJuiceStreamEnabled: true,
   newsSchwabEnabled: true,
   isRefreshing: true,
   isHoldingsRefreshing: true,
@@ -164,10 +165,10 @@ export const normalizeSettings = (input: Settings): Settings => {
     defaultSettings.newsBarronsRefreshInterval ??
       DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs,
   );
-  (next as any).newsFinancialJuiceRefreshInterval = normalizePositiveInt(
-    (next as any).newsFinancialJuiceRefreshInterval,
-    defaultSettings.newsFinancialJuiceRefreshInterval ??
-      DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs,
+  (next as any).newsFinancialJuiceRssRefreshInterval = normalizePositiveInt(
+    (next as any).newsFinancialJuiceRssRefreshInterval,
+    defaultSettings.newsFinancialJuiceRssRefreshInterval ??
+      DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs,
   );
   (next as any).newsSchwabRefreshInterval = normalizePositiveInt(
     (next as any).newsSchwabRefreshInterval,
