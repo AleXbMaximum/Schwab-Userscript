@@ -210,7 +210,7 @@ class NewsService {
   getAutoRefreshLabel(): string {
     const i = this.refreshIntervals;
     return (
-      `Auto-refresh: FJ ${formatInterval(i.financialJuiceMs)}` +
+      `Auto-refresh: FJ ${formatInterval(i.financialJuiceRssMs)}` +
       ` · Yahoo Macro ${formatInterval(i.yahooMacroMs)}` +
       ` · Yahoo Symbol ${formatInterval(i.yahooSymbolMs)}` +
       ` · Barron's ${formatInterval(i.barronsMs)}` +
@@ -239,10 +239,10 @@ class NewsService {
         next.barronsMs,
       );
     }
-    if (patch.financialJuiceMs !== undefined) {
-      next.financialJuiceMs = normalizeIntervalMs(
-        patch.financialJuiceMs,
-        next.financialJuiceMs,
+    if (patch.financialJuiceRssMs !== undefined) {
+      next.financialJuiceRssMs = normalizeIntervalMs(
+        patch.financialJuiceRssMs,
+        next.financialJuiceRssMs,
       );
     }
     if (patch.schwabMs !== undefined) {
@@ -253,7 +253,7 @@ class NewsService {
       next.yahooMacroMs !== this.refreshIntervals.yahooMacroMs ||
       next.yahooSymbolMs !== this.refreshIntervals.yahooSymbolMs ||
       next.barronsMs !== this.refreshIntervals.barronsMs ||
-      next.financialJuiceMs !== this.refreshIntervals.financialJuiceMs ||
+      next.financialJuiceRssMs !== this.refreshIntervals.financialJuiceRssMs ||
       next.schwabMs !== this.refreshIntervals.schwabMs;
     if (!changed) return;
 
@@ -524,7 +524,7 @@ class NewsService {
     this.startSourcePolling("barrons", this.refreshIntervals.barronsMs);
     this.startSourcePolling(
       "financialJuice",
-      this.refreshIntervals.financialJuiceMs,
+      this.refreshIntervals.financialJuiceRssMs,
     );
     this.startSourcePolling("schwab", this.refreshIntervals.schwabMs);
   }

@@ -87,12 +87,13 @@ export type Settings = {
   newsYahooMacroRefreshInterval?: number;
   newsYahooSymbolRefreshInterval?: number;
   newsBarronsRefreshInterval?: number;
-  newsFinancialJuiceRefreshInterval?: number;
+  newsFinancialJuiceRssRefreshInterval?: number;
   newsSchwabRefreshInterval?: number;
   newsYahooMacroEnabled?: boolean;
   newsYahooSymbolEnabled?: boolean;
   newsBarronsEnabled?: boolean;
-  newsFinancialJuiceEnabled?: boolean;
+  newsFinancialJuiceRssEnabled?: boolean;
+  newsFinancialJuiceStreamEnabled?: boolean;
   newsSchwabEnabled?: boolean;
   isRefreshing: boolean;
   isHoldingsRefreshing: boolean;

@@ -113,10 +113,10 @@ function syncRecorderSettings(
         settings.newsBarronsEnabled === false
           ? 0
           : settings.newsBarronsRefreshInterval,
-      financialJuiceMs:
-        settings.newsFinancialJuiceEnabled === false
+      financialJuiceRssMs:
+        settings.newsFinancialJuiceRssEnabled === false
           ? 0
-          : settings.newsFinancialJuiceRefreshInterval,
+          : settings.newsFinancialJuiceRssRefreshInterval,
       schwabMs:
         settings.newsSchwabEnabled === false
           ? 0
