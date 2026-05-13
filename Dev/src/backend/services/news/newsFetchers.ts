@@ -166,9 +166,18 @@ export function htmlToPlainText(value: string): string {
   // Defensive: some upstream feeds (or proxies) hand us pre-flattened text
   // where the <style> wrapper was stripped but the CSS rule bodies remain
   // verbatim (e.g. ".fxs-faq-module-wrapper{border:1px solid #ddd;...}").
-  // Drop standalone rule blocks so they don't surface as article summary.
-  return plain
-    .replace(/[.#][a-zA-Z][\w-]*\s*\{[^{}]*\}/g, "")
+  // The selector portion `[^{}<\n]*?` is permissive enough to cover real
+  // FXStreet rules — descendant / child / pseudo / attribute / multi-
+  // selector forms — that a narrower pattern misses. Iterate until stable
+  // so nested @media wrappers also collapse after their inner rules go.
+  let cssStripped = plain;
+  let previous: string;
+  do {
+    previous = cssStripped;
+    cssStripped = cssStripped.replace(/[.#@][^{}<\n]*?\{[^{}]*\}/g, "");
+  } while (cssStripped !== previous);
+
+  return cssStripped
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
