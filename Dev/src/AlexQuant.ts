@@ -99,28 +99,20 @@ function syncRecorderSettings(
   installLogDevTools();
   const log = logService.namespace("main");
 
-  const syncNewsRefreshIntervals = (settings: Settings) => {
+  const syncNewsSettings = (settings: Settings) => {
     newsService.updateRefreshIntervals({
-      yahooMacroMs:
-        settings.newsYahooMacroEnabled === false
-          ? 0
-          : settings.newsYahooMacroRefreshInterval,
-      yahooSymbolMs:
-        settings.newsYahooSymbolEnabled === false
-          ? 0
-          : settings.newsYahooSymbolRefreshInterval,
-      barronsMs:
-        settings.newsBarronsEnabled === false
-          ? 0
-          : settings.newsBarronsRefreshInterval,
-      financialJuiceMs:
-        settings.newsFinancialJuiceEnabled === false
-          ? 0
-          : settings.newsFinancialJuiceRefreshInterval,
-      schwabMs:
-        settings.newsSchwabEnabled === false
-          ? 0
-          : settings.newsSchwabRefreshInterval,
+      yahooMacroMs: settings.newsYahooMacroRefreshInterval,
+      yahooSymbolMs: settings.newsYahooSymbolRefreshInterval,
+      barronsMs: settings.newsBarronsRefreshInterval,
+      financialJuiceMs: settings.newsFinancialJuiceRefreshInterval,
+      schwabMs: settings.newsSchwabRefreshInterval,
+    });
+    newsService.setSourceEnabled({
+      yahooMacro: settings.newsYahooMacroEnabled !== false,
+      yahooSymbol: settings.newsYahooSymbolEnabled !== false,
+      barrons: settings.newsBarronsEnabled !== false,
+      financialJuice: settings.newsFinancialJuiceEnabled !== false,
+      schwab: settings.newsSchwabEnabled !== false,
     });
   };
 
@@ -163,7 +155,7 @@ function syncRecorderSettings(
       }
       Object.assign(liveSettings, normalized as Record<string, unknown>);
       ctx.settings = liveSettings as Settings;
-      syncNewsRefreshIntervals(normalized);
+      syncNewsSettings(normalized);
 
       headerController?.updateSettings(newSettings as any);
       syncRecorderSettings(accountSnapshotRecorder, ctx.settings as any, defaultSettings as any);
@@ -430,7 +422,7 @@ function syncRecorderSettings(
     }
 
     syncRecorderSettings(accountSnapshotRecorder, ctx.settings as any, defaultSettings as any);
-    syncNewsRefreshIntervals(ctx.settings);
+    syncNewsSettings(ctx.settings);
     renderEngine.updateContext({ settings: ctx.settings });
     log.info("[Phase 2] Storage hydration complete, settings synced");
 
@@ -503,7 +495,7 @@ function syncRecorderSettings(
           ...defaultSettings,
           ...(ctx.settings || {}),
         } as Settings);
-        syncNewsRefreshIntervals(ctx.settings);
+        syncNewsSettings(ctx.settings);
         syncRecorderSettings(accountSnapshotRecorder, ctx.settings as any, defaultSettings as any);
         renderEngine?.updateContext(
           { settings: ctx.settings },
