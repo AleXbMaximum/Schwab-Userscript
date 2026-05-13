@@ -133,8 +133,7 @@ export function createFloatingSnapshot(
     }
 
     snapshotSlide.panel.style.top = "0";
-    snapshotSlide.panel.style.height = "auto";
-    snapshotSlide.panel.style.maxHeight = "100vh";
+    snapshotSlide.panel.style.height = "100vh";
     snapshotTab.tab.style.display = isMobile || snapshotOpen ? "none" : "flex";
   };
 

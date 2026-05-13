@@ -106,7 +106,9 @@ export function buildSlidePanel(title: string): {
   titleBar.appendChild(closeBtn);
 
   const body = ui_createElement("div", {
-    styleString: "overflow-y:auto; padding:12px 14px;",
+    styleString:
+      "display:flex; flex-direction:column; flex:1 1 auto; min-height:0;" +
+      " overflow-y:auto; padding:12px 14px;",
   });
 
   panel.appendChild(titleBar);
