@@ -5,6 +5,105 @@ import {
   toEpochMs,
 } from "./types";
 
+// ── Cross-source similarity dedup ───────────────────────────────────────────
+//
+// When two outlets publish the same story (FJ aggregator + Yahoo wire, or
+// Reuters + Barron's syndication, etc.) we want exactly one card on screen.
+// Per-id dedup catches identical hashes; this layer catches near-identical
+// titles whose ids differ because each source generates its own hash.
+
+/** Jaccard threshold above which two titles are treated as the same story. */
+const SIMILARITY_THRESHOLD = 0.75;
+
+/**
+ * How many previously-kept items to compare each new item against. Bounded
+ * so cross-source dedup stays O(N · W) instead of O(N²) on large feeds.
+ * 80 covers ~30–60 min of typical news flow.
+ */
+const DEDUP_WINDOW_SIZE = 80;
+
+/** Below this token count Jaccard is too noisy — skip dedup entirely. */
+const MIN_TOKENS_FOR_DEDUP = 3;
+
+// Common English stopwords that drag Jaccard towards false positives on
+// short headlines ("X says Y" vs "A says B" → both share "says").
+const TITLE_STOPWORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to", "for",
+  "with", "from", "by", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "do", "does", "did", "will", "would", "should",
+  "could", "may", "might", "must", "can", "shall", "this", "that", "these",
+  "those", "it", "its", "as", "if", "than", "then", "so", "too", "very",
+  "just", "also", "into", "out", "about", "after", "before", "again",
+  "more", "most", "some", "such", "not", "no", "said", "says", "say",
+  "over", "up", "down", "off", "amid", "via",
+]);
+
+function tokenizeTitle(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of String(text ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)) {
+    if (raw.length < 3) continue;
+    if (TITLE_STOPWORDS.has(raw)) continue;
+    out.add(raw);
+  }
+  return out;
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  if (a.size === 0 || b.size === 0) return 0;
+  // Iterate the smaller set for the intersection scan.
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const t of small) if (big.has(t)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/**
+ * Drop later items whose title closely matches an earlier kept item.
+ *
+ * "Later" is determined by `publishedAt`: items sort ascending, so for any
+ * pair the earlier-published wins and the later one is filtered out
+ * wholesale (no metadata merge — that's an explicit request from the user).
+ *
+ * Comparison is title-only because summaries are noisy (CSS bleed-through,
+ * length variance) and titles are the densest single-shot signal for
+ * "same story". Tokens are lowercased, stopword-filtered, length ≥ 3 to
+ * avoid common-word false positives.
+ */
+export function dedupSimilarNewsItems<T extends UnifiedNewsItem>(
+  items: T[],
+): T[] {
+  if (items.length <= 1) return items.slice();
+
+  const sorted = [...items].sort(
+    (a, b) => toEpochMs(a.publishedAt) - toEpochMs(b.publishedAt),
+  );
+  const kept: T[] = [];
+  const window: Set<string>[] = [];
+
+  for (const item of sorted) {
+    const tokens = tokenizeTitle(item.title);
+    let duplicate = false;
+    if (tokens.size >= MIN_TOKENS_FOR_DEDUP) {
+      for (const seen of window) {
+        if (jaccardSimilarity(tokens, seen) >= SIMILARITY_THRESHOLD) {
+          duplicate = true;
+          break;
+        }
+      }
+    }
+    if (duplicate) continue;
+    kept.push(item);
+    window.push(tokens);
+    if (window.length > DEDUP_WINDOW_SIZE) window.shift();
+  }
+
+  return kept;
+}
+
 /** Compare two string arrays element-by-element. */
 export function areSymbolsEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
