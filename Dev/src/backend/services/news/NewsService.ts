@@ -55,6 +55,8 @@ export type NewsSourceStateRow = {
   lastError: string | null;
 };
 
+export type NewsSourceEnabled = Record<NewsFetchSource, boolean>;
+
 export type { NewsRefreshIntervals };
 
 const NEWS_FETCH_SOURCES: NewsFetchSource[] = [
@@ -113,6 +115,13 @@ class NewsService {
   private started = false;
   private refreshIntervals: NewsRefreshIntervals = {
     ...DEFAULT_NEWS_REFRESH_INTERVALS,
+  };
+  private sourceEnabled: NewsSourceEnabled = {
+    yahooMacro: true,
+    yahooSymbol: true,
+    barrons: true,
+    financialJuice: true,
+    schwab: true,
   };
   private providerResolver: (() => Promise<AIProvidersConfig>) | null = null;
 
@@ -173,8 +182,10 @@ class NewsService {
 
     // Keep previous symbol-scoped cache until refreshed data arrives.
     // This prevents transient empty states during symbol-set transitions.
+    // requestFetch filters by enabled state, so disabled symbol sources
+    // are no-ops here without callers having to know.
     if (this.started && normalized.length > 0) {
-      void this.requestFetch(["yahooSymbol", "barrons"]);
+      void this.requestFetch(NEWS_SYMBOL_SOURCES);
       return;
     }
 
@@ -205,6 +216,10 @@ class NewsService {
 
   getRefreshIntervals(): NewsRefreshIntervals {
     return { ...this.refreshIntervals };
+  }
+
+  getSourceEnabled(): NewsSourceEnabled {
+    return { ...this.sourceEnabled };
   }
 
   getAutoRefreshLabel(): string {
@@ -264,6 +279,53 @@ class NewsService {
     }
   }
 
+  /**
+   * Apply a new enabled-flag map. Disabled sources stop polling but
+   * their previously-fetched items remain in the feed (the persistent
+   * news cache is the source of truth for what the user sees, separate
+   * from whether we keep pulling fresh data). Re-enabled sources resume
+   * polling on their configured interval; the next tick refreshes them.
+   */
+  setSourceEnabled(next: Partial<NewsSourceEnabled>): void {
+    const turnedOn: NewsFetchSource[] = [];
+    let touched = false;
+    for (const source of NEWS_FETCH_SOURCES) {
+      const desired = next[source];
+      if (desired === undefined) continue;
+      const previous = this.sourceEnabled[source];
+      if (previous === desired) continue;
+      touched = true;
+      this.sourceEnabled[source] = desired;
+      if (desired) {
+        turnedOn.push(source);
+      } else {
+        this.stopSourcePolling(source);
+      }
+    }
+    if (!touched) return;
+
+    if (this.started) {
+      for (const source of turnedOn) {
+        this.startSourcePolling(source, this.refreshIntervalFor(source));
+      }
+    }
+  }
+
+  private refreshIntervalFor(source: NewsFetchSource): number {
+    switch (source) {
+      case "yahooMacro":
+        return this.refreshIntervals.yahooMacroMs;
+      case "yahooSymbol":
+        return this.refreshIntervals.yahooSymbolMs;
+      case "barrons":
+        return this.refreshIntervals.barronsMs;
+      case "financialJuice":
+        return this.refreshIntervals.financialJuiceMs;
+      case "schwab":
+        return this.refreshIntervals.schwabMs;
+    }
+  }
+
   // ── Mark-as-read API ───────────────────────────────────────────
 
   /** Mark specific items as read (persists, updates in-memory items, no emit) */
@@ -292,7 +354,8 @@ class NewsService {
     // Stagger: global sources first (fast, ~200ms), then per-symbol
     // sources (heavy, up to 19 symbols × concurrency 6). This gives the
     // user visible news within ~200ms instead of waiting for the slowest
-    // per-symbol source.
+    // per-symbol source. requestFetch filters disabled sources, so the
+    // caller doesn't need to.
     await this.requestFetch(NEWS_GLOBAL_SOURCES);
     if (this.symbols.length > 0) {
       await this.requestFetch(NEWS_SYMBOL_SOURCES);
@@ -317,13 +380,22 @@ class NewsService {
     await this._memoryInitPromise;
   }
 
+  /** Whether `source` has any active fetch path right now. */
+  private isFetchAllowed(source: NewsFetchSource): boolean {
+    return this.sourceEnabled[source];
+  }
+
   private requestFetch(sources: NewsFetchSource[]): Promise<void> {
     for (const source of sources) {
+      if (!this.isFetchAllowed(source)) continue;
       this.pendingSources.add(source);
     }
 
     if (this.inFlightFetch) {
       return this.inFlightFetch;
+    }
+    if (this.pendingSources.size === 0) {
+      return Promise.resolve();
     }
 
     this.inFlightFetch = this.drainFetchQueue().finally(() => {
@@ -519,22 +591,14 @@ class NewsService {
 
   private startPolling(): void {
     if (Object.keys(this.sourceTimers).length > 0) return;
-    this.startSourcePolling("yahooMacro", this.refreshIntervals.yahooMacroMs);
-    this.startSourcePolling("yahooSymbol", this.refreshIntervals.yahooSymbolMs);
-    this.startSourcePolling("barrons", this.refreshIntervals.barronsMs);
-    this.startSourcePolling(
-      "financialJuice",
-      this.refreshIntervals.financialJuiceMs,
-    );
-    this.startSourcePolling("schwab", this.refreshIntervals.schwabMs);
+    for (const source of NEWS_FETCH_SOURCES) {
+      this.startSourcePolling(source, this.refreshIntervalFor(source));
+    }
   }
 
   private stopPolling(): void {
     for (const source of NEWS_FETCH_SOURCES) {
-      const timer = this.sourceTimers[source];
-      if (!timer) continue;
-      clearInterval(timer);
-      delete this.sourceTimers[source];
+      this.stopSourcePolling(source);
     }
   }
 
@@ -544,10 +608,18 @@ class NewsService {
   ): void {
     if (this.sourceTimers[source]) return;
     if (intervalMs <= 0) return;
+    if (!this.sourceEnabled[source]) return;
     this.sourceTimers[source] = setInterval(
       () => void this.requestFetch([source]),
       intervalMs,
     );
+  }
+
+  private stopSourcePolling(source: NewsFetchSource): void {
+    const timer = this.sourceTimers[source];
+    if (!timer) return;
+    clearInterval(timer);
+    delete this.sourceTimers[source];
   }
 
   private sortNewestFirst(items: UnifiedNewsItem[]): UnifiedNewsItem[] {
