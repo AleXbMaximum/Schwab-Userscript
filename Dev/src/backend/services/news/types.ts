@@ -23,6 +23,14 @@ export type UnifiedNewsItem = {
   isNew?: boolean;
   /** Headline / featured news (e.g. FJ items with TradingView charts) */
   isHeadline?: boolean;
+  /**
+   * Secondary publisher attribution. For FinancialJuice items this carries
+   * the underlying outlet (FXStreet / Reuters / OilPrice / Bloomberg …) so
+   * the UI can render an FJ + provider badge pair. `source` stays as the
+   * aggregator name ("FinancialJuice") and `sourceType` stays as
+   * "financialjuice" so filters still group everything together.
+   */
+  provider?: string;
 };
 
 export type StoredNewsRecord = {

@@ -27,6 +27,7 @@ export function areItemsEqual(
     if (a[i].summary !== b[i].summary) return false;
     if (a[i].source !== b[i].source) return false;
     if (a[i].sourceType !== b[i].sourceType) return false;
+    if ((a[i].provider ?? null) !== (b[i].provider ?? null)) return false;
     if (a[i].symbol !== b[i].symbol) return false;
     if (!areSymbolTagsEqual(a[i], b[i])) return false;
     if ((a[i].url ?? null) !== (b[i].url ?? null)) return false;
