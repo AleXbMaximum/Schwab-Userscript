@@ -95,6 +95,8 @@ export type Settings = {
   newsFinancialJuiceRssEnabled?: boolean;
   newsFinancialJuiceStreamEnabled?: boolean;
   newsSchwabEnabled?: boolean;
+  /** Cold-start delay (ms) before the first fetch from any news source. */
+  newsInitialFetchDelayMs?: number;
   isRefreshing: boolean;
   isHoldingsRefreshing: boolean;
   isQuotesRefreshing: boolean;
