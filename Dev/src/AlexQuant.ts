@@ -115,7 +115,7 @@ function syncRecorderSettings(
       schwab: settings.newsSchwabEnabled !== false,
     });
     newsService.setStreamerEnabled(
-      (settings as any).newsFinancialJuiceStreamEnabled !== false,
+      settings.newsFinancialJuiceStreamEnabled !== false,
     );
   };
 

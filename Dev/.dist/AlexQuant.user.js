@@ -13,6 +13,7 @@
 // @connect      www.alphavantage.co
 // @connect      www.barrons.com
 // @connect      www.financialjuice.com
+// @connect      rt.financialjuice.com
 // @license      CC BY-NC-ND 4.0
 // ==/UserScript==
 
@@ -14074,7 +14075,7 @@ const DEFAULT_NEWS_REFRESH_INTERVALS = {
   yahooMacroMs: 120_000,
   yahooSymbolMs: 120_000,
   barronsMs: 180_000,
-  financialJuiceMs: 45_000,
+  financialJuiceRssMs: 45_000,
   schwabMs: 120_000
 };
 ;// ./src/backend/services/news/types.ts
@@ -14114,6 +14115,21 @@ function toEpochMs(value) {
 }
 function sortNewsItemsNewestFirst(items) {
   return [...items].sort((a, b) => toEpochMs(b.publishedAt) - toEpochMs(a.publishedAt));
+}
+
+/**
+ * Move unread headline items ahead of everything else, preserving relative
+ * order within each bucket. Shared by the news page (so urgent items sit
+ * above chronological order) and the snapshot panel (so they survive the
+ * 8-item slice). Fall back happens automatically once `isNew` flips off.
+ */
+function pinUnreadHeadlines(items) {
+  const pinned = [];
+  const rest = [];
+  for (const item of items) {
+    if (item.isHeadline && item.isNew) pinned.push(item);else rest.push(item);
+  }
+  return [...pinned, ...rest];
 }
 const NEWS_SOURCE_LABELS = {
   yahoo: "Yahoo",
@@ -14268,13 +14284,18 @@ async function fetchYahooNews(symbol) {
     const text = await gmGet(url);
     const data = JSON.parse(text);
     const newsArr = data?.news ?? [];
-    const items = newsArr.map(n => ({
-      title: String(n.title ?? ""),
-      summary: String(n.summary ?? n.title ?? ""),
-      publishedAt: new Date((n.providerPublishTime ?? 0) * 1000).toISOString(),
-      source: String(n.publisher ?? "Unknown"),
-      url: n.link ?? undefined
-    }));
+    const items = [];
+    for (const n of newsArr) {
+      const publishedAt = parseYahooPublishedAt(n.providerPublishTime);
+      if (!publishedAt) continue;
+      items.push({
+        title: String(n.title ?? ""),
+        summary: String(n.summary ?? n.title ?? ""),
+        publishedAt,
+        source: String(n.publisher ?? "Unknown"),
+        url: n.link ?? undefined
+      });
+    }
     yahoo_news_log.debug("news.fetch.yahoo", {
       symbol,
       itemCount: items.length
@@ -14288,6 +14309,11 @@ async function fetchYahooNews(symbol) {
     return [];
   }
 }
+function parseYahooPublishedAt(raw) {
+  const sec = Number(raw);
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  return new Date(sec * 1000).toISOString();
+}
 async function fetchYahooGlobalMacroNews() {
   const queries = ["%5EGSPC", "market+economy+fed"];
   const results = await Promise.allSettled(queries.map(q => gmGet(`https://query1.finance.yahoo.com/v1/finance/search?q=${q}&newsCount=8&quotesCount=0`)));
@@ -14298,16 +14324,17 @@ async function fetchYahooGlobalMacroNews() {
     try {
       const data = JSON.parse(result.value);
       for (const n of data?.news ?? []) {
-        if (!seenTitles.has(n.title)) {
-          seenTitles.add(n.title);
-          allNews.push({
-            title: String(n.title ?? ""),
-            summary: String(n.summary ?? n.title ?? ""),
-            publishedAt: new Date((n.providerPublishTime ?? 0) * 1000).toISOString(),
-            source: String(n.publisher ?? "Unknown"),
-            url: n.link ?? undefined
-          });
-        }
+        if (seenTitles.has(n.title)) continue;
+        const publishedAt = parseYahooPublishedAt(n.providerPublishTime);
+        if (!publishedAt) continue;
+        seenTitles.add(n.title);
+        allNews.push({
+          title: String(n.title ?? ""),
+          summary: String(n.summary ?? n.title ?? ""),
+          publishedAt,
+          source: String(n.publisher ?? "Unknown"),
+          url: n.link ?? undefined
+        });
       }
     } catch {
       // ignore parse errors
@@ -14838,7 +14865,72 @@ async function fetchBarronsData(symbol) {
     fetchedAt: new Date().toISOString()
   };
 }
+;// ./src/backend/core/network/financialJuice/providerDetect.ts
+// Heuristic provider attribution for FinancialJuice items.
+//
+// FJ aggregates squawks from many real publishers (Reuters, FXStreet,
+// ForexLive, ZeroHedge …) but the RSS / WS payloads don't always label
+// the provider explicitly. We extract it from whatever surface gives us
+// the strongest signal:
+//   1. The story link's domain (most reliable — `/news/reuters/...`)
+//   2. CSS class fingerprints in the description HTML (`fxs-*` => FXStreet)
+//   3. Inline mentions of provider domains in description / title
+//
+// Returns `undefined` when no provider can be identified; callers fall
+// back to "FinancialJuice".
+
+// Domain → display name. Match either the host itself or a subdomain.
+const DOMAIN_PROVIDERS = [[/(?:^|\.)fxstreet\.com$/i, "FXStreet"], [/(?:^|\.)forexlive\.com$/i, "ForexLive"], [/(?:^|\.)reuters\.com$/i, "Reuters"], [/(?:^|\.)ft\.com$/i, "FT"], [/(?:^|\.)bloomberg\.com$/i, "Bloomberg"], [/(?:^|\.)cnbc\.com$/i, "CNBC"], [/(?:^|\.)investing\.com$/i, "Investing.com"], [/(?:^|\.)marketwatch\.com$/i, "MarketWatch"], [/(?:^|\.)wsj\.com$/i, "WSJ"], [/(?:^|\.)tradingeconomics\.com$/i, "Trading Economics"], [/(?:^|\.)dailyfx\.com$/i, "DailyFX"], [/(?:^|\.)businessinsider\.com$/i, "Business Insider"], [/(?:^|\.)zerohedge\.com$/i, "ZeroHedge"], [/(?:^|\.)nasdaq\.com$/i, "Nasdaq"], [/(?:^|\.)seekingalpha\.com$/i, "Seeking Alpha"], [/(?:^|\.)benzinga\.com$/i, "Benzinga"], [/(?:^|\.)kitco\.com$/i, "Kitco"], [/(?:^|\.)mining\.com$/i, "Mining.com"]
+// NOTE: do NOT match `financialjuice.com` here. FJ's WS payloads carry
+// EURL pointing at their own article page (e.g. www.financialjuice.com/
+// News/<id>/...), which would otherwise short-circuit the lookup before
+// we ever consult `FCName` / content fingerprints. The caller defaults
+// to "FinancialJuice" when nothing matches.
+];
+
+// Content-fingerprint patterns when the URL doesn't pin a provider.
+// These match either CSS class prefixes embedded by the publisher's
+// widget, brand-specific markup, or distinctive boilerplate.
+const CONTENT_FINGERPRINTS = [[/\bfxs-[a-z-]+\b/i, "FXStreet"], [/tradingview-widget-container/i, "TradingView"], [/data-tv-widget/i, "TradingView"], [/forexlive\.com/i, "ForexLive"], [/zerohedge\.com/i, "ZeroHedge"], [/dailyfx\.com/i, "DailyFX"], [/seekingalpha\.com/i, "Seeking Alpha"]];
+
+// Final fallback: in-text attribution like "Bloomberg reported today" /
+// "according to Reuters". Strict enough to avoid catching incidental
+// mentions ("Reuters covered the Bloomberg event" — we'd still pick the
+// first match, which is usually the source the story is built on).
+const ATTRIBUTION_PUBLISHERS = [[/\bBloomberg\b/i, "Bloomberg"], [/\bReuters\b/i, "Reuters"], [/\bFinancial Times\b|\bthe FT\b/i, "FT"], [/\bWall Street Journal\b|\bWSJ\b/i, "WSJ"], [/\bCNBC\b/i, "CNBC"], [/\bMarketWatch\b/i, "MarketWatch"], [/\bDow Jones\b/i, "Dow Jones"], [/\bAssociated Press\b|\bAP News\b/i, "Associated Press"], [/\bAFP\b/i, "AFP"], [/\bXinhua\b/i, "Xinhua"], [/\bNikkei\b/i, "Nikkei"], [/\bSouth China Morning Post\b|\bSCMP\b/i, "South China Morning Post"], [/\bFXStreet\b/i, "FXStreet"], [/\bForexLive\b/i, "ForexLive"], [/\bZeroHedge\b/i, "ZeroHedge"]];
+const ATTRIBUTION_VERBS = "(?:reported|reports|reporting|said|says|saying|noted|notes|writes|wrote|cited|cites|according to)";
+function detectFjProvider(input) {
+  const url = input.url?.trim() ?? "";
+  if (url) {
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      for (const [pattern, name] of DOMAIN_PROVIDERS) {
+        if (pattern.test(host)) return name;
+      }
+    } catch {
+      // ignore malformed url
+    }
+  }
+  const haystack = `${input.descriptionHtml ?? ""}\n${input.title ?? ""}`;
+  for (const [pattern, name] of CONTENT_FINGERPRINTS) {
+    if (pattern.test(haystack)) return name;
+  }
+  // In-text attribution — only count it when the publisher's name appears
+  // adjacent to a reporting verb so we don't misattribute incidental
+  // mentions ("the Bloomberg event covered by Reuters …").
+  for (const [namePattern, name] of ATTRIBUTION_PUBLISHERS) {
+    const matched = matchAttribution(haystack, namePattern);
+    if (matched) return name;
+  }
+  return undefined;
+}
+function matchAttribution(haystack, namePattern) {
+  const src = namePattern.source;
+  const combined = new RegExp(`(?:${src})\\s+${ATTRIBUTION_VERBS}|${ATTRIBUTION_VERBS}\\s+(?:by\\s+)?(?:${src})`, "i");
+  return combined.test(haystack);
+}
 ;// ./src/backend/services/news/newsFetchers.ts
+
 
 
 
@@ -14859,17 +14951,35 @@ async function fetchYahooMacroNews() {
   return items.map(mapYahoo(null));
 }
 function mapYahoo(symbol) {
-  return n => ({
-    id: generateNewsId(n.title, n.source),
-    title: n.title,
-    summary: n.summary,
-    publishedAt: n.publishedAt,
-    source: n.source,
-    sourceType: "yahoo",
-    url: n.url,
-    symbol,
-    symbolTags: symbol ? [symbol] : []
-  });
+  return n => {
+    const provider = pickProvider(n.source, "Yahoo", ["Yahoo Finance"]);
+    return {
+      id: generateNewsId(n.title, n.source),
+      title: n.title,
+      summary: n.summary,
+      publishedAt: n.publishedAt,
+      source: "Yahoo",
+      sourceType: "yahoo",
+      ...(provider ? {
+        provider
+      } : {}),
+      url: n.url,
+      symbol,
+      symbolTags: symbol ? [symbol] : []
+    };
+  };
+}
+
+/**
+ * Return the underlying publisher name to surface as a secondary badge,
+ * or undefined when it would just duplicate the primary aggregator badge.
+ */
+function pickProvider(raw, primary, aliases = []) {
+  const value = String(raw ?? "").trim();
+  if (!value) return undefined;
+  if (value === primary) return undefined;
+  for (const alias of aliases) if (value === alias) return undefined;
+  return value;
 }
 
 // ── Barron's: per-symbol news (all 3 channels) ─────────────────────────────
@@ -14877,19 +14987,38 @@ function mapYahoo(symbol) {
 async function fetchBarronsAllNews(symbol) {
   const news = await fetchBarronsNewsOnly(symbol);
   const out = [];
-  for (const story of news.barrons) out.push(mapBarrons(story, "barrons", symbol));
-  for (const story of news.dowJones) out.push(mapBarrons(story, "dowjones", symbol));
-  for (const story of news.press) out.push(mapBarrons(story, "press", symbol));
+  for (const story of news.barrons) {
+    const m = mapBarrons(story, "barrons", symbol);
+    if (m) out.push(m);
+  }
+  for (const story of news.dowJones) {
+    const m = mapBarrons(story, "dowjones", symbol);
+    if (m) out.push(m);
+  }
+  for (const story of news.press) {
+    const m = mapBarrons(story, "press", symbol);
+    if (m) out.push(m);
+  }
   return out;
 }
 function mapBarrons(s, sourceType, symbol) {
+  // Require a parseable timestamp. An empty `timestampValue`/`timestamp` would
+  // surface as "Invalid Date" in the UI and break newest-first ordering.
+  const raw = s.timestampValue || s.timestamp;
+  if (!raw) return null;
+  const parsedMs = new Date(raw).getTime();
+  if (!Number.isFinite(parsedMs)) return null;
+  const provider = pickProvider(s.provider, "Barron's");
   return {
     id: generateNewsId(s.headline, s.provider || sourceType),
     title: s.headline,
     summary: s.summary,
-    publishedAt: s.timestampValue || s.timestamp,
-    source: s.provider || sourceType,
+    publishedAt: new Date(parsedMs).toISOString(),
+    source: "Barron's",
     sourceType,
+    ...(provider ? {
+      provider
+    } : {}),
     url: s.url,
     symbol,
     symbolTags: [symbol]
@@ -14922,14 +15051,25 @@ function decodeHtmlEntities(value) {
 function htmlToPlainText(value) {
   const text = String(value ?? "").trim();
   if (!text) return "";
-  const withBreaks = text.replace(/<li\b[^>]*>/gi, "- ").replace(/<\/li>/gi, "\n").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n");
+
+  // Strip <style> / <script> blocks before any further processing — DOMParser
+  // preserves their textContent, which surfaces raw CSS / JS in the summary
+  // (e.g. FXStreet embeds `.fxs-faq-module-wrapper{...}` inside FJ items).
+  const stripped = text.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  const withBreaks = stripped.replace(/<li\b[^>]*>/gi, "- ").replace(/<\/li>/gi, "\n").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<\/div>/gi, "\n");
+  let plain;
   try {
     const doc = newsFetchers_sharedDOMParser.parseFromString(withBreaks, "text/html");
-    const plain = doc.body.textContent ?? "";
-    return plain.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
+    plain = doc.body.textContent ?? "";
   } catch {
-    return withBreaks.replace(/<[^>]+>/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+    plain = withBreaks.replace(/<[^>]+>/g, " ");
   }
+
+  // Defensive: some upstream feeds (or proxies) hand us pre-flattened text
+  // where the <style> wrapper was stripped but the CSS rule bodies remain
+  // verbatim (e.g. ".fxs-faq-module-wrapper{border:1px solid #ddd;...}").
+  // Drop standalone rule blocks so they don't surface as article summary.
+  return plain.replace(/[.#][a-zA-Z][\w-]*\s*\{[^{}]*\}/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
 }
 function normalizeFinancialJuiceSymbol(raw) {
   const base = String(raw ?? "").trim();
@@ -15011,20 +15151,30 @@ async function fetchSchwabNews() {
     const items = await fetchSchwabNewsHeadlines(null, {
       limit: 25
     });
-    return items.map(mapSchwabHeadline);
+    const out = [];
+    for (const raw of items) {
+      if (!raw.date) continue;
+      const parsedMs = new Date(raw.date).getTime();
+      if (!Number.isFinite(parsedMs)) continue;
+      out.push(mapSchwabHeadline(raw, parsedMs));
+    }
+    return out;
   } catch {
     return [];
   }
 }
-function mapSchwabHeadline(n) {
-  const publishedAt = n.dateTime ? new Date(n.dateTime).toISOString() : new Date().toISOString();
+function mapSchwabHeadline(n, parsedMs) {
+  const provider = pickProvider(n.source, "Schwab");
   return {
     id: generateNewsId(n.headline, "schwab"),
     title: n.headline,
-    summary: "",
-    publishedAt,
-    source: n.source || "Schwab",
+    summary: String(n.teaser ?? ""),
+    publishedAt: new Date(parsedMs).toISOString(),
+    source: "Schwab",
     sourceType: "schwab",
+    ...(provider ? {
+      provider
+    } : {}),
     url: undefined,
     symbol: null,
     symbolTags: []
@@ -15047,18 +15197,29 @@ async function fetchFinancialJuiceNews() {
       if (!title) continue;
       const link = entry.querySelector("link")?.textContent?.trim() || undefined;
       const pubDate = entry.querySelector("pubDate")?.textContent?.trim() ?? "";
+      if (!pubDate) continue;
+      const pubDateMs = new Date(pubDate).getTime();
+      if (!Number.isFinite(pubDateMs)) continue;
       const rawDesc = entry.querySelector("description")?.textContent?.trim() ?? "";
       const isHeadline = /<script\b/i.test(rawDesc);
       const descriptionHtml = rawDesc.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").trim();
       const description = htmlToPlainText(descriptionHtml);
       const symbolTags = extractFinancialJuiceSymbolTags(title, rawDesc, link);
+      const provider = detectFjProvider({
+        url: link,
+        descriptionHtml: rawDesc,
+        title
+      });
       items.push({
         id: generateNewsId(title, "financialjuice"),
         title,
         summary: description,
-        publishedAt: pubDate ? new Date(pubDate).toISOString() : new Date().toISOString(),
-        source: "FinancialJuice",
+        publishedAt: new Date(pubDateMs).toISOString(),
+        source: "FJ",
         sourceType: "financialjuice",
+        ...(provider && provider !== "FJ" && provider !== "FinancialJuice" ? {
+          provider
+        } : {}),
         url: link,
         symbol: symbolTags[0] ?? null,
         symbolTags,
@@ -15072,6 +15233,900 @@ async function fetchFinancialJuiceNews() {
     return [];
   }
 }
+;// ./src/backend/core/network/financialJuice/centrifugoClient.ts
+
+const centrifugoClient_log = logService.namespace("streamer");
+
+// ── Centrifugo v5 JSON wire protocol (subset) ───────────────────────────────
+// Reference: https://centrifugal.dev/docs/transports/client_protocol
+//
+// Frames are newline-delimited JSON. Each frame is either:
+//   - Command (client → server):  {id, connect|subscribe|...}
+//   - Reply  (server → client):   {id, connect|subscribe|...|error}
+//   - Push   (server → client):   {push: {channel, pub|join|leave|...}}
+//   - Ping   (server → client):   "{}"  (literal empty object)
+//   - Pong   (client → server):   "{}"  (only if ConnectResult.pong = true)
+//
+// Field names follow the proto schema verbatim:
+//   ConnectRequest: token, name, version
+//   ConnectResult:  client, ping (sec), pong, ttl, expires
+//   SubscribeRequest: channel
+//   SubscribeResult:  publications[], epoch, offset, recoverable
+//   Publication:      data, offset, tags
+//   Push:             channel, pub (Publication)
+
+const centrifugoClient_RECONNECT_BASE_MS = 2_000;
+const centrifugoClient_RECONNECT_MAX_MS = 60_000;
+const DEFAULT_PING_INTERVAL_SEC = 25;
+const ACTIVITY_LOG_INTERVAL_MS = 60_000;
+class CentrifugoClient {
+  socket = null;
+  nextId = 1;
+  pendingCommands = new Map();
+  reconnectEnabled = false;
+  reconnectAttempt = 0;
+  reconnectTimer = null;
+  intentionalDisconnect = false;
+  clientPongRequired = false;
+  pingTimeoutTimer = null;
+  pingIntervalMs = DEFAULT_PING_INTERVAL_SEC * 1000;
+  visibilityHandler = null;
+  refreshInFlight = false;
+  samplePublicationsLogged = 0;
+  framesReceived = 0;
+  publicationsReceived = 0;
+  lastFrameAtUtcMs = 0;
+  lastPublicationAtUtcMs = 0;
+  activityTimer = null;
+  constructor(opts) {
+    this.opts = opts;
+    this.currentToken = opts.token;
+  }
+  get isConnected() {
+    return this.socket?.readyState === WebSocket.OPEN;
+  }
+  connect() {
+    this.intentionalDisconnect = false;
+    this.reconnectEnabled = true;
+    this.clearReconnectTimer();
+    this.closeSocketQuietly();
+    centrifugoClient_log.info("ws.connecting", {
+      domain: this.urlHost(),
+      channels: this.opts.channels.length
+    });
+    try {
+      this.socket = new WebSocket(this.opts.url);
+    } catch (error) {
+      centrifugoClient_log.error("ws.create.fail", {
+        domain: this.urlHost(),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.scheduleReconnect();
+      return;
+    }
+    this.socket.onopen = () => this.sendConnect();
+    this.socket.onmessage = event => {
+      try {
+        this.handleSocketMessage(event.data);
+      } catch (error) {
+        centrifugoClient_log.error("ws.frame.error", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+    this.socket.onclose = event => {
+      this.clearPingTimeout();
+      this.clearActivityTimer();
+      centrifugoClient_log.info("ws.disconnected", {
+        domain: this.urlHost(),
+        code: event.code,
+        reason: event.reason || "(none)",
+        intentional: this.intentionalDisconnect,
+        frames: this.framesReceived,
+        pubs: this.publicationsReceived
+      });
+      this.socket = null;
+      this.pendingCommands.clear();
+      this.opts.onDisconnected?.({
+        code: event.code,
+        reason: event.reason
+      });
+      if (!this.intentionalDisconnect && this.reconnectEnabled) {
+        this.scheduleReconnect();
+      }
+    };
+    this.socket.onerror = () => {
+      centrifugoClient_log.warn("ws.error", {
+        domain: this.urlHost()
+      });
+    };
+    if (!this.visibilityHandler) {
+      this.visibilityHandler = () => {
+        if (document.visibilityState === "visible" && this.reconnectEnabled && !this.isConnected && !this.intentionalDisconnect) {
+          centrifugoClient_log.info("ws.visibility.recover", {
+            domain: this.urlHost()
+          });
+          this.clearReconnectTimer();
+          this.connect();
+        }
+      };
+      document.addEventListener("visibilitychange", this.visibilityHandler);
+    }
+  }
+  disconnect() {
+    this.intentionalDisconnect = true;
+    this.reconnectEnabled = false;
+    this.reconnectAttempt = 0;
+    this.clearReconnectTimer();
+    this.clearPingTimeout();
+    this.clearActivityTimer();
+    this.closeSocketQuietly();
+    if (this.visibilityHandler) {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
+    }
+  }
+
+  /** Replace the token for the next (re)connect. */
+  setToken(token) {
+    this.currentToken = token;
+  }
+
+  // ── Internal: frame handling ────────────────────────────────────────────
+
+  sendConnect() {
+    const id = this.nextId++;
+    const cmd = {
+      id,
+      connect: {
+        token: this.currentToken,
+        name: "userscript"
+      }
+    };
+    this.pendingCommands.set(id, reply => this.onConnectReply(reply));
+    this.sendFrame(cmd);
+  }
+  onConnectReply(reply) {
+    if (reply.error) {
+      centrifugoClient_log.warn("ws.connect.rejected", {
+        code: reply.error.code,
+        message: reply.error.message
+      });
+      void this.attemptTokenRefresh();
+      return;
+    }
+    const result = reply.connect ?? {};
+    this.pingIntervalMs = (typeof result.ping === "number" && result.ping > 0 ? result.ping : DEFAULT_PING_INTERVAL_SEC) * 1000;
+    this.clientPongRequired = !!result.pong;
+    this.reconnectAttempt = 0;
+    const autoSubs = result.subs ?? {};
+    const autoSubChannels = Object.keys(autoSubs);
+    centrifugoClient_log.info("ws.connected", {
+      domain: this.urlHost(),
+      client: result.client,
+      pingSec: result.ping,
+      pong: result.pong,
+      ttl: result.ttl,
+      autoSubs: autoSubChannels.length
+    });
+    this.opts.onConnected?.();
+    this.scheduleNextPingTimeout();
+    this.startActivityTimer();
+
+    // Server-side subscriptions delivered via the JWT subs claim: replay
+    // any initial publications, and don't send a redundant Subscribe (the
+    // server rejects those with code 105 "already subscribed").
+    let autoInitial = 0;
+    for (const [channel, subResult] of Object.entries(autoSubs)) {
+      const pubs = Array.isArray(subResult?.publications) ? subResult.publications : [];
+      autoInitial += pubs.length;
+      for (const pub of pubs) this.deliverPublication(channel, pub);
+    }
+    if (autoSubChannels.length > 0) {
+      centrifugoClient_log.info("ws.subscribed.auto", {
+        channels: autoSubChannels.length,
+        initialPubs: autoInitial
+      });
+    }
+    for (const channel of this.opts.channels) {
+      if (channel in autoSubs) continue;
+      this.sendSubscribe(channel);
+    }
+  }
+  sendSubscribe(channel) {
+    const id = this.nextId++;
+    const cmd = {
+      id,
+      subscribe: {
+        channel
+      }
+    };
+    this.pendingCommands.set(id, reply => this.onSubscribeReply(channel, reply));
+    this.sendFrame(cmd);
+  }
+  onSubscribeReply(channel, reply) {
+    if (reply.error) {
+      // Code 105 = already subscribed via the connection token. Benign:
+      // the subscription is alive on the server side and publications
+      // will still flow — we just shouldn't have asked.
+      const benign = reply.error.code === 105;
+      const level = benign ? "info" : "warn";
+      centrifugoClient_log[level]("ws.subscribe.fail", {
+        channel,
+        code: reply.error.code,
+        message: reply.error.message,
+        benign
+      });
+      return;
+    }
+    const result = reply.subscribe ?? {};
+    const initial = Array.isArray(result.publications) ? result.publications : [];
+    centrifugoClient_log.info("ws.subscribed", {
+      channel,
+      initial: initial.length
+    });
+    for (const pub of initial) {
+      this.deliverPublication(channel, pub);
+    }
+  }
+  handleSocketMessage(raw) {
+    if (typeof raw !== "string" || !raw.length) return;
+    this.lastFrameAtUtcMs = Date.now();
+    this.framesReceived++;
+    // Centrifugo can pack multiple frames in one WS message — newline-delimited.
+    for (const line of raw.split("\n")) {
+      const text = line.trim();
+      if (!text) continue;
+      this.handleSingleFrame(text);
+    }
+  }
+  handleSingleFrame(text) {
+    // Server ping = literal "{}". Reset ping watchdog and pong if required.
+    if (text === "{}") {
+      this.scheduleNextPingTimeout();
+      if (this.clientPongRequired) this.sendRaw("{}");
+      return;
+    }
+    let frame;
+    try {
+      frame = JSON.parse(text);
+    } catch {
+      centrifugoClient_log.warn("ws.frame.parse_fail", {
+        sample: text.slice(0, 80)
+      });
+      return;
+    }
+    this.scheduleNextPingTimeout();
+
+    // Check push first — Centrifugo's JSON encoder may emit `id:0` on push
+    // frames depending on version/config. Treating `id` presence as
+    // "this is a command reply" would then drop every push silently.
+    if (frame.push) {
+      const channel = frame.push.channel ?? "";
+      const pub = frame.push.pub;
+      if (channel && pub) this.deliverPublication(channel, pub);
+      return;
+    }
+
+    // Reply to a previous command. Centrifugo correlation ids start at 1.
+    if (typeof frame.id === "number" && frame.id > 0) {
+      const handler = this.pendingCommands.get(frame.id);
+      if (handler) {
+        this.pendingCommands.delete(frame.id);
+        handler(frame);
+      }
+      return;
+    }
+    centrifugoClient_log.warn("ws.frame.unhandled", {
+      keys: Object.keys(frame).slice(0, 8),
+      sample: text.slice(0, 160)
+    });
+  }
+  deliverPublication(channel, pub) {
+    this.publicationsReceived++;
+    this.lastPublicationAtUtcMs = Date.now();
+    // Log the first few publications at info to expose the actual payload
+    // shape (we don't have a public schema for FJ's pub.data). After 5
+    // samples we go silent to avoid log spam.
+    if (this.samplePublicationsLogged < 5) {
+      this.samplePublicationsLogged++;
+      const data = pub.data;
+      const dataObj = data && typeof data === "object" && !Array.isArray(data) ? data : null;
+      let preview;
+      try {
+        preview = JSON.stringify(data).slice(0, 1500);
+      } catch {
+        preview = "<unstringifiable>";
+      }
+      centrifugoClient_log.info("ws.pub.sample", {
+        channel,
+        dataType: typeof data,
+        keys: dataObj ? Object.keys(dataObj).slice(0, 16) : null,
+        offset: pub.offset,
+        preview
+      });
+    }
+    try {
+      this.opts.onPublication({
+        channel,
+        data: pub.data,
+        offset: pub.offset,
+        tags: pub.tags
+      });
+    } catch (error) {
+      centrifugoClient_log.error("ws.publication.handler.error", {
+        channel,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  // ── Internal: io ────────────────────────────────────────────────────────
+
+  sendFrame(cmd) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify(cmd));
+  }
+  sendRaw(text) {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(text);
+  }
+
+  // ── Internal: timers ────────────────────────────────────────────────────
+
+  startActivityTimer() {
+    this.clearActivityTimer();
+    this.activityTimer = setInterval(() => {
+      if (!this.isConnected) return;
+      const now = Date.now();
+      centrifugoClient_log.info("ws.activity", {
+        domain: this.urlHost(),
+        frames: this.framesReceived,
+        pubs: this.publicationsReceived,
+        sinceLastFrameSec: this.lastFrameAtUtcMs ? Math.round((now - this.lastFrameAtUtcMs) / 1000) : null,
+        sinceLastPubSec: this.lastPublicationAtUtcMs ? Math.round((now - this.lastPublicationAtUtcMs) / 1000) : null
+      });
+    }, ACTIVITY_LOG_INTERVAL_MS);
+  }
+  clearActivityTimer() {
+    if (this.activityTimer !== null) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = null;
+    }
+  }
+  scheduleNextPingTimeout() {
+    this.clearPingTimeout();
+    if (!this.pingIntervalMs) return;
+    // 2x the server ping interval — anything quieter is considered dead.
+    this.pingTimeoutTimer = setTimeout(() => {
+      centrifugoClient_log.warn("ws.ping.timeout", {
+        domain: this.urlHost(),
+        intervalMs: this.pingIntervalMs
+      });
+      this.closeSocketQuietly();
+    }, this.pingIntervalMs * 2);
+  }
+  clearPingTimeout() {
+    if (this.pingTimeoutTimer !== null) {
+      clearTimeout(this.pingTimeoutTimer);
+      this.pingTimeoutTimer = null;
+    }
+  }
+  scheduleReconnect(forceDelayMs) {
+    this.clearReconnectTimer();
+    const delay = forceDelayMs ?? Math.min(centrifugoClient_RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempt), centrifugoClient_RECONNECT_MAX_MS);
+    this.reconnectAttempt++;
+    centrifugoClient_log.info("ws.reconnecting", {
+      domain: this.urlHost(),
+      delayMs: delay,
+      attempt: this.reconnectAttempt
+    });
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.reconnectEnabled && !this.intentionalDisconnect) {
+        this.connect();
+      }
+    }, delay);
+  }
+  clearReconnectTimer() {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+  closeSocketQuietly() {
+    if (this.socket) {
+      try {
+        this.socket.close();
+      } catch {
+        /* ignore */
+      }
+      this.socket = null;
+    }
+  }
+
+  // ── Internal: auth ──────────────────────────────────────────────────────
+
+  async attemptTokenRefresh() {
+    if (this.refreshInFlight) return;
+    this.refreshInFlight = true;
+    try {
+      if (!this.opts.refreshToken) {
+        centrifugoClient_log.warn("ws.token.refresh.unavailable", {
+          domain: this.urlHost()
+        });
+        this.disconnect();
+        return;
+      }
+      const fresh = await this.opts.refreshToken();
+      if (!fresh) {
+        centrifugoClient_log.warn("ws.token.refresh.aborted", {
+          domain: this.urlHost()
+        });
+        this.disconnect();
+        return;
+      }
+      this.currentToken = fresh;
+      this.closeSocketQuietly();
+      this.scheduleReconnect(0);
+    } catch (error) {
+      centrifugoClient_log.error("ws.token.refresh.error", {
+        domain: this.urlHost(),
+        error: error instanceof Error ? error.message : String(error)
+      });
+      this.disconnect();
+    } finally {
+      this.refreshInFlight = false;
+    }
+  }
+  urlHost() {
+    try {
+      return new URL(this.opts.url).host;
+    } catch {
+      return this.opts.url;
+    }
+  }
+}
+;// ./src/backend/core/network/financialJuice/tokenFetcher.ts
+
+
+const tokenFetcher_log = logService.namespace("network");
+const FJ_HOME_URL = "https://www.financialjuice.com/home";
+const TOKEN_REGEX = /centrifugoToken\s*=\s*['"]([^'"]+)['"]/;
+const URL_REGEX = /centrifugoUrl\s*=\s*['"]([^'"]+)['"]/;
+
+// Mimic a real browser fetch — the FJ home page is server-rendered HTML
+// shell and a bare GM request without these headers can be cloaked / cached
+// as bot traffic.
+const FJ_HOME_HEADERS = {
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " + "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+};
+/**
+ * Fetch the FJ home page and extract the Centrifugo URL + JWT that the page
+ * uses to bootstrap its realtime feed. Returns null if either is missing
+ * (e.g. anonymous visitors getting a different HTML shell, or page changes).
+ */
+async function fetchFinancialJuiceCredentials() {
+  let html;
+  try {
+    html = await gmGetWithHeaders(FJ_HOME_URL, FJ_HOME_HEADERS, 20_000);
+  } catch (error) {
+    tokenFetcher_log.warn("fj.token.fetch.fail", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+  const tokenMatch = html.match(TOKEN_REGEX);
+  const urlMatch = html.match(URL_REGEX);
+  if (!tokenMatch?.[1] || !urlMatch?.[1]) {
+    tokenFetcher_log.warn("fj.token.parse.fail", {
+      tokenFound: !!tokenMatch?.[1],
+      urlFound: !!urlMatch?.[1],
+      htmlLen: html.length
+    });
+    return null;
+  }
+  const token = tokenMatch[1];
+  const url = urlMatch[1];
+  const claims = decodeJwtClaims(token);
+  const expiresAtUtcMs = typeof claims?.exp === "number" ? claims.exp * 1000 : 0;
+  const channels = claims?.subs && typeof claims.subs === "object" ? Object.keys(claims.subs) : [];
+  tokenFetcher_log.info("fj.token.fetched", {
+    url,
+    expiresAtUtcMs,
+    expiresInSec: expiresAtUtcMs > 0 ? Math.max(0, Math.round((expiresAtUtcMs - Date.now()) / 1000)) : null,
+    channelCount: channels.length
+  });
+  return {
+    url,
+    token,
+    expiresAtUtcMs,
+    channels
+  };
+}
+function decodeJwtClaims(jwt) {
+  const parts = jwt.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payloadB64 + "=".repeat((4 - payloadB64.length % 4) % 4);
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+;// ./src/backend/core/network/financialJuice/financialJuiceStreamer.ts
+
+
+
+
+
+
+const financialJuiceStreamer_log = logService.namespace("network");
+
+// Subscribe to every channel the JWT's `subs` claim grants — the token
+// embeds the authoritative list, so we don't need to guess room IDs.
+// `feed:lite` alone matches the RSS content set; the room channels
+// (`feed:lite_rid:*`) expose finer-grained topic streams.
+const FALLBACK_CHANNELS = ["feed:lite"];
+const BUFFER_LIMIT = 200;
+const EMIT_DEBOUNCE_MS = 500;
+class FinancialJuiceStreamer {
+  client = null;
+  listeners = new Set();
+  buffer = new Map();
+  starting = null;
+  started = false;
+  emitTimer = null;
+  connected = false;
+
+  /**
+   * Bootstrap the stream: fetch a token from FJ home, open the websocket,
+   * subscribe to feed:lite. Idempotent — repeated calls await the same
+   * boot promise.
+   */
+  start() {
+    if (this.starting) return this.starting;
+    if (this.started) return Promise.resolve();
+    this.starting = this.bootstrap().finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+  stop() {
+    this.started = false;
+    this.connected = false;
+    this.client?.disconnect();
+    this.client = null;
+    if (this.emitTimer !== null) {
+      clearTimeout(this.emitTimer);
+      this.emitTimer = null;
+    }
+  }
+  get isConnected() {
+    return this.connected;
+  }
+
+  /** Current buffered items, newest first. Used as the fetch-time snapshot. */
+  getItems() {
+    return sortNewsItemsNewestFirst(Array.from(this.buffer.values()));
+  }
+  addListener(cb) {
+    this.listeners.add(cb);
+  }
+  removeListener(cb) {
+    this.listeners.delete(cb);
+  }
+
+  // ── Internal ────────────────────────────────────────────────────────────
+
+  async bootstrap() {
+    const cred = await fetchFinancialJuiceCredentials();
+    if (!cred) {
+      financialJuiceStreamer_log.warn("fj.streamer.bootstrap.no_credentials");
+      return;
+    }
+    const channels = cred.channels.length > 0 ? cred.channels : FALLBACK_CHANNELS;
+    this.started = true;
+    this.client = new CentrifugoClient({
+      url: cred.url,
+      token: cred.token,
+      channels,
+      refreshToken: async () => {
+        const fresh = await fetchFinancialJuiceCredentials();
+        return fresh?.token ?? null;
+      },
+      onPublication: pub => this.handlePublication(pub),
+      onConnected: () => {
+        this.connected = true;
+        financialJuiceStreamer_log.info("fj.streamer.connected", {
+          channels: channels.length
+        });
+      },
+      onDisconnected: ({
+        code,
+        reason
+      }) => {
+        this.connected = false;
+        financialJuiceStreamer_log.info("fj.streamer.disconnected", {
+          code,
+          reason
+        });
+      }
+    });
+    this.client.connect();
+  }
+  pubsReceived = 0;
+  itemsExtracted = 0;
+  rowKeysLogged = 0;
+  handlePublication(pub) {
+    this.pubsReceived++;
+    const rawRow = peekFirstRow(pub);
+    const items = mapPublicationToNewsItems(pub);
+    this.itemsExtracted += items.length;
+    if (this.pubsReceived <= 5) {
+      financialJuiceStreamer_log.info("fj.pub.mapped", {
+        pubIndex: this.pubsReceived,
+        items: items.length,
+        channel: pub.channel,
+        sampleTitle: items[0]?.title?.slice(0, 80) ?? null,
+        sampleSource: items[0]?.source ?? null
+      });
+    }
+    // Dump the FULL key list of the first 3 distinct row shapes so we can
+    // discover which field FJ uses to label the underlying provider
+    // (Reuters / ForexLive / FT / etc). Cheap one-shot diagnostic.
+    if (rawRow && this.rowKeysLogged < 3) {
+      this.rowKeysLogged++;
+      financialJuiceStreamer_log.info("fj.row.keys", {
+        channel: pub.channel,
+        keys: Object.keys(rawRow)
+      });
+    }
+    if (items.length === 0) return;
+    for (const item of items) this.buffer.set(item.id, item);
+    if (this.buffer.size > BUFFER_LIMIT) {
+      // Drop oldest by publishedAt. Map insertion order ≈ arrival order, but
+      // late-arriving older items would otherwise grow unbounded.
+      const sorted = sortNewsItemsNewestFirst(Array.from(this.buffer.values()));
+      this.buffer.clear();
+      for (const it of sorted.slice(0, BUFFER_LIMIT)) {
+        this.buffer.set(it.id, it);
+      }
+    }
+    // Emit on every accepted publication, not only when the buffer GREW.
+    // FJ also pushes corrections / re-issues for an existing NewsID; those
+    // updates change title / summary / time but leave the id alone, so a
+    // size-only gate would silently drop them and the UI would freeze.
+    this.scheduleEmit();
+  }
+  scheduleEmit() {
+    if (this.emitTimer !== null) return;
+    this.emitTimer = setTimeout(() => {
+      this.emitTimer = null;
+      this.emit();
+    }, EMIT_DEBOUNCE_MS);
+  }
+  emit() {
+    const snapshot = this.getItems();
+    for (const cb of this.listeners) {
+      try {
+        cb(snapshot);
+      } catch (error) {
+        financialJuiceStreamer_log.error("fj.streamer.listener.error", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+}
+
+// ── Publication → UnifiedNewsItem mapping ──────────────────────────────────
+//
+// FJ wraps every news push in a SignalR-style envelope:
+//
+//   pub.data = { ev: "sendUpdates", msg: "<JSON-string>", t: ... }
+//
+// `msg` is a *string* containing a JSON array of news objects:
+//
+//   [{ Title, Description, NewsID, Tags, PostedShort, PostedLong, ... }]
+//
+// A single publication can therefore deliver several news items at once.
+
+/** Return the first raw row object from a publication, without mapping. */
+function peekFirstRow(pub) {
+  if (!pub.data || typeof pub.data !== "object") return null;
+  const envelope = pub.data;
+  let rows;
+  if (typeof envelope.msg === "string") {
+    try {
+      rows = JSON.parse(envelope.msg);
+    } catch {
+      return null;
+    }
+  } else {
+    rows = envelope.msg;
+  }
+  if (Array.isArray(rows)) {
+    const first = rows[0];
+    return first && typeof first === "object" && !Array.isArray(first) ? first : null;
+  }
+  if (rows && typeof rows === "object") return rows;
+  return null;
+}
+function mapPublicationToNewsItems(pub) {
+  if (!pub.data || typeof pub.data !== "object") return [];
+  const envelope = pub.data;
+
+  // Resolve the inner array. `msg` is normally a JSON-encoded string, but
+  // tolerate the rare case where the publisher already inlined an array.
+  let rows;
+  if (typeof envelope.msg === "string") {
+    try {
+      rows = JSON.parse(envelope.msg);
+    } catch {
+      return [];
+    }
+  } else if (Array.isArray(envelope.msg)) {
+    rows = envelope.msg;
+  } else if (envelope.msg && typeof envelope.msg === "object") {
+    rows = [envelope.msg];
+  } else {
+    return [];
+  }
+  if (!Array.isArray(rows)) return [];
+  const ev = typeof envelope.ev === "string" ? envelope.ev : "";
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const item = mapFjRowToNewsItem(row, ev);
+    if (item) out.push(item);
+  }
+  return out;
+}
+function mapFjRowToNewsItem(row, ev) {
+  const title = pickString(row, ["Title", "title", "Headline", "headline"]);
+  if (!title) return null;
+  // Require a parseable upstream timestamp. Falling back to `new Date()` here
+  // would regenerate "now" on any replay/reconnect remap of the same row,
+  // breaking the merge-by-id cache (same bug pattern as Schwab's missing
+  // dateTime field).
+  const publishedAt = parsePostedAt(row);
+  if (!publishedAt) return null;
+  // FJ pushes raw HTML in Description (FXStreet, ZeroHedge etc. embed
+  // <style> blocks); strip tags + leaked CSS before storing as summary.
+  const summary = htmlToPlainText(pickString(row, ["Description", "description", "Summary", "summary", "Text"]) ?? "");
+  const url = pickString(row, ["EURL", "Url", "url", "Link", "link"]);
+  const newsId = pickIdString(row, ["NewsID", "newsId", "Id", "id"]);
+  const symbolTags = extractSymbolTags(row);
+  const isHeadline = /headline/i.test(ev) || pickBool(row, ["IsHeadline", "isHeadline", "isPriority"]);
+  const description = pickString(row, ["Description", "description"]);
+  // Try an explicit provider field first, then fall back to URL / content
+  // heuristics so we still tag the item when FJ omits the field.
+  const provider = extractProviderLabel(row) ?? detectFjProvider({
+    url,
+    descriptionHtml: description,
+    title
+  });
+  return {
+    // Prefer FJ's stable NewsID over a hash of the title — the publisher
+    // may amend a story (typos, follow-ups) while keeping the same id.
+    id: newsId ? `fj_${newsId}` : generateNewsId(title, "financialjuice"),
+    title,
+    summary,
+    publishedAt,
+    // `source` stays as the aggregator. The underlying outlet — when we
+    // can identify it — lives in `provider` and renders as a secondary
+    // badge next to the FJ badge.
+    source: "FJ",
+    sourceType: "financialjuice",
+    ...(provider && provider !== "FJ" && provider !== "FinancialJuice" ? {
+      provider
+    } : {}),
+    url,
+    symbol: symbolTags[0] ?? null,
+    symbolTags,
+    ...(isHeadline ? {
+      isHeadline: true
+    } : {})
+  };
+}
+
+// FJ's payload labels the underlying publisher via the `FCName` field
+// (Feed Company Name) — e.g. "FXStreet", "OilPrice", "South China Morning
+// Post", "Reuters". The other entries below are defensive fallbacks for
+// event shapes we haven't sampled yet.
+const PROVIDER_KEYS = ["FCName", "FCNameURL", "Datasource", "DataSource", "DataSourceName", "Source", "SourceName", "Provider", "ProviderName", "Vendor", "Publisher"];
+function extractProviderLabel(row) {
+  for (const key of PROVIDER_KEYS) {
+    const v = row[key];
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+    // Some endpoints nest provider details in an object {Id, Name}.
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const nested = v;
+      const name = nested.Name ?? nested.name ?? nested.Title ?? nested.title;
+      if (typeof name === "string" && name.trim()) return name.trim();
+    }
+  }
+  return undefined;
+}
+function pickString(d, keys) {
+  for (const k of keys) {
+    const v = d[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+function pickIdString(d, keys) {
+  for (const k of keys) {
+    const v = d[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return undefined;
+}
+function pickBool(d, keys) {
+  for (const k of keys) {
+    const v = d[k];
+    if (typeof v === "boolean") return v;
+  }
+  return false;
+}
+
+// FJ posts dates as a split pair: PostedLong = "13 May 2026", PostedShort
+// = "04:55". Treat the combined value as UTC — the underlying squawk feed
+// is London-based but published in UTC.
+function parsePostedAt(d) {
+  const postedLong = typeof d.PostedLong === "string" ? d.PostedLong : null;
+  const postedShort = typeof d.PostedShort === "string" ? d.PostedShort : null;
+  if (postedLong && postedShort) {
+    const ts = Date.parse(`${postedLong} ${postedShort} UTC`);
+    if (Number.isFinite(ts)) return new Date(ts).toISOString();
+  }
+  const fallbackKeys = ["DatePublished", "datePublished", "PublishedAt", "publishedAt", "PostDate", "postDate", "CreatedAt", "createdAt", "Date", "date", "Timestamp", "timestamp"];
+  for (const k of fallbackKeys) {
+    const v = d[k];
+    if (typeof v === "string" && v) {
+      const ts = Date.parse(v);
+      if (Number.isFinite(ts)) return new Date(ts).toISOString();
+    }
+    if (typeof v === "number" && v > 0) {
+      const ms = v < 1e12 ? v * 1000 : v;
+      return new Date(ms).toISOString();
+    }
+  }
+  return null;
+}
+function extractSymbolTags(d) {
+  const out = [];
+  const seen = new Set();
+  const push = raw => {
+    if (typeof raw !== "string") return;
+    const value = raw.trim().toUpperCase();
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    out.push(value);
+  };
+  const rawTags = d.Tags ?? d.tags;
+  if (Array.isArray(rawTags)) {
+    for (const item of rawTags) {
+      if (typeof item === "string") {
+        push(item);
+        continue;
+      }
+      if (item && typeof item === "object") {
+        const obj = item;
+        push(obj.Symbol ?? obj.symbol ?? obj.Name ?? obj.name ?? obj.Tag);
+      }
+    }
+  }
+  return out;
+}
+const financialJuiceStreamer = new FinancialJuiceStreamer();
 ;// ./src/backend/services/news/newsItemHelpers.ts
 
 
@@ -15094,6 +16149,7 @@ function areItemsEqual(a, b) {
     if (a[i].summary !== b[i].summary) return false;
     if (a[i].source !== b[i].source) return false;
     if (a[i].sourceType !== b[i].sourceType) return false;
+    if ((a[i].provider ?? null) !== (b[i].provider ?? null)) return false;
     if (a[i].symbol !== b[i].symbol) return false;
     if (!areSymbolTagsEqual(a[i], b[i])) return false;
     if ((a[i].url ?? null) !== (b[i].url ?? null)) return false;
@@ -16046,6 +17102,7 @@ async function tagNewsItems(items, providerConfig) {
 
 
 
+
 const NEWS_FETCH_SOURCES = ["yahooMacro", "yahooSymbol", "barrons", "financialJuice", "schwab"];
 const NEWS_GLOBAL_SOURCES = ["financialJuice", "yahooMacro", "schwab"];
 const NEWS_SYMBOL_SOURCES = ["yahooSymbol", "barrons"];
@@ -16056,7 +17113,13 @@ const NewsService_NEWS_SOURCE_LABELS = {
   financialJuice: "FinancialJuice",
   schwab: "Schwab"
 };
+
 const LOG_SYMBOL_SAMPLE_LIMIT = 10;
+const FJ_SOURCE_LIMIT = 1000;
+const SCHWAB_SOURCE_LIMIT = 1000;
+const YAHOO_MACRO_SOURCE_LIMIT = 1000;
+const YAHOO_SYMBOL_SOURCE_LIMIT = 1000;
+const BARRONS_SOURCE_LIMIT = 1000;
 
 class NewsService {
   items = [];
@@ -16102,6 +17165,15 @@ class NewsService {
   refreshIntervals = {
     ...DEFAULT_NEWS_REFRESH_INTERVALS
   };
+  sourceEnabled = {
+    yahooMacro: true,
+    yahooSymbol: true,
+    barrons: true,
+    financialJuice: true,
+    schwab: true
+  };
+  streamerEnabled = true;
+  streamerListener = null;
   providerResolver = null;
 
   /**
@@ -16135,6 +17207,7 @@ class NewsService {
       // Pre-warm the memory store eagerly so rebuildFromSources/markRead
       // don't pay the async DB-open cost on their first call.
       void this.ensureMemory();
+      if (this.streamerEnabled) this.attachStreamer();
       this.startPolling();
       void this.refresh();
     }
@@ -16143,6 +17216,50 @@ class NewsService {
     this.stopPolling();
     this.pendingSources.clear();
     this.started = false;
+    this.detachStreamer();
+  }
+
+  /**
+   * Connect the FJ realtime stream. When the WS pushes new items, they
+   * become authoritative for the financialJuice source; the RSS poll
+   * falls back to fetching only if the streamer isn't connected.
+   */
+  attachStreamer() {
+    if (this.streamerListener) return;
+    const listener = () => {
+      // Streamer pushed: re-merge buffered streamer items into the
+      // financialJuice bucket.
+      void this.requestFetch(["financialJuice"]);
+    };
+    this.streamerListener = listener;
+    financialJuiceStreamer.addListener(listener);
+    void financialJuiceStreamer.start();
+  }
+  detachStreamer() {
+    if (this.streamerListener) {
+      financialJuiceStreamer.removeListener(this.streamerListener);
+      this.streamerListener = null;
+    }
+    financialJuiceStreamer.stop();
+  }
+
+  /**
+   * Toggle the FinancialJuice realtime stream independent of RSS. The
+   * RSS-source `financialJuice` flag continues to govern polling-based
+   * fallback fetches.
+   */
+  setStreamerEnabled(next) {
+    if (this.streamerEnabled === next) return;
+    this.streamerEnabled = next;
+    if (!this.started) return;
+    if (next) {
+      this.attachStreamer();
+    } else {
+      this.detachStreamer();
+    }
+  }
+  getStreamerEnabled() {
+    return this.streamerEnabled;
   }
   updateSymbols(symbols) {
     const normalized = newsItemHelpers_normalizeSymbols(symbols);
@@ -16156,8 +17273,10 @@ class NewsService {
 
     // Keep previous symbol-scoped cache until refreshed data arrives.
     // This prevents transient empty states during symbol-set transitions.
+    // requestFetch filters by enabled state, so disabled symbol sources
+    // are no-ops here without callers having to know.
     if (this.started && normalized.length > 0) {
-      void this.requestFetch(["yahooSymbol", "barrons"]);
+      void this.requestFetch(NEWS_SYMBOL_SOURCES);
       return;
     }
 
@@ -16186,9 +17305,16 @@ class NewsService {
       ...this.refreshIntervals
     };
   }
+  getSourceEnabled() {
+    return {
+      ...this.sourceEnabled
+    };
+  }
   getAutoRefreshLabel() {
     const i = this.refreshIntervals;
-    return `Auto-refresh: FJ ${formatInterval(i.financialJuiceMs)}` + ` · Yahoo Macro ${formatInterval(i.yahooMacroMs)}` + ` · Yahoo Symbol ${formatInterval(i.yahooSymbolMs)}` + ` · Barron's ${formatInterval(i.barronsMs)}` + ` · Schwab ${formatInterval(i.schwabMs)}`;
+    const label = (source, intervalMs) => this.sourceEnabled[source] ? formatInterval(intervalMs) : "Off";
+    const fjLabel = this.sourceEnabled.financialJuice ? formatInterval(i.financialJuiceRssMs) : this.streamerEnabled ? "stream" : "Off";
+    return `Auto-refresh: FJ ${fjLabel}` + ` · Yahoo Macro ${label("yahooMacro", i.yahooMacroMs)}` + ` · Yahoo Symbol ${label("yahooSymbol", i.yahooSymbolMs)}` + ` · Barron's ${label("barrons", i.barronsMs)}` + ` · Schwab ${label("schwab", i.schwabMs)}`;
   }
   updateRefreshIntervals(patch) {
     const next = {
@@ -16203,18 +17329,63 @@ class NewsService {
     if (patch.barronsMs !== undefined) {
       next.barronsMs = normalizeIntervalMs(patch.barronsMs, next.barronsMs);
     }
-    if (patch.financialJuiceMs !== undefined) {
-      next.financialJuiceMs = normalizeIntervalMs(patch.financialJuiceMs, next.financialJuiceMs);
+    if (patch.financialJuiceRssMs !== undefined) {
+      next.financialJuiceRssMs = normalizeIntervalMs(patch.financialJuiceRssMs, next.financialJuiceRssMs);
     }
     if (patch.schwabMs !== undefined) {
       next.schwabMs = normalizeIntervalMs(patch.schwabMs, next.schwabMs);
     }
-    const changed = next.yahooMacroMs !== this.refreshIntervals.yahooMacroMs || next.yahooSymbolMs !== this.refreshIntervals.yahooSymbolMs || next.barronsMs !== this.refreshIntervals.barronsMs || next.financialJuiceMs !== this.refreshIntervals.financialJuiceMs || next.schwabMs !== this.refreshIntervals.schwabMs;
+    const changed = next.yahooMacroMs !== this.refreshIntervals.yahooMacroMs || next.yahooSymbolMs !== this.refreshIntervals.yahooSymbolMs || next.barronsMs !== this.refreshIntervals.barronsMs || next.financialJuiceRssMs !== this.refreshIntervals.financialJuiceRssMs || next.schwabMs !== this.refreshIntervals.schwabMs;
     if (!changed) return;
     this.refreshIntervals = next;
     if (this.started) {
       this.stopPolling();
       this.startPolling();
+    }
+  }
+
+  /**
+   * Apply a new enabled-flag map. Disabled sources stop polling but
+   * their previously-fetched items remain in the feed (the persistent
+   * news cache is the source of truth for what the user sees, separate
+   * from whether we keep pulling fresh data). Re-enabled sources resume
+   * polling on their configured interval; the next tick refreshes them.
+   */
+  setSourceEnabled(next) {
+    const turnedOn = [];
+    let touched = false;
+    for (const source of NEWS_FETCH_SOURCES) {
+      const desired = next[source];
+      if (desired === undefined) continue;
+      const previous = this.sourceEnabled[source];
+      if (previous === desired) continue;
+      touched = true;
+      this.sourceEnabled[source] = desired;
+      if (desired) {
+        turnedOn.push(source);
+      } else {
+        this.stopSourcePolling(source);
+      }
+    }
+    if (!touched) return;
+    if (this.started) {
+      for (const source of turnedOn) {
+        this.startSourcePolling(source, this.refreshIntervalFor(source));
+      }
+    }
+  }
+  refreshIntervalFor(source) {
+    switch (source) {
+      case "yahooMacro":
+        return this.refreshIntervals.yahooMacroMs;
+      case "yahooSymbol":
+        return this.refreshIntervals.yahooSymbolMs;
+      case "barrons":
+        return this.refreshIntervals.barronsMs;
+      case "financialJuice":
+        return this.refreshIntervals.financialJuiceRssMs;
+      case "schwab":
+        return this.refreshIntervals.schwabMs;
     }
   }
 
@@ -16249,11 +17420,17 @@ class NewsService {
     // Stagger: global sources first (fast, ~200ms), then per-symbol
     // sources (heavy, up to 19 symbols × concurrency 6). This gives the
     // user visible news within ~200ms instead of waiting for the slowest
-    // per-symbol source.
+    // per-symbol source. requestFetch filters disabled sources, so the
+    // caller doesn't need to.
     await this.requestFetch(NEWS_GLOBAL_SOURCES);
     if (this.symbols.length > 0) {
       await this.requestFetch(NEWS_SYMBOL_SOURCES);
     }
+  }
+
+  /** Refresh a single source on demand. No-op if the source is disabled. */
+  async refreshSource(source) {
+    await this.requestFetch([source]);
   }
 
   // ── Internal ────────────────────────────────────────────────────
@@ -16273,12 +17450,31 @@ class NewsService {
     })();
     await this._memoryInitPromise;
   }
+
+  /**
+   * Returns whether `source` has any active fetch path right now.
+   * - Regular sources: just the per-source enabled flag.
+   * - FinancialJuice: RSS-enabled OR (streamer-enabled AND connected) —
+   *   the streamer's connected items are a valid fetch product even
+   *   when RSS polling is off, so we don't want to drop streamer pushes.
+   */
+  isFetchAllowed(source) {
+    if (source === "financialJuice") {
+      if (this.sourceEnabled.financialJuice) return true;
+      return this.streamerEnabled && financialJuiceStreamer.isConnected;
+    }
+    return this.sourceEnabled[source];
+  }
   requestFetch(sources) {
     for (const source of sources) {
+      if (!this.isFetchAllowed(source)) continue;
       this.pendingSources.add(source);
     }
     if (this.inFlightFetch) {
       return this.inFlightFetch;
+    }
+    if (this.pendingSources.size === 0) {
+      return Promise.resolve();
     }
     this.inFlightFetch = this.drainFetchQueue().finally(() => {
       this.inFlightFetch = null;
@@ -16339,20 +17535,78 @@ class NewsService {
       }
       let items;
       if (source === "yahooMacro") {
-        items = this.sortNewestFirst(await fetchYahooMacroNews());
+        // Yahoo Macro returns the top global-macro headlines; older items
+        // roll off as new ones arrive. Merge with previous so the feed
+        // accumulates instead of clipping to the latest batch.
+        const fresh = await fetchYahooMacroNews();
+        const merged = new Map();
+        for (const it of this.sourceItems.yahooMacro) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(0, YAHOO_MACRO_SOURCE_LIMIT);
       } else if (source === "financialJuice") {
-        items = this.sortNewestFirst(await fetchFinancialJuiceNews());
+        // Two writers feed this source, each independently togglable:
+        //   1. RSS pull (bootstrap + polling) — gated by sourceEnabled
+        //   2. Streamer pushes (live deltas) — gated by streamerEnabled
+        // When the streamer is connected, its buffered items are
+        // authoritative (RSS would just re-pull the same data); RSS only
+        // runs as a fallback when the stream is disabled or down.
+        const useStream = this.streamerEnabled && financialJuiceStreamer.isConnected;
+        const useRss = this.sourceEnabled.financialJuice;
+        const streamerItems = useStream ? financialJuiceStreamer.getItems() : [];
+        let fresh;
+        if (streamerItems.length > 0) {
+          fresh = streamerItems;
+        } else if (useRss) {
+          fresh = await fetchFinancialJuiceNews();
+        } else {
+          // Both off (or stream on but not yet connected and RSS off):
+          // nothing fresh to merge, just keep prior cache as the snapshot.
+          fresh = [];
+        }
+        const merged = new Map();
+        for (const it of this.sourceItems.financialJuice) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(0, FJ_SOURCE_LIMIT);
       } else if (source === "schwab") {
-        items = this.sortNewestFirst(await fetchSchwabNews());
+        // Schwab returns only the top-N latest headlines per poll, so items
+        // roll off the window as new ones arrive. Merge with the existing
+        // snapshot (deduped by stable id) so the visible feed grows
+        // monotonically instead of clipping to the most recent N.
+        const fresh = await fetchSchwabNews();
+        const merged = new Map();
+        for (const it of this.sourceItems.schwab) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(0, SCHWAB_SOURCE_LIMIT);
       } else if (source === "yahooSymbol") {
-        items = this.sortNewestFirst(await this.fetchPerSymbol(fetchYahooSymbolNews));
+        // Per-symbol pull returns only the top-N per symbol — older items
+        // roll off. Merge with previous so per-symbol history accumulates.
+        // Stale entries from removed symbols get cleared by updateSymbols
+        // when the symbol set transitions to empty.
+        const fresh = await this.fetchPerSymbol(fetchYahooSymbolNews);
+        const merged = new Map();
+        for (const it of this.sourceItems.yahooSymbol) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(0, YAHOO_SYMBOL_SOURCE_LIMIT);
       } else {
-        items = this.sortNewestFirst(await this.fetchPerSymbol(fetchBarronsAllNews));
+        // Barron's: same merge rationale as Yahoo Symbol.
+        const fresh = await this.fetchPerSymbol(fetchBarronsAllNews);
+        const merged = new Map();
+        for (const it of this.sourceItems.barrons) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(0, BARRONS_SOURCE_LIMIT);
       }
+
+      // Surface a delta against the previous snapshot so the log doesn't
+      // look like a successful refresh on every poll when nothing actually
+      // changed. `newIds` = items whose id wasn't present last time.
+      const prevIds = new Set(this.sourceItems[source].map(it => it.id));
+      let newIds = 0;
+      for (const it of items) if (!prevIds.has(it.id)) newIds++;
       this.logger.info("News Fetched", {
         source: sourceLabel,
         sourceKey: source,
         itemCount: items.length,
+        newIds,
         symbolCount: isSymbolScoped ? this.symbols.length : undefined,
         symbolSample: isSymbolScoped ? this.getSymbolSample() : undefined,
         durationMs: Date.now() - startedAt
@@ -16430,24 +17684,26 @@ class NewsService {
   }
   startPolling() {
     if (Object.keys(this.sourceTimers).length > 0) return;
-    this.startSourcePolling("yahooMacro", this.refreshIntervals.yahooMacroMs);
-    this.startSourcePolling("yahooSymbol", this.refreshIntervals.yahooSymbolMs);
-    this.startSourcePolling("barrons", this.refreshIntervals.barronsMs);
-    this.startSourcePolling("financialJuice", this.refreshIntervals.financialJuiceMs);
-    this.startSourcePolling("schwab", this.refreshIntervals.schwabMs);
+    for (const source of NEWS_FETCH_SOURCES) {
+      this.startSourcePolling(source, this.refreshIntervalFor(source));
+    }
   }
   stopPolling() {
     for (const source of NEWS_FETCH_SOURCES) {
-      const timer = this.sourceTimers[source];
-      if (!timer) continue;
-      clearInterval(timer);
-      delete this.sourceTimers[source];
+      this.stopSourcePolling(source);
     }
   }
   startSourcePolling(source, intervalMs) {
     if (this.sourceTimers[source]) return;
     if (intervalMs <= 0) return;
+    if (!this.sourceEnabled[source]) return;
     this.sourceTimers[source] = setInterval(() => void this.requestFetch([source]), intervalMs);
+  }
+  stopSourcePolling(source) {
+    const timer = this.sourceTimers[source];
+    if (!timer) return;
+    clearInterval(timer);
+    delete this.sourceTimers[source];
   }
   sortNewestFirst(items) {
     return sortNewsItemsNewestFirst(items);
@@ -18837,12 +20093,13 @@ const defaultSettings = {
   newsYahooMacroRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.yahooMacroMs,
   newsYahooSymbolRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs,
   newsBarronsRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs,
-  newsFinancialJuiceRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs,
+  newsFinancialJuiceRssRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs,
   newsSchwabRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
   newsYahooMacroEnabled: true,
   newsYahooSymbolEnabled: true,
   newsBarronsEnabled: true,
-  newsFinancialJuiceEnabled: true,
+  newsFinancialJuiceRssEnabled: true,
+  newsFinancialJuiceStreamEnabled: true,
   newsSchwabEnabled: true,
   isRefreshing: true,
   isHoldingsRefreshing: true,
@@ -18923,7 +20180,7 @@ const normalizeSettings = input => {
   next.newsYahooMacroRefreshInterval = normalizePositiveInt(next.newsYahooMacroRefreshInterval, defaultSettings.newsYahooMacroRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.yahooMacroMs);
   next.newsYahooSymbolRefreshInterval = normalizePositiveInt(next.newsYahooSymbolRefreshInterval, defaultSettings.newsYahooSymbolRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs);
   next.newsBarronsRefreshInterval = normalizePositiveInt(next.newsBarronsRefreshInterval, defaultSettings.newsBarronsRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs);
-  next.newsFinancialJuiceRefreshInterval = normalizePositiveInt(next.newsFinancialJuiceRefreshInterval, defaultSettings.newsFinancialJuiceRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs);
+  next.newsFinancialJuiceRssRefreshInterval = normalizePositiveInt(next.newsFinancialJuiceRssRefreshInterval, defaultSettings.newsFinancialJuiceRssRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs);
   next.newsSchwabRefreshInterval = normalizePositiveInt(next.newsSchwabRefreshInterval, defaultSettings.newsSchwabRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs);
   next.holdingsTableViewModes = normalizeHoldingsTableViewModes(next.holdingsTableViewModes);
   next.holdingsTableActiveViewModeId = normalizeHoldingsTableActiveViewModeId(next.holdingsTableActiveViewModeId, next.holdingsTableViewModes);
@@ -21031,6 +22288,338 @@ function formatTimeAgo(isoString, options = {}) {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+;// ./src/frontend/news_page/shared/newsConstants.ts
+// ── Source Colors (visual — stays in frontend) ─────────────────────────────
+// Saturated brand backgrounds use 0.10 alpha and read on both themes.
+// The neutral "press" tag uses the muted tone token so it remains visible
+// against the dark canvas (a flat 0.10 gray tint disappears on dark bg).
+
+const SOURCE_COLORS = {
+  yahoo: {
+    bg: "rgba(103, 58, 183, 0.10)",
+    text: "#673AB7"
+  },
+  barrons: {
+    bg: "rgba(0, 122, 255, 0.10)",
+    text: "#007AFF"
+  },
+  dowjones: {
+    bg: "rgba(0, 150, 136, 0.10)",
+    text: "#009688"
+  },
+  press: {
+    bg: "var(--ax-tone-muted-soft-bg)",
+    text: "#8E8E93"
+  },
+  financialjuice: {
+    bg: "rgba(230, 81, 0, 0.10)",
+    text: "#E65100"
+  },
+  schwab: {
+    bg: "rgba(0, 114, 206, 0.10)",
+    text: "#0072CE"
+  }
+};
+
+/**
+ * Deterministic hash-based color for a provider name. Same name always
+ * yields the same color across renders; different names land on different
+ * hues. Fixed saturation/lightness keeps the palette visually coherent
+ * with the curated primary-source palette above and readable on the dark
+ * canvas. Use this so we don't need a hard-coded list of every outlet FJ /
+ * Yahoo / Barron's might surface.
+ */
+function providerBadgeColor(name) {
+  // djb2-ish — fast, well-distributed enough for short publisher names.
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) {
+    h = (h << 5) + h + name.charCodeAt(i) | 0;
+  }
+  const hue = Math.abs(h) % 360;
+  return {
+    bg: `hsla(${hue}, 60%, 50%, 0.12)`,
+    text: `hsl(${hue}, 65%, 65%)`
+  };
+}
+function sourceColor(type) {
+  // Barron's API splits its feed into three sub-channels (`barrons`,
+  // `dowjones`, `press`) but UX-wise they're all "Barron's content" —
+  // collapse the color so the primary badge looks identical across
+  // them. The actual publisher lives on the secondary `provider` badge.
+  const normalized = type === "dowjones" || type === "press" ? "barrons" : type;
+  return SOURCE_COLORS[normalized] ?? {
+    bg: "var(--ax-tone-muted-soft-bg)",
+    text: "var(--ax-fg-2)"
+  };
+}
+
+// ── Filter pills (shared between NewsToolbar and NewsPanel) ────────────────
+
+const NEWS_FILTER_PILLS = [{
+  label: "All",
+  value: "all"
+}, {
+  label: "Yahoo",
+  value: "yahoo"
+}, {
+  label: "Barron's",
+  value: "barrons"
+}, {
+  label: "FJ",
+  value: "financialjuice"
+}, {
+  label: "Schwab",
+  value: "schwab"
+}];
+
+// ── AI Placeholder ─────────────────────────────────────────────────────────
+
+const SUMMARY_PLACEHOLDER = 'Run "Summarize All" or "Summarize New" to generate AI output for the current filter.';
+;// ./src/frontend/news_page/components/newsCard.ts
+
+
+
+
+
+
+// ── Density tokens ─────────────────────────────────────────────────────────
+//
+// One card renderer for both the news page (full) and the snapshot panel
+// (compact). Density controls padding, font sizing and how title / summary
+// overflow; the rest (badges, hover, click) stays identical so any future
+// fix lands in one place.
+
+/** How a multi-line text region collapses when its content is too long. */
+
+const DENSITY = {
+  full: {
+    padding: "11px 14px",
+    gap: "6px",
+    radius: "var(--ax-radius-lg)",
+    titleFontSize: "13px",
+    titleWeightNormal: "600",
+    titleOverflow: {
+      kind: "wrap"
+    },
+    summaryFontSize: "11px",
+    summaryOverflow: {
+      kind: "slice",
+      max: 160
+    },
+    metaFontSize: "11px",
+    urlArrowFontSize: "13px",
+    headlineBorderWidth: "3px"
+  },
+  compact: {
+    padding: "6px 10px",
+    gap: "4px",
+    radius: "var(--ax-radius-md)",
+    titleFontSize: "12px",
+    titleWeightNormal: "500",
+    titleOverflow: {
+      kind: "clamp",
+      lines: 2
+    },
+    summaryFontSize: "11px",
+    summaryOverflow: {
+      kind: "clamp",
+      lines: 2
+    },
+    metaFontSize: "10px",
+    urlArrowFontSize: "11px",
+    headlineBorderWidth: "2px"
+  }
+};
+
+// ── Colors ────────────────────────────────────────────────────────────────
+//
+// Headline tint stays hardcoded (not bound to a CSS var) so the alpha layer
+// composites identically on both light and dark themes.
+
+const HEADLINE_BG = "rgba(215, 129, 0, 0.04)";
+const HEADLINE_BG_HOVER = "rgba(215, 129, 0, 0.08)";
+const DEFAULT_BG = "var(--ax-glass-2-bg)";
+const DEFAULT_BG_HOVER = "var(--ax-bg-card)";
+
+// ── Overflow helpers ──────────────────────────────────────────────────────
+
+function overflowCss(overflow) {
+  if (overflow.kind !== "clamp") return "";
+  return " display: -webkit-box; -webkit-box-orient: vertical;" + ` -webkit-line-clamp: ${overflow.lines}; overflow: hidden;`;
+}
+function applyOverflowText(text, overflow) {
+  if (overflow.kind !== "slice") return text;
+  const preview = text.slice(0, overflow.max);
+  return preview.length < text.length ? preview + "..." : preview;
+}
+
+// ── Badges ────────────────────────────────────────────────────────────────
+//
+// All news pills share the same geometry — only color / weight /
+// letter-spacing change. Centralizing keeps shape adjustments to one edit.
+
+function pillBadge(p) {
+  return createElement_ui_createElement("span", {
+    text: p.text,
+    styleString: `font-size: ${p.fontSize}; font-weight: ${p.fontWeight};` + ` padding: ${p.padding ?? "1px 6px"};` + ` border-radius: ${p.radius ?? "4px"};` + ` background: ${p.bg}; color: ${p.color}; white-space: nowrap;` + (p.letterSpacing ? ` letter-spacing: ${p.letterSpacing};` : "")
+  });
+}
+function sourceBadge(sourceType, source) {
+  const c = sourceColor(sourceType);
+  return pillBadge({
+    text: source,
+    bg: c.bg,
+    color: c.text,
+    fontSize: "10px",
+    fontWeight: "600"
+  });
+}
+function providerBadge(provider) {
+  // Hash-based color so unknown outlets still get a stable, distinguishable
+  // hue without us maintaining a hard-coded palette.
+  const c = providerBadgeColor(provider);
+  return createElement_ui_createElement("span", {
+    text: provider,
+    styleString: `font-size: 10px; font-weight: 500; padding: 1px 6px; border-radius: 4px;` + ` background: ${c.bg}; color: ${c.text}; white-space: nowrap;`
+  });
+}
+function newBadge() {
+  return pillBadge({
+    text: "NEW",
+    bg: DS_COLORS.bgNegative,
+    color: DS_COLORS.raw.negative,
+    fontSize: "9px",
+    fontWeight: "700",
+    padding: "1px 5px",
+    letterSpacing: "0.3px"
+  });
+}
+function headlineBadge() {
+  return pillBadge({
+    text: "HEADLINE",
+    bg: DS_COLORS.bgNeutral,
+    color: DS_COLORS.raw.neutral,
+    fontSize: "9px",
+    fontWeight: "700",
+    padding: "1px 5px",
+    letterSpacing: "0.3px"
+  });
+}
+function tagBadge(tag) {
+  return pillBadge({
+    text: tag,
+    bg: "rgba(0, 122, 255, 0.08)",
+    color: "#007AFF",
+    fontSize: "9px",
+    fontWeight: "600",
+    padding: "1px 5px"
+  });
+}
+function symbolBadge(symbol) {
+  return pillBadge({
+    text: symbol,
+    bg: "var(--ax-bg-glass-inset)",
+    color: "var(--ax-fg-2)",
+    fontSize: "var(--ax-fs-xs)",
+    fontWeight: "var(--ax-fw-semibold)",
+    padding: "1px 5px",
+    radius: "var(--ax-radius-xs)"
+  });
+}
+
+// ── News Card ─────────────────────────────────────────────────────────────
+
+function renderNewsCard(item, options) {
+  const t = DENSITY[options?.density ?? "full"];
+  const bg = item.isHeadline ? {
+    idle: HEADLINE_BG,
+    hover: HEADLINE_BG_HOVER
+  } : {
+    idle: DEFAULT_BG,
+    hover: DEFAULT_BG_HOVER
+  };
+  const headlineRail = item.isHeadline ? ` border-left: ${t.headlineBorderWidth} solid ${DS_COLORS.raw.neutral};` : "";
+  const card = createElement_ui_createElement("div", {
+    styleString: `border: 1px solid var(--ax-border); border-radius: ${t.radius};` + ` padding: ${t.padding}; background: ${bg.idle};` + ` display: flex; flex-direction: column; gap: ${t.gap};` + " transition: background 0.15s;" + headlineRail + (item.url ? " cursor: pointer;" : "")
+  });
+  if (item.url) {
+    card.addEventListener("mouseenter", () => {
+      card.style.background = bg.hover;
+    });
+    card.addEventListener("mouseleave", () => {
+      card.style.background = bg.idle;
+    });
+    card.addEventListener("click", () => window.open(item.url, "_blank"));
+  }
+
+  // ── Title row ───────────────────────────────────────────────────────────
+  const titleRow = createElement_ui_createElement("div", {
+    styleString: "display: flex; align-items: flex-start; gap: 6px;"
+  });
+  const titleWeight = item.isHeadline ? "800" : t.titleWeightNormal;
+  const titleColor = item.isHeadline ? DS_COLORS.negative : "var(--ios-text-primary)";
+  titleRow.appendChild(createElement_ui_createElement("span", {
+    text: item.title,
+    styleString: `font-size: ${t.titleFontSize}; font-weight: ${titleWeight};` + ` color: ${titleColor}; flex: 1; min-width: 0; line-height: 1.4;` + overflowCss(t.titleOverflow)
+  }));
+  let newBadgeEl = null;
+  if (item.isNew) {
+    newBadgeEl = newBadge();
+    titleRow.appendChild(newBadgeEl);
+  }
+  if (item.url) {
+    titleRow.appendChild(createElement_ui_createElement("span", {
+      text: "↗",
+      styleString: `font-size: ${t.urlArrowFontSize}; color: var(--ios-blue);` + " flex-shrink: 0; margin-top: 1px;"
+    }));
+  }
+  card.appendChild(titleRow);
+
+  // Hover-to-mark-read. Kept as a separate `once: true` listener so the
+  // bg-hover handler keeps firing on subsequent hovers after the item is
+  // marked read.
+  if (item.isNew && options?.onMarkRead) {
+    const onRead = options.onMarkRead;
+    card.addEventListener("mouseenter", () => {
+      if (newBadgeEl) {
+        newBadgeEl.remove();
+        newBadgeEl = null;
+      }
+      item.isNew = false;
+      onRead(item.id);
+    }, {
+      once: true
+    });
+  }
+
+  // ── Meta row ────────────────────────────────────────────────────────────
+  const metaRow = createElement_ui_createElement("div", {
+    styleString: "display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"
+  });
+  metaRow.appendChild(sourceBadge(item.sourceType, item.source));
+  if (item.provider) metaRow.appendChild(providerBadge(item.provider));
+  if (item.isHeadline) metaRow.appendChild(headlineBadge());
+  metaRow.appendChild(createElement_ui_createElement("span", {
+    text: formatTimeAgo(item.publishedAt),
+    styleString: `font-size: ${t.metaFontSize}; color: var(--ios-text-secondary);`
+  }));
+  for (const symbol of getNewsItemSymbols(item)) {
+    metaRow.appendChild(symbolBadge(symbol));
+  }
+  for (const tag of item.tags ?? []) {
+    metaRow.appendChild(tagBadge(tag));
+  }
+  card.appendChild(metaRow);
+
+  // ── Summary ─────────────────────────────────────────────────────────────
+  if (item.summary && item.summary !== item.title) {
+    card.appendChild(createElement_ui_createElement("div", {
+      text: applyOverflowText(item.summary, t.summaryOverflow),
+      styleString: `font-size: ${t.summaryFontSize}; color: var(--ios-text-secondary);` + " line-height: 1.4;" + overflowCss(t.summaryOverflow)
+    }));
+  }
+  return card;
+}
 ;// ./src/frontend/snapshot/snapshotNewsSection.ts
 
 
@@ -21038,7 +22627,9 @@ function formatTimeAgo(isoString, options = {}) {
 
 
 const SNAPSHOT_NEWS_MAX_ITEMS = 8;
-const NEWS_ACTION_BUTTON_STYLE = "padding:4px 8px; border:1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);" + " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;";
+const ACTION_BUTTON_STYLE = "padding:4px 8px; border:1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);" + " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;";
+const ACTION_BUTTON_IDLE_BG = "var(--ax-bg-glass-inset)";
+const ACTION_BUTTON_HOVER_BG = "var(--ax-bg-row-hover)";
 function bindHoverBackground(el, idle, hover) {
   el.addEventListener("mouseenter", () => {
     el.style.background = hover;
@@ -21047,10 +22638,33 @@ function bindHoverBackground(el, idle, hover) {
     el.style.background = idle;
   });
 }
+function buildActionButton(text, title) {
+  const btn = createElement_ui_createElement("button", {
+    text,
+    props: title ? {
+      type: "button",
+      title
+    } : {
+      type: "button"
+    },
+    styleString: ACTION_BUTTON_STYLE
+  });
+  bindHoverBackground(btn, ACTION_BUTTON_IDLE_BG, ACTION_BUTTON_HOVER_BG);
+  return btn;
+}
+function buildCountPill(bg, color, options = {}) {
+  const prefix = options.hidden ? "display:none; " : "";
+  return createElement_ui_createElement("span", {
+    text: "",
+    styleString: `${prefix}padding:1px 6px; border-radius:999px;` + ` background:${bg}; color:${color};` + " font-size:10px; font-weight:700;"
+  });
+}
 function createSnapshotNewsSection(openNewsPage) {
   const section = createElement_ui_createElement("div", {
     styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` + ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` + " border-top: 1px solid var(--ax-border);"
   });
+
+  // ── Header ──────────────────────────────────────────────────────────────
   const headerRow = createElement_ui_createElement("div", {
     styleString: "display:flex; align-items:center; gap:6px;"
   });
@@ -21058,32 +22672,14 @@ function createSnapshotNewsSection(openNewsPage) {
     text: "News",
     styleString: DS_TYPOGRAPHY.heading
   });
-  const newCountEl = createElement_ui_createElement("span", {
-    text: "",
-    styleString: "display:none; padding:1px 6px; border-radius:999px;" + ` background:${DS_COLORS.bgNegative}; color:${DS_COLORS.raw.negative};` + " font-size:10px; font-weight:700;"
+  const newCountEl = buildCountPill(DS_COLORS.bgNegative, DS_COLORS.raw.negative, {
+    hidden: true
   });
-  const countEl = createElement_ui_createElement("span", {
-    text: "0 shown",
-    styleString: "padding:1px 6px; border-radius:999px;" + ` background:${DS_COLORS.bgInfo}; color:${DS_COLORS.raw.info};` + " font-size:10px; font-weight:700;"
-  });
+  const countEl = buildCountPill(DS_COLORS.bgInfo, DS_COLORS.raw.info);
+  countEl.textContent = "0 shown";
   let isCollapsed = false;
-  const collapseBtn = createElement_ui_createElement("button", {
-    text: "Collapse",
-    props: {
-      type: "button",
-      title: "Collapse news list"
-    },
-    styleString: NEWS_ACTION_BUTTON_STYLE
-  });
-  bindHoverBackground(collapseBtn, "var(--ax-bg-glass-inset)", "var(--ax-bg-row-hover)");
-  const markAllReadBtn = createElement_ui_createElement("button", {
-    text: "Mark All Read",
-    props: {
-      type: "button"
-    },
-    styleString: NEWS_ACTION_BUTTON_STYLE
-  });
-  bindHoverBackground(markAllReadBtn, "var(--ax-bg-glass-inset)", "var(--ax-bg-row-hover)");
+  const collapseBtn = buildActionButton("Collapse", "Collapse news list");
+  const markAllReadBtn = buildActionButton("Mark All Read");
   markAllReadBtn.addEventListener("click", () => {
     void newsService.markAllRead();
   });
@@ -21107,6 +22703,8 @@ function createSnapshotNewsSection(openNewsPage) {
     openBtn.addEventListener("click", () => openNewsPage());
     headerRow.appendChild(openBtn);
   }
+
+  // ── Body ────────────────────────────────────────────────────────────────
   const listWrap = createElement_ui_createElement("div", {
     styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};`
   });
@@ -21130,101 +22728,37 @@ function createSnapshotNewsSection(openNewsPage) {
       newCountEl.style.display = "none";
     }
   };
+  const renderEmptyState = () => {
+    listWrap.appendChild(createElement_ui_createElement("div", {
+      text: "No recent news.",
+      styleString: DS_TYPOGRAPHY.caption + ` padding:${DS_SPACING.md} ${DS_SPACING.sm}; text-align:center;` + " border:1px dashed var(--ax-border-strong); border-radius: var(--ax-radius-md);"
+    }));
+  };
   const render = items => {
     const sorted = sortNewsItemsNewestFirst(items);
-    const display = sorted.slice(0, SNAPSHOT_NEWS_MAX_ITEMS);
+    // Pin unread headlines so high-priority items survive the
+    // SNAPSHOT_NEWS_MAX_ITEMS slice; ordering falls back to chronological
+    // once the user marks them read.
+    const display = pinUnreadHeadlines(sorted).slice(0, SNAPSHOT_NEWS_MAX_ITEMS);
     let newCount = display.filter(i => i.isNew).length;
     updateHeader(display.length, newCount);
     listWrap.innerHTML = "";
     if (display.length === 0) {
-      listWrap.appendChild(createElement_ui_createElement("div", {
-        text: "No recent news.",
-        styleString: DS_TYPOGRAPHY.caption + ` padding:${DS_SPACING.md} ${DS_SPACING.sm}; text-align:center;` + " border:1px dashed var(--ax-border-strong); border-radius: var(--ax-radius-md);"
-      }));
+      renderEmptyState();
+      syncCollapsedState();
       return;
     }
     for (const item of display) {
-      const sourceLabel = NEWS_SOURCE_LABELS[item.sourceType] ?? item.source;
-      const sourceType = String(item.sourceType).toLowerCase();
-      const tone = sourceType === "financialjuice" ? {
-        text: DS_COLORS.raw.neutral,
-        bg: DS_COLORS.bgNeutral
-      } : sourceType === "barrons" || sourceType === "dowjones" || sourceType === "press" ? {
-        text: DS_COLORS.raw.positive,
-        bg: DS_COLORS.bgPositive
-      } : {
-        text: DS_COLORS.raw.info,
-        bg: DS_COLORS.bgInfo
-      };
-      const row = createElement_ui_createElement("div", {
-        styleString: theme_DS_COMPONENTS.newsItem + ` padding:${DS_SPACING.sm} ${DS_SPACING.md};` + " border:1px solid var(--ax-border-subtle);" + " transition:background .15s, border-color .15s, box-shadow .15s;" + (item.url ? " cursor:pointer;" : "")
-      });
-      const metaRow = createElement_ui_createElement("div", {
-        styleString: "display:flex; align-items:center; gap:6px; min-width:0;"
-      });
-      metaRow.appendChild(createElement_ui_createElement("span", {
-        text: sourceLabel,
-        styleString: "font-size:9px; font-weight:700; letter-spacing:0.25px; text-transform:uppercase;" + ` color:${tone.text}; background:${tone.bg}; border-radius:999px;` + " padding:1px 6px; line-height:1.4;"
-      }));
-      let newMarkEl = null;
-      if (item.isNew) {
-        newMarkEl = createElement_ui_createElement("span", {
-          text: "NEW",
-          styleString: "font-size:9px; font-weight:700; letter-spacing:0.2px; text-transform:uppercase;" + ` color:${DS_COLORS.raw.negative};`
-        });
-        metaRow.appendChild(newMarkEl);
-      }
-      metaRow.appendChild(createElement_ui_createElement("div", {
-        styleString: "flex:1;"
-      }));
-      metaRow.appendChild(createElement_ui_createElement("span", {
-        text: formatTimeAgo(item.publishedAt),
-        styleString: DS_TYPOGRAPHY.caption
-      }));
-      const title = createElement_ui_createElement("div", {
-        text: item.title,
-        styleString: "font-size:12px; color:var(--ios-text-primary); line-height:1.35; font-weight:500;" + " display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;"
-      });
-      row.appendChild(metaRow);
-      row.appendChild(title);
-      if (item.summary) {
-        row.appendChild(createElement_ui_createElement("div", {
-          text: item.summary,
-          styleString: DS_TYPOGRAPHY.caption + " line-height:1.35; opacity:0.92;" + " display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;"
-        }));
-      }
-      if (item.url) {
-        row.addEventListener("mouseenter", () => {
-          row.style.background = "var(--ax-bg-row-hover)";
-          row.style.borderColor = "var(--ax-tone-info-border)";
-          row.style.boxShadow = "var(--ax-shadow-sm)";
-        });
-        row.addEventListener("mouseleave", () => {
-          row.style.background = "";
-          row.style.borderColor = "var(--ax-border-subtle)";
-          row.style.boxShadow = "";
-        });
-        row.addEventListener("click", () => {
-          window.open(item.url, "_blank");
-        });
-      }
-      if (item.isNew) {
-        row.addEventListener("mouseenter", () => {
-          if (newMarkEl) {
-            newMarkEl.remove();
-            newMarkEl = null;
-          }
-          item.isNew = false;
+      listWrap.appendChild(renderNewsCard(item, {
+        density: "compact",
+        onMarkRead: id => {
           if (newCount > 0) {
             newCount -= 1;
             updateHeader(display.length, newCount);
           }
-          void newsService.markRead([item.id]);
-        }, {
-          once: true
-        });
-      }
-      listWrap.appendChild(row);
+          void newsService.markRead([id]);
+        }
+      }));
     }
     syncCollapsedState();
   };
@@ -27905,7 +29439,7 @@ const TABLE_CSS_STYLES = `
     left: 0;
     z-index: var(--ax-z-table-sticky-header);
     text-align: left;
-    background-color: var(--ax-bg-table-head);
+    background-color: inherit;
     border-right: 1px solid var(--ax-border-subtle);
 }
 
@@ -27926,7 +29460,7 @@ const TABLE_CSS_STYLES = `
     z-index: var(--ax-z-table-sticky-header);
     text-align: center;
     cursor: default;
-    background-color: var(--ax-bg-table-head);
+    background-color: inherit;
     border-left: 1px solid var(--ax-border-subtle);
 }
 
@@ -28040,17 +29574,12 @@ const TABLE_CSS_STYLES = `
     background-color: var(--ax-bg-subtle);
 }
 
-/* Group rows: layer the translucent group tint over the opaque table base so
-   the sticky cell stays fully opaque (otherwise scrolled-under data columns
-   bleed through). Same approach for major-group. */
 .table-row--group .table-cell-sticky {
-    background-color: var(--ax-bg-table);
-    background-image: linear-gradient(var(--ax-bg-group), var(--ax-bg-group));
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group .table-cell-sticky {
-    background-color: var(--ax-bg-table);
-    background-image: linear-gradient(var(--ax-bg-group-strong), var(--ax-bg-group-strong));
+    background-color: var(--ax-bg-group-strong);
 }
 
 .table-cell-sticky::after {
@@ -28077,13 +29606,11 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-row--group .table-cell-sticky-right {
-    background-color: var(--ax-bg-table);
-    background-image: linear-gradient(var(--ax-bg-group), var(--ax-bg-group));
+    background-color: var(--ax-bg-group);
 }
 
 .table-row--major-group .table-cell-sticky-right {
-    background-color: var(--ax-bg-table);
-    background-image: linear-gradient(var(--ax-bg-group-strong), var(--ax-bg-group-strong));
+    background-color: var(--ax-bg-group-strong);
 }
 
 .table-cell-sticky-right::before {
@@ -29942,192 +31469,6 @@ function createPillGroup(options, defaultValue, onChange, groupLabel) {
       }
     }
   };
-}
-;// ./src/frontend/news_page/shared/newsConstants.ts
-// ── Source Colors (visual — stays in frontend) ─────────────────────────────
-// Saturated brand backgrounds use 0.10 alpha and read on both themes.
-// The neutral "press" tag uses the muted tone token so it remains visible
-// against the dark canvas (a flat 0.10 gray tint disappears on dark bg).
-
-const SOURCE_COLORS = {
-  yahoo: {
-    bg: "rgba(103, 58, 183, 0.10)",
-    text: "#673AB7"
-  },
-  barrons: {
-    bg: "rgba(0, 122, 255, 0.10)",
-    text: "#007AFF"
-  },
-  dowjones: {
-    bg: "rgba(0, 150, 136, 0.10)",
-    text: "#009688"
-  },
-  press: {
-    bg: "var(--ax-tone-muted-soft-bg)",
-    text: "#8E8E93"
-  },
-  financialjuice: {
-    bg: "rgba(230, 81, 0, 0.10)",
-    text: "#E65100"
-  },
-  schwab: {
-    bg: "rgba(0, 114, 206, 0.10)",
-    text: "#0072CE"
-  }
-};
-function sourceColor(type) {
-  return SOURCE_COLORS[type] ?? {
-    bg: "var(--ax-tone-muted-soft-bg)",
-    text: "var(--ax-fg-2)"
-  };
-}
-
-// ── Filter pills (shared between NewsToolbar and NewsPanel) ────────────────
-
-const NEWS_FILTER_PILLS = [{
-  label: "All",
-  value: "all"
-}, {
-  label: "Yahoo",
-  value: "yahoo"
-}, {
-  label: "Barron's",
-  value: "barrons"
-}, {
-  label: "FJ",
-  value: "financialjuice"
-}, {
-  label: "Schwab",
-  value: "schwab"
-}];
-
-// ── AI Placeholder ─────────────────────────────────────────────────────────
-
-const SUMMARY_PLACEHOLDER = 'Run "Summarize All" or "Summarize New" to generate AI output for the current filter.';
-;// ./src/frontend/news_page/components/newsCard.ts
-
-
-
-
-
-
-// ── Badges ──────────────────────────────────────────────────────────────────
-
-function sourceBadge(sourceType, source) {
-  const c = sourceColor(sourceType);
-  return createElement_ui_createElement("span", {
-    text: source,
-    styleString: `font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;` + ` background: ${c.bg}; color: ${c.text}; white-space: nowrap;`
-  });
-}
-function newBadge() {
-  return createElement_ui_createElement("span", {
-    text: "NEW",
-    styleString: "font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px;" + ` background: ${DS_COLORS.bgNegative}; color: ${DS_COLORS.raw.negative};` + " letter-spacing: 0.3px;"
-  });
-}
-function headlineBadge() {
-  return createElement_ui_createElement("span", {
-    text: "HEADLINE",
-    styleString: "font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px;" + ` background: ${DS_COLORS.bgNeutral}; color: ${DS_COLORS.raw.neutral};` + " letter-spacing: 0.3px;"
-  });
-}
-function tagBadge(tag) {
-  return createElement_ui_createElement("span", {
-    text: tag,
-    styleString: "font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 4px;" + " background: rgba(0, 122, 255, 0.08); color: #007AFF;" + " white-space: nowrap;"
-  });
-}
-
-// ── News Card ───────────────────────────────────────────────────────────────
-
-function renderNewsCard(item, options) {
-  const hlBorder = item.isHeadline ? ` border-left: 3px solid ${DS_COLORS.raw.neutral};` : "";
-  const hlBg = item.isHeadline ? " background: rgba(215, 129, 0, 0.04);" : " background: var(--ax-glass-2-bg);";
-  const card = createElement_ui_createElement("div", {
-    styleString: "border: 1px solid var(--ax-border); border-radius: var(--ax-radius-lg); padding: 11px 14px;" + hlBg + " display: flex; flex-direction: column; gap: 6px;" + " transition: background 0.15s;" + hlBorder + (item.url ? " cursor: pointer;" : "")
-  });
-  const defaultBg = item.isHeadline ? "rgba(215, 129, 0, 0.04)" : "var(--ax-glass-2-bg)";
-  const hoverBg = item.isHeadline ? "rgba(215, 129, 0, 0.08)" : "var(--ax-bg-card)";
-  if (item.url) {
-    card.addEventListener("mouseenter", () => {
-      card.style.background = hoverBg;
-    });
-    card.addEventListener("mouseleave", () => {
-      card.style.background = defaultBg;
-    });
-    card.addEventListener("click", () => window.open(item.url, "_blank"));
-  }
-
-  // Title row
-  const titleRow = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: flex-start; gap: 6px;"
-  });
-  titleRow.appendChild(createElement_ui_createElement("span", {
-    text: item.title,
-    styleString: "font-size: 13px; font-weight: 600; color: var(--ios-text-primary); flex: 1; line-height: 1.4;"
-  }));
-  let newBadgeEl = null;
-  if (item.isNew) {
-    newBadgeEl = newBadge();
-    titleRow.appendChild(newBadgeEl);
-  }
-  if (item.url) {
-    titleRow.appendChild(createElement_ui_createElement("span", {
-      text: "\u2197",
-      styleString: "font-size: 13px; color: var(--ios-blue); flex-shrink: 0; margin-top: 1px;"
-    }));
-  }
-  card.appendChild(titleRow);
-
-  // Hover-to-mark-read
-  if (item.isNew && options?.onMarkRead) {
-    const onRead = options.onMarkRead;
-    card.addEventListener("mouseenter", () => {
-      if (newBadgeEl) {
-        newBadgeEl.remove();
-        newBadgeEl = null;
-      }
-      item.isNew = false;
-      onRead(item.id);
-    }, {
-      once: true
-    });
-  }
-
-  // Meta row
-  const metaRow = createElement_ui_createElement("div", {
-    styleString: "display: flex; align-items: center; gap: 6px; flex-wrap: wrap;"
-  });
-  metaRow.appendChild(sourceBadge(item.sourceType, item.source));
-  if (item.isHeadline) metaRow.appendChild(headlineBadge());
-  metaRow.appendChild(createElement_ui_createElement("span", {
-    text: formatTimeAgo(item.publishedAt),
-    styleString: "font-size: 11px; color: var(--ios-text-secondary);"
-  }));
-  const symbols = getNewsItemSymbols(item);
-  for (const symbol of symbols) {
-    metaRow.appendChild(createElement_ui_createElement("span", {
-      text: symbol,
-      styleString: "font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); padding: 1px 5px; border-radius: var(--ax-radius-xs);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);"
-    }));
-  }
-  if (item.tags && item.tags.length > 0) {
-    for (const tag of item.tags) {
-      metaRow.appendChild(tagBadge(tag));
-    }
-  }
-  card.appendChild(metaRow);
-
-  // Summary
-  if (item.summary && item.summary !== item.title) {
-    const preview = item.summary.slice(0, 160);
-    card.appendChild(createElement_ui_createElement("div", {
-      text: preview.length < item.summary.length ? preview + "..." : preview,
-      styleString: "font-size: 11px; color: var(--ios-text-secondary); line-height: 1.4;"
-    }));
-  }
-  return card;
 }
 ;// ./src/frontend/news_page/components/toolbarButton.ts
 
@@ -74774,13 +76115,27 @@ function createNewsSettingsPanel(opts) {
     });
     intervalInput.setDisabled(!toggle.isOn());
   };
+  const createNewsToggleOnlyRow = (body, label, enableKey, paramLabel) => {
+    const toggle = createSettingsToggleButton(settings[enableKey] !== false, next => {
+      setBooleanSetting(enableKey, next);
+    });
+    appendSettingsMatrixRow({
+      body,
+      label,
+      toggleEl: toggle.element,
+      paramLabel,
+      controlEl: createElement_ui_createElement("span")
+    });
+  };
 
   // -- Data Refresh --------------------------------------------------------
   const newsRefreshSection = createSettingsSectionCard("Data Refresh");
   createNewsSourceRow(newsRefreshSection.body, "Yahoo Macro", "newsYahooMacroEnabled", "newsYahooMacroRefreshInterval", 120_000);
   createNewsSourceRow(newsRefreshSection.body, "Yahoo Symbol", "newsYahooSymbolEnabled", "newsYahooSymbolRefreshInterval", 120_000);
   createNewsSourceRow(newsRefreshSection.body, "Barron's", "newsBarronsEnabled", "newsBarronsRefreshInterval", 180_000);
-  createNewsSourceRow(newsRefreshSection.body, "FinancialJuice", "newsFinancialJuiceEnabled", "newsFinancialJuiceRefreshInterval", 45_000);
+  createNewsSourceRow(newsRefreshSection.body, "FJ RSS", "newsFinancialJuiceRssEnabled", "newsFinancialJuiceRssRefreshInterval", 45_000);
+  createNewsToggleOnlyRow(newsRefreshSection.body, "FJ Stream", "newsFinancialJuiceStreamEnabled", "realtime");
+  createNewsSourceRow(newsRefreshSection.body, "Schwab", "newsSchwabEnabled", "newsSchwabRefreshInterval", 120_000);
   panel.appendChild(newsRefreshSection.section);
   if (!onUpdateSettings) {
     panel.appendChild(createElement_ui_createElement("span", {
@@ -74877,6 +76232,7 @@ function createNewsSettingsPanel(opts) {
 
 
 
+
 function buildNewsToolbar(deps) {
   const cleanups = [];
   const toolbar = createElement_ui_createElement("div", {
@@ -74924,9 +76280,13 @@ function buildNewsToolbar(deps) {
   markSelectedReadBtn.style.opacity = "0.55";
   markSelectedReadBtn.style.cursor = "not-allowed";
   toolbar.appendChild(markSelectedReadBtn);
-  const refreshBtn = toolbarBtn("Refresh", "\u21BB");
+  const refreshWrap = createElement_ui_createElement("div", {
+    styleString: "position: relative; display: inline-block; flex-shrink: 0;"
+  });
+  const refreshBtn = toolbarBtn("Refresh \u25BE", "\u21BB");
   const refreshBtnIdleHtml = refreshBtn.innerHTML;
   let refreshBtnResetTimer = null;
+  let menuOpen = false;
   const setRefreshButtonState = state => {
     if (state === "idle") {
       refreshBtn.innerHTML = refreshBtnIdleHtml;
@@ -74950,7 +76310,7 @@ function buildNewsToolbar(deps) {
     refreshBtn.disabled = false;
     refreshBtn.style.opacity = "1";
   };
-  const runManualRefresh = async () => {
+  const runManualRefresh = async target => {
     if (refreshBtn.disabled) return;
     if (refreshBtnResetTimer) {
       clearTimeout(refreshBtnResetTimer);
@@ -74958,7 +76318,7 @@ function buildNewsToolbar(deps) {
     }
     setRefreshButtonState("loading");
     try {
-      await deps.onRefresh();
+      await deps.onRefresh(target);
       setRefreshButtonState("done");
     } catch {
       setRefreshButtonState("error");
@@ -74969,14 +76329,88 @@ function buildNewsToolbar(deps) {
       }, 1200);
     }
   };
-  refreshBtn.addEventListener("click", () => void runManualRefresh());
+  const refreshMenu = createElement_ui_createElement("div", {
+    styleString: "position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;" + " min-width: 180px; padding: 4px 0; display: none; flex-direction: column;" + " background: var(--ax-bg-card); border: 1px solid var(--ax-border);" + " border-radius: var(--ax-radius-md); box-shadow: var(--ax-shadow-lg);" + " font-size: var(--ax-fs-sm);"
+  });
+  const setMenuOpen = open => {
+    menuOpen = open;
+    refreshMenu.style.display = open ? "flex" : "none";
+  };
+  const buildMenuItem = (label, onPick, opts = {}) => {
+    const item = createElement_ui_createElement("button", {
+      props: {
+        type: "button"
+      },
+      styleString: "background: transparent; border: 0; padding: 6px 12px; text-align: left;" + " font-size: var(--ax-fs-sm); cursor: pointer; color: var(--ax-fg);" + (opts.separator ? " border-top: 1px solid var(--ax-border-subtle);" : "")
+    });
+    item.textContent = label;
+    if (opts.disabled) {
+      item.disabled = true;
+      item.style.opacity = "0.45";
+      item.style.cursor = "not-allowed";
+    } else {
+      item.addEventListener("mouseenter", () => {
+        item.style.background = "var(--ax-bg-chip)";
+      });
+      item.addEventListener("mouseleave", () => {
+        item.style.background = "transparent";
+      });
+      item.addEventListener("click", e => {
+        e.stopPropagation();
+        setMenuOpen(false);
+        onPick();
+      });
+    }
+    return item;
+  };
+  const rebuildMenu = () => {
+    refreshMenu.innerHTML = "";
+    const enabled = deps.getSourceEnabled();
+    const anyEnabled = NEWS_FETCH_SOURCES.some(s => enabled[s]);
+    refreshMenu.appendChild(buildMenuItem("Refresh All", () => void runManualRefresh("all"), {
+      disabled: !anyEnabled
+    }));
+    let first = true;
+    for (const source of NEWS_FETCH_SOURCES) {
+      refreshMenu.appendChild(buildMenuItem(NewsService_NEWS_SOURCE_LABELS[source], () => void runManualRefresh(source), {
+        disabled: !enabled[source],
+        separator: first
+      }));
+      first = false;
+    }
+  };
+  refreshBtn.addEventListener("click", e => {
+    e.stopPropagation();
+    if (refreshBtn.disabled) return;
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    rebuildMenu();
+    setMenuOpen(true);
+  });
+  const onDocClick = e => {
+    if (!menuOpen) return;
+    const target = e.target;
+    if (target && refreshWrap.contains(target)) return;
+    setMenuOpen(false);
+  };
+  document.addEventListener("mousedown", onDocClick);
+  const onDocKeydown = e => {
+    if (e.key === "Escape" && menuOpen) setMenuOpen(false);
+  };
+  document.addEventListener("keydown", onDocKeydown);
   cleanups.push(() => {
     if (refreshBtnResetTimer) {
       clearTimeout(refreshBtnResetTimer);
       refreshBtnResetTimer = null;
     }
+    document.removeEventListener("mousedown", onDocClick);
+    document.removeEventListener("keydown", onDocKeydown);
   });
-  toolbar.appendChild(refreshBtn);
+  refreshWrap.appendChild(refreshBtn);
+  refreshWrap.appendChild(refreshMenu);
+  toolbar.appendChild(refreshWrap);
   const copyBtn = toolbarBtn("Copy", "\uD83D\uDCCB");
   copyBtn.addEventListener("click", () => deps.onCopy());
   toolbar.appendChild(copyBtn);
@@ -75271,13 +76705,16 @@ function news_renderPage(_ctx) {
     if (searchQuery) {
       filtered = filtered.filter(i => i.title.toLowerCase().includes(searchQuery) || i.summary && i.summary.toLowerCase().includes(searchQuery));
     }
+
+    // Display order: unread first (with headlines pinned to the top of the
+    // unread bucket), then read items in chronological order.
     const timeSorted = sortNewsItemsNewestFirst(filtered);
-    const newFirst = [];
-    const oldAfter = [];
+    const unread = [];
+    const read = [];
     for (const item of timeSorted) {
-      if (item.isNew) newFirst.push(item);else oldAfter.push(item);
+      if (item.isNew) unread.push(item);else read.push(item);
     }
-    return [...newFirst, ...oldAfter];
+    return [...pinUnreadHeadlines(unread), ...read];
   };
   const getSelectedItems = () => allItems.filter(item => selectedIds.has(item.id));
   const syncSelectionValidity = () => {
@@ -75316,7 +76753,8 @@ function news_renderPage(_ctx) {
     onMarkAllRead: () => {
       void newsService.markAllRead();
     },
-    onRefresh: () => newsService.refresh(),
+    onRefresh: target => target === "all" ? newsService.refresh() : newsService.refreshSource(target),
+    getSourceEnabled: () => newsService.getSourceEnabled(),
     onCopy: () => {
       void copyWithFlash(toolbarResult.copyBtn, () => {
         const filtered = getFiltered();
@@ -82691,14 +84129,22 @@ function syncRecorderSettings(recorder, settings, defaults) {
   w.__SCHWABER_INITIALIZED__ = true;
   installLogDevTools();
   const log = logService.namespace("main");
-  const syncNewsRefreshIntervals = settings => {
+  const syncNewsSettings = settings => {
     newsService.updateRefreshIntervals({
-      yahooMacroMs: settings.newsYahooMacroEnabled === false ? 0 : settings.newsYahooMacroRefreshInterval,
-      yahooSymbolMs: settings.newsYahooSymbolEnabled === false ? 0 : settings.newsYahooSymbolRefreshInterval,
-      barronsMs: settings.newsBarronsEnabled === false ? 0 : settings.newsBarronsRefreshInterval,
-      financialJuiceMs: settings.newsFinancialJuiceEnabled === false ? 0 : settings.newsFinancialJuiceRefreshInterval,
-      schwabMs: settings.newsSchwabEnabled === false ? 0 : settings.newsSchwabRefreshInterval
+      yahooMacroMs: settings.newsYahooMacroRefreshInterval,
+      yahooSymbolMs: settings.newsYahooSymbolRefreshInterval,
+      barronsMs: settings.newsBarronsRefreshInterval,
+      financialJuiceRssMs: settings.newsFinancialJuiceRssRefreshInterval,
+      schwabMs: settings.newsSchwabRefreshInterval
     });
+    newsService.setSourceEnabled({
+      yahooMacro: settings.newsYahooMacroEnabled !== false,
+      yahooSymbol: settings.newsYahooSymbolEnabled !== false,
+      barrons: settings.newsBarronsEnabled !== false,
+      financialJuice: settings.newsFinancialJuiceRssEnabled !== false,
+      schwab: settings.newsSchwabEnabled !== false
+    });
+    newsService.setStreamerEnabled(settings.newsFinancialJuiceStreamEnabled !== false);
   };
   let renderEngine = null;
   let storage = null;
@@ -82731,7 +84177,7 @@ function syncRecorderSettings(recorder, settings, defaults) {
       }
       Object.assign(liveSettings, normalized);
       ctx.settings = liveSettings;
-      syncNewsRefreshIntervals(normalized);
+      syncNewsSettings(normalized);
       headerController?.updateSettings(newSettings);
       syncRecorderSettings(accountSnapshotRecorder, ctx.settings, defaultSettings);
       renderEngine?.updateContext({
@@ -82959,7 +84405,7 @@ function syncRecorderSettings(recorder, settings, defaults) {
       });
     }
     syncRecorderSettings(accountSnapshotRecorder, ctx.settings, defaultSettings);
-    syncNewsRefreshIntervals(ctx.settings);
+    syncNewsSettings(ctx.settings);
     renderEngine.updateContext({
       settings: ctx.settings
     });
@@ -83021,7 +84467,7 @@ function syncRecorderSettings(recorder, settings, defaults) {
           ...defaultSettings,
           ...(ctx.settings || {})
         });
-        syncNewsRefreshIntervals(ctx.settings);
+        syncNewsSettings(ctx.settings);
         syncRecorderSettings(accountSnapshotRecorder, ctx.settings, defaultSettings);
         renderEngine?.updateContext({
           settings: ctx.settings
