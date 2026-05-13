@@ -12,6 +12,7 @@
 // @connect      www.alphavantage.co
 // @connect      www.barrons.com
 // @connect      www.financialjuice.com
+// @connect      rt.financialjuice.com
 // @license      CC BY-NC-ND 4.0
 // @connect      127.0.0.1
 // ==/UserScript==
@@ -20,7 +21,7 @@
 (async () => {
     'use strict';
 
-    const DEV_URL = 'http://127.0.0.1:5500/.dist/AlexQuant.user.js';
+    const DEV_URL = 'http://127.0.0.1:5500/Dev/.dist/AlexQuant.user.js';
     const requestUrl = DEV_URL + '?t=' + Date.now();
 
     function fetchText(url) {
