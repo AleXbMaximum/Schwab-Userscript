@@ -14078,6 +14078,15 @@ const DEFAULT_NEWS_REFRESH_INTERVALS = {
   financialJuiceRssMs: 45_000,
   schwabMs: 120_000
 };
+
+/**
+ * Cold-start grace period before the news service kicks the first fetch
+ * (and starts polling + attaches the FJ streamer). The cached feed is
+ * already on screen at this point — the delay lets login, auth, and other
+ * critical init work finish before we burn bandwidth on news polls. Single
+ * value governs every news source.
+ */
+const DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS = 5_000;
 ;// ./src/backend/services/news/types.ts
 function generateNewsId(title, source) {
   let hash = 0;
@@ -14220,7 +14229,14 @@ class NewsMemoryStore {
           publishedAt: normalizedItem.publishedAt,
           firstSeenAt: now,
           symbol: normalizedItem.symbol,
-          symbolTags
+          symbolTags,
+          summary: normalizedItem.summary,
+          ...(normalizedItem.provider ? {
+            provider: normalizedItem.provider
+          } : {}),
+          ...(normalizedItem.isHeadline ? {
+            isHeadline: true
+          } : {})
         });
         continue;
       }
@@ -14229,10 +14245,49 @@ class NewsMemoryStore {
       const mergedSymbols = normalizeNewsSymbolTags([...normalizeNewsSymbolTags(existing.symbolTags, existing.symbol), ...symbolTags]);
       existing.symbol = mergedSymbols[0] ?? null;
       existing.symbolTags = mergedSymbols;
+      // FJ pushes corrections / re-issues that keep the same NewsID but
+      // change title / summary / time — refresh those so cold-start
+      // hydration reflects the most recent revision.
+      existing.title = normalizedItem.title;
+      existing.summary = normalizedItem.summary;
+      existing.url = normalizedItem.url;
+      existing.publishedAt = normalizedItem.publishedAt;
+      if (normalizedItem.provider) existing.provider = normalizedItem.provider;else delete existing.provider;
+      if (normalizedItem.isHeadline) existing.isHeadline = true;else delete existing.isHeadline;
     }
     this.prune();
     await this.save();
     return result;
+  }
+
+  /**
+   * Reconstruct displayable items from persisted records. Carries the
+   * correct `isNew` flag based on stored read state. Returns items in
+   * insertion order — callers should sort with `sortNewsItemsNewestFirst`.
+   */
+  getHydratedItems() {
+    const out = [];
+    for (const r of this.records.values()) {
+      out.push({
+        id: r.id,
+        title: r.title,
+        summary: r.summary ?? "",
+        publishedAt: r.publishedAt,
+        source: r.source,
+        sourceType: r.sourceType,
+        url: r.url,
+        symbol: r.symbol,
+        symbolTags: r.symbolTags ?? [],
+        isNew: !this.readIds.has(r.id),
+        ...(r.provider ? {
+          provider: r.provider
+        } : {}),
+        ...(r.isHeadline ? {
+          isHeadline: true
+        } : {})
+      });
+    }
+    return out;
   }
 
   /** Mark specific items as read and persist */
@@ -15068,8 +15123,17 @@ function htmlToPlainText(value) {
   // Defensive: some upstream feeds (or proxies) hand us pre-flattened text
   // where the <style> wrapper was stripped but the CSS rule bodies remain
   // verbatim (e.g. ".fxs-faq-module-wrapper{border:1px solid #ddd;...}").
-  // Drop standalone rule blocks so they don't surface as article summary.
-  return plain.replace(/[.#][a-zA-Z][\w-]*\s*\{[^{}]*\}/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
+  // The selector portion `[^{}<\n]*?` is permissive enough to cover real
+  // FXStreet rules — descendant / child / pseudo / attribute / multi-
+  // selector forms — that a narrower pattern misses. Iterate until stable
+  // so nested @media wrappers also collapse after their inner rules go.
+  let cssStripped = plain;
+  let previous;
+  do {
+    previous = cssStripped;
+    cssStripped = cssStripped.replace(/[.#@][^{}<\n]*?\{[^{}]*\}/g, "");
+  } while (cssStripped !== previous);
+  return cssStripped.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
 }
 function normalizeFinancialJuiceSymbol(raw) {
   const base = String(raw ?? "").trim();
@@ -16130,6 +16194,84 @@ const financialJuiceStreamer = new FinancialJuiceStreamer();
 ;// ./src/backend/services/news/newsItemHelpers.ts
 
 
+// ── Cross-source similarity dedup ───────────────────────────────────────────
+//
+// When two outlets publish the same story (FJ aggregator + Yahoo wire, or
+// Reuters + Barron's syndication, etc.) we want exactly one card on screen.
+// Per-id dedup catches identical hashes; this layer catches near-identical
+// titles whose ids differ because each source generates its own hash.
+
+/** Jaccard threshold above which two titles are treated as the same story. */
+const SIMILARITY_THRESHOLD = 0.75;
+
+/**
+ * How many previously-kept items to compare each new item against. Bounded
+ * so cross-source dedup stays O(N · W) instead of O(N²) on large feeds.
+ * 80 covers ~30–60 min of typical news flow.
+ */
+const DEDUP_WINDOW_SIZE = 80;
+
+/** Below this token count Jaccard is too noisy — skip dedup entirely. */
+const MIN_TOKENS_FOR_DEDUP = 3;
+
+// Common English stopwords that drag Jaccard towards false positives on
+// short headlines ("X says Y" vs "A says B" → both share "says").
+const TITLE_STOPWORDS = new Set(["the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to", "for", "with", "from", "by", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "should", "could", "may", "might", "must", "can", "shall", "this", "that", "these", "those", "it", "its", "as", "if", "than", "then", "so", "too", "very", "just", "also", "into", "out", "about", "after", "before", "again", "more", "most", "some", "such", "not", "no", "said", "says", "say", "over", "up", "down", "off", "amid", "via"]);
+function tokenizeTitle(text) {
+  const out = new Set();
+  for (const raw of String(text ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)) {
+    if (raw.length < 3) continue;
+    if (TITLE_STOPWORDS.has(raw)) continue;
+    out.add(raw);
+  }
+  return out;
+}
+function jaccardSimilarity(a, b) {
+  if (a.size === 0 && b.size === 0) return 1;
+  if (a.size === 0 || b.size === 0) return 0;
+  // Iterate the smaller set for the intersection scan.
+  const [small, big] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const t of small) if (big.has(t)) inter++;
+  return inter / (a.size + b.size - inter);
+}
+
+/**
+ * Drop later items whose title closely matches an earlier kept item.
+ *
+ * "Later" is determined by `publishedAt`: items sort ascending, so for any
+ * pair the earlier-published wins and the later one is filtered out
+ * wholesale (no metadata merge — that's an explicit request from the user).
+ *
+ * Comparison is title-only because summaries are noisy (CSS bleed-through,
+ * length variance) and titles are the densest single-shot signal for
+ * "same story". Tokens are lowercased, stopword-filtered, length ≥ 3 to
+ * avoid common-word false positives.
+ */
+function dedupSimilarNewsItems(items) {
+  if (items.length <= 1) return items.slice();
+  const sorted = [...items].sort((a, b) => toEpochMs(a.publishedAt) - toEpochMs(b.publishedAt));
+  const kept = [];
+  const window = [];
+  for (const item of sorted) {
+    const tokens = tokenizeTitle(item.title);
+    let duplicate = false;
+    if (tokens.size >= MIN_TOKENS_FOR_DEDUP) {
+      for (const seen of window) {
+        if (jaccardSimilarity(tokens, seen) >= SIMILARITY_THRESHOLD) {
+          duplicate = true;
+          break;
+        }
+      }
+    }
+    if (duplicate) continue;
+    kept.push(item);
+    window.push(tokens);
+    if (window.length > DEDUP_WINDOW_SIZE) window.shift();
+  }
+  return kept;
+}
+
 /** Compare two string arrays element-by-element. */
 function areSymbolsEqual(a, b) {
   if (a.length !== b.length) return false;
@@ -17175,6 +17317,15 @@ class NewsService {
   streamerEnabled = true;
   streamerListener = null;
   providerResolver = null;
+  /**
+   * Cold-start grace period before the first fetch fires. Hydration runs
+   * immediately on `start()` so the UI is never blank; the actual network
+   * polling (and FJ streamer) waits this long so login / auth / other
+   * critical init work doesn't fight for bandwidth.
+   */
+  initialFetchDelayMs = DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
+  initialFetchTimer = null;
+  initialFetchKicked = false;
 
   /**
    * Inject externally-fetched items (e.g. from Rust native news polling).
@@ -17204,12 +17355,117 @@ class NewsService {
     });
     if (!this.started) {
       this.started = true;
-      // Pre-warm the memory store eagerly so rebuildFromSources/markRead
-      // don't pay the async DB-open cost on their first call.
-      void this.ensureMemory();
-      if (this.streamerEnabled) this.attachStreamer();
-      this.startPolling();
+      void this.bootstrap();
+    }
+  }
+
+  /**
+   * Cold-start sequence:
+   *   1. Hydrate the in-memory feed from the persisted cache so the UI
+   *      renders the last-known list immediately (no "Waiting for news
+   *      data..." blank state).
+   *   2. Wait `initialFetchDelayMs` to let login / auth / other critical
+   *      init work finish without competing for bandwidth.
+   *   3. Attach the FJ streamer, start polling, fire the first refresh.
+   *
+   * Hydration runs before the delay so the cached items are on screen
+   * immediately. The delay applies uniformly to every news source —
+   * polling timers and the streamer connection both start at step 3.
+   */
+  async bootstrap() {
+    await this.hydrateFromCache();
+    this.scheduleInitialFetch();
+  }
+  scheduleInitialFetch() {
+    if (this.initialFetchKicked || this.initialFetchTimer !== null) return;
+    const delay = Math.max(0, this.initialFetchDelayMs);
+    this.logger.info("News initial fetch scheduled", {
+      delayMs: delay
+    });
+    this.initialFetchTimer = setTimeout(() => {
+      this.kickInitialFetch();
       void this.refresh();
+    }, delay);
+  }
+
+  /**
+   * Idempotently attach the streamer and start per-source polling. Called
+   * either by the scheduled bootstrap timer or by an explicit manual
+   * `refresh()` / `refreshSource()` — the latter case cancels the pending
+   * timer so user-triggered fetches don't sit behind the cold-start delay.
+   */
+  kickInitialFetch() {
+    if (this.initialFetchKicked) return;
+    this.initialFetchKicked = true;
+    if (this.initialFetchTimer !== null) {
+      clearTimeout(this.initialFetchTimer);
+      this.initialFetchTimer = null;
+    }
+    if (this.streamerEnabled) this.attachStreamer();
+    this.startPolling();
+  }
+
+  /**
+   * Update the cold-start delay (ms). If the bootstrap timer hasn't fired
+   * yet, reschedule with the new value; once the first fetch has kicked,
+   * the value is stored for the next `start()` cycle but does not cancel
+   * already-running polls.
+   */
+  setInitialFetchDelayMs(ms) {
+    const next = Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
+    if (next === this.initialFetchDelayMs) return;
+    this.initialFetchDelayMs = next;
+    if (this.initialFetchTimer !== null) {
+      clearTimeout(this.initialFetchTimer);
+      this.initialFetchTimer = null;
+      this.scheduleInitialFetch();
+    }
+  }
+  async hydrateFromCache() {
+    await this.ensureMemory();
+    await this.memory.load();
+    const hydrated = this.memory.getHydratedItems();
+    if (hydrated.length === 0) return;
+
+    // Apply cross-source similarity dedup so the cached feed comes back
+    // already collapsed (otherwise duplicates that pre-date this code
+    // path would show up on reload).
+    const deduped = dedupSimilarNewsItems(hydrated);
+
+    // Seed per-source buckets so the next fetch's merge-by-id naturally
+    // preserves cached items not present in the fresh page (otherwise the
+    // post-fetch feed would clip down to whatever the upstream returns in
+    // its top-N window).
+    for (const item of deduped) {
+      const bucket = this.fetchBucketFor(item);
+      if (bucket) this.sourceItems[bucket].push(item);
+    }
+    this.items = this.sortNewestFirst(deduped);
+    // `lastFetchedAt` stays null until a real fetch completes — the status
+    // label shouldn't claim "Updated just now" when we're showing cached
+    // data from a previous session.
+    this.emit();
+  }
+
+  /**
+   * Map an item's `sourceType` to the corresponding fetch bucket so we
+   * can seed `sourceItems` from hydration. Yahoo is disambiguated via
+   * `symbol === null` (macro) vs symbol-scoped.
+   */
+  fetchBucketFor(item) {
+    switch (item.sourceType) {
+      case "yahoo":
+        return item.symbol === null ? "yahooMacro" : "yahooSymbol";
+      case "barrons":
+      case "dowjones":
+      case "press":
+        return "barrons";
+      case "financialjuice":
+        return "financialJuice";
+      case "schwab":
+        return "schwab";
+      default:
+        return null;
     }
   }
   stop() {
@@ -17217,6 +17473,11 @@ class NewsService {
     this.pendingSources.clear();
     this.started = false;
     this.detachStreamer();
+    if (this.initialFetchTimer !== null) {
+      clearTimeout(this.initialFetchTimer);
+      this.initialFetchTimer = null;
+    }
+    this.initialFetchKicked = false;
   }
 
   /**
@@ -17251,7 +17512,9 @@ class NewsService {
   setStreamerEnabled(next) {
     if (this.streamerEnabled === next) return;
     this.streamerEnabled = next;
-    if (!this.started) return;
+    // Hold off until the cold-start delay fires; bootstrap's kickInitialFetch
+    // attaches the streamer once based on the current flag.
+    if (!this.initialFetchKicked) return;
     if (next) {
       this.attachStreamer();
     } else {
@@ -17338,7 +17601,9 @@ class NewsService {
     const changed = next.yahooMacroMs !== this.refreshIntervals.yahooMacroMs || next.yahooSymbolMs !== this.refreshIntervals.yahooSymbolMs || next.barronsMs !== this.refreshIntervals.barronsMs || next.financialJuiceRssMs !== this.refreshIntervals.financialJuiceRssMs || next.schwabMs !== this.refreshIntervals.schwabMs;
     if (!changed) return;
     this.refreshIntervals = next;
-    if (this.started) {
+    // Don't restart polling until the cold-start delay has fired; startPolling
+    // will pick up the new intervals when kickInitialFetch runs.
+    if (this.initialFetchKicked) {
       this.stopPolling();
       this.startPolling();
     }
@@ -17368,7 +17633,11 @@ class NewsService {
       }
     }
     if (!touched) return;
-    if (this.started) {
+
+    // Same gate as updateRefreshIntervals / setStreamerEnabled: don't start
+    // any polling timer before the cold-start delay fires. kickInitialFetch
+    // will iterate enabled sources at that point.
+    if (this.initialFetchKicked) {
       for (const source of turnedOn) {
         this.startSourcePolling(source, this.refreshIntervalFor(source));
       }
@@ -17417,6 +17686,10 @@ class NewsService {
   // ── Manual refresh ──────────────────────────────────────────────
 
   async refresh() {
+    // A manual refresh during the cold-start window cancels the pending
+    // delay and brings the streamer / polling online immediately. After
+    // the first kick this is a no-op.
+    this.kickInitialFetch();
     // Stagger: global sources first (fast, ~200ms), then per-symbol
     // sources (heavy, up to 19 symbols × concurrency 6). This gives the
     // user visible news within ~200ms instead of waiting for the slowest
@@ -17430,6 +17703,7 @@ class NewsService {
 
   /** Refresh a single source on demand. No-op if the source is disabled. */
   async refreshSource(source) {
+    this.kickInitialFetch();
     await this.requestFetch([source]);
   }
 
@@ -17667,7 +17941,11 @@ class NewsService {
       }
       dedupedById.set(item.id, mergeDuplicateNewsItems(existing, item));
     }
-    const sorted = this.sortNewestFirst(Array.from(dedupedById.values()));
+    // Two-pass dedup: by-id (collapses true duplicates) then cross-source
+    // similarity (collapses near-duplicates with different ids — e.g. the
+    // same wire story syndicated to both FJ and Yahoo).
+    const collapsed = dedupSimilarNewsItems(Array.from(dedupedById.values()));
+    const sorted = this.sortNewestFirst(collapsed);
     await this.ensureMemory();
     this.items = await this.memory.markAndPersist(sorted);
     this.lastFetchedAt = new Date().toISOString();
@@ -20095,6 +20373,7 @@ const defaultSettings = {
   newsBarronsRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs,
   newsFinancialJuiceRssRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs,
   newsSchwabRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
+  newsInitialFetchDelayMs: DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS,
   newsYahooMacroEnabled: true,
   newsYahooSymbolEnabled: true,
   newsBarronsEnabled: true,
@@ -20182,6 +20461,9 @@ const normalizeSettings = input => {
   next.newsBarronsRefreshInterval = normalizePositiveInt(next.newsBarronsRefreshInterval, defaultSettings.newsBarronsRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs);
   next.newsFinancialJuiceRssRefreshInterval = normalizePositiveInt(next.newsFinancialJuiceRssRefreshInterval, defaultSettings.newsFinancialJuiceRssRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs);
   next.newsSchwabRefreshInterval = normalizePositiveInt(next.newsSchwabRefreshInterval, defaultSettings.newsSchwabRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs);
+  // Initial-fetch delay: clamp to 0+ (0 = fire immediately after hydration).
+  const delayRaw = Number(next.newsInitialFetchDelayMs);
+  next.newsInitialFetchDelayMs = Number.isFinite(delayRaw) && delayRaw >= 0 ? Math.round(delayRaw) : defaultSettings.newsInitialFetchDelayMs ?? DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
   next.holdingsTableViewModes = normalizeHoldingsTableViewModes(next.holdingsTableViewModes);
   next.holdingsTableActiveViewModeId = normalizeHoldingsTableActiveViewModeId(next.holdingsTableActiveViewModeId, next.holdingsTableViewModes);
   const snapshotIntervalRaw = Number(next.accountSnapshotIntervalMs);
@@ -22626,7 +22908,7 @@ function renderNewsCard(item, options) {
 
 
 
-const SNAPSHOT_NEWS_MAX_ITEMS = 8;
+const SNAPSHOT_NEWS_MAX_ITEMS = 50;
 const ACTION_BUTTON_STYLE = "padding:4px 8px; border:1px solid var(--ax-border); border-radius: var(--ax-radius-md);" + " background: var(--ax-bg-glass-inset); color: var(--ax-fg-2);" + " font-size: var(--ax-fs-xs); font-weight: var(--ax-fw-semibold); cursor:pointer;";
 const ACTION_BUTTON_IDLE_BG = "var(--ax-bg-glass-inset)";
 const ACTION_BUTTON_HOVER_BG = "var(--ax-bg-row-hover)";
@@ -22661,7 +22943,7 @@ function buildCountPill(bg, color, options = {}) {
 }
 function createSnapshotNewsSection(openNewsPage) {
   const section = createElement_ui_createElement("div", {
-    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` + ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` + " border-top: 1px solid var(--ax-border);"
+    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` + ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` + " border-top: 1px solid var(--ax-border);" + " flex:1 1 auto; min-height:0;"
   });
 
   // ── Header ──────────────────────────────────────────────────────────────
@@ -22705,8 +22987,10 @@ function createSnapshotNewsSection(openNewsPage) {
   }
 
   // ── Body ────────────────────────────────────────────────────────────────
+  // Flex-grows to fill the remaining height of the snapshot panel; the
+  // inner list is the scroll surface so the header row stays pinned.
   const listWrap = createElement_ui_createElement("div", {
-    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};`
+    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` + " flex:1 1 auto; min-height:0; overflow-y:auto;" + " padding-right:2px;"
   });
   const syncCollapsedState = () => {
     listWrap.style.display = isCollapsed ? "none" : "flex";
@@ -23085,7 +23369,7 @@ function buildSlidePanel(title) {
   });
   titleBar.appendChild(closeBtn);
   const body = createElement_ui_createElement("div", {
-    styleString: "overflow-y:auto; padding:12px 14px;"
+    styleString: "display:flex; flex-direction:column; flex:1 1 auto; min-height:0;" + " overflow-y:auto; padding:12px 14px;"
   });
   panel.appendChild(titleBar);
   panel.appendChild(body);
@@ -23206,8 +23490,7 @@ function createFloatingSnapshot(headerController, _uiElements, deps) {
       }
     }
     snapshotSlide.panel.style.top = "0";
-    snapshotSlide.panel.style.height = "auto";
-    snapshotSlide.panel.style.maxHeight = "100vh";
+    snapshotSlide.panel.style.height = "100vh";
     snapshotTab.tab.style.display = isMobile || snapshotOpen ? "none" : "flex";
   };
   const doToggleSnapshot = () => {
@@ -76051,6 +76334,7 @@ async function buildAIAnalysisPage(container, _ctx, initialSymbol) {
 
 
 
+
 function createNewsSettingsPanel(opts) {
   const {
     settings,
@@ -76137,6 +76421,36 @@ function createNewsSettingsPanel(opts) {
   createNewsToggleOnlyRow(newsRefreshSection.body, "FJ Stream", "newsFinancialJuiceStreamEnabled", "realtime");
   createNewsSourceRow(newsRefreshSection.body, "Schwab", "newsSchwabEnabled", "newsSchwabRefreshInterval", 120_000);
   panel.appendChild(newsRefreshSection.section);
+
+  // -- Cold-start delay --------------------------------------------------
+  // Single setting that applies to every news source: after login the UI
+  // shows the cached feed immediately, then waits this many seconds before
+  // hitting the network for the first fetch (and starting the FJ streamer
+  // and polling timers). 0 = fire as soon as cache hydration finishes.
+  const initialDelaySection = createSettingsSectionCard("Cold Start");
+  const initialDelayInput = createSettingsNumericInput({
+    getResolved: () => {
+      const ms = Number(settings.newsInitialFetchDelayMs);
+      const validMs = Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
+      return Math.max(0, Math.round(validMs / 1000));
+    },
+    min: 0,
+    step: 1,
+    onCommit: nextSeconds => {
+      const nextMs = Math.max(0, Math.round(nextSeconds * 1000));
+      if (!onUpdateSettings) return;
+      onUpdateSettings({
+        newsInitialFetchDelayMs: nextMs
+      });
+      settings.newsInitialFetchDelayMs = nextMs;
+    }
+  });
+  appendSettingsFormRow({
+    body: initialDelaySection.body,
+    label: "Initial fetch delay",
+    controlEl: createSettingsControlWithUnit(initialDelayInput.element, "sec")
+  });
+  panel.appendChild(initialDelaySection.section);
   if (!onUpdateSettings) {
     panel.appendChild(createElement_ui_createElement("span", {
       text: "Source interval settings are unavailable in this context.",
@@ -84145,6 +84459,9 @@ function syncRecorderSettings(recorder, settings, defaults) {
       schwab: settings.newsSchwabEnabled !== false
     });
     newsService.setStreamerEnabled(settings.newsFinancialJuiceStreamEnabled !== false);
+    if (settings.newsInitialFetchDelayMs !== undefined) {
+      newsService.setInitialFetchDelayMs(settings.newsInitialFetchDelayMs);
+    }
   };
   let renderEngine = null;
   let storage = null;
