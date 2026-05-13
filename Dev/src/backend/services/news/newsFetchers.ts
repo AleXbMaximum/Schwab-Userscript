@@ -12,6 +12,7 @@ import {
   fetchSchwabNewsHeadlines,
   type SchwabNewsHeadline,
 } from "../../core/network/schwab/endpoints/news";
+import { detectFjProvider } from "../../core/network/financialJuice/providerDetect";
 
 // ── Yahoo: per-symbol news ──────────────────────────────────────────────────
 
@@ -102,31 +103,41 @@ function decodeHtmlEntities(value: string): string {
   }
 }
 
-function htmlToPlainText(value: string): string {
+export function htmlToPlainText(value: string): string {
   const text = String(value ?? "").trim();
   if (!text) return "";
 
-  const withBreaks = text
+  // Strip <style> / <script> blocks before any further processing — DOMParser
+  // preserves their textContent, which surfaces raw CSS / JS in the summary
+  // (e.g. FXStreet embeds `.fxs-faq-module-wrapper{...}` inside FJ items).
+  const stripped = text
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  const withBreaks = stripped
     .replace(/<li\b[^>]*>/gi, "- ")
     .replace(/<\/li>/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>/gi, "\n")
     .replace(/<\/div>/gi, "\n");
 
+  let plain: string;
   try {
     const doc = sharedDOMParser.parseFromString(withBreaks, "text/html");
-    const plain = doc.body.textContent ?? "";
-    return plain
-      .replace(/[ \t]+\n/g, "\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .replace(/[ \t]{2,}/g, " ")
-      .trim();
+    plain = doc.body.textContent ?? "";
   } catch {
-    return withBreaks
-      .replace(/<[^>]+>/g, " ")
-      .replace(/[ \t]{2,}/g, " ")
-      .trim();
+    plain = withBreaks.replace(/<[^>]+>/g, " ");
   }
+
+  // Defensive: some upstream feeds (or proxies) hand us pre-flattened text
+  // where the <style> wrapper was stripped but the CSS rule bodies remain
+  // verbatim (e.g. ".fxs-faq-module-wrapper{border:1px solid #ddd;...}").
+  // Drop standalone rule blocks so they don't surface as article summary.
+  return plain
+    .replace(/[.#][a-zA-Z][\w-]*\s*\{[^{}]*\}/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 function normalizeFinancialJuiceSymbol(
@@ -282,6 +293,11 @@ export async function fetchFinancialJuiceNews(): Promise<UnifiedNewsItem[]> {
         .trim();
       const description = htmlToPlainText(descriptionHtml);
       const symbolTags = extractFinancialJuiceSymbolTags(title, rawDesc, link);
+      const provider = detectFjProvider({
+        url: link,
+        descriptionHtml: rawDesc,
+        title,
+      });
 
       items.push({
         id: generateNewsId(title, "financialjuice"),
@@ -290,8 +306,11 @@ export async function fetchFinancialJuiceNews(): Promise<UnifiedNewsItem[]> {
         publishedAt: pubDate
           ? new Date(pubDate).toISOString()
           : new Date().toISOString(),
-        source: "FinancialJuice",
+        source: "FJ",
         sourceType: "financialjuice",
+        ...(provider && provider !== "FJ" && provider !== "FinancialJuice"
+          ? { provider }
+          : {}),
         url: link,
         symbol: symbolTags[0] ?? null,
         symbolTags,

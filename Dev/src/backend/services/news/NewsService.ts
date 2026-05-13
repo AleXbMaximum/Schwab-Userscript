@@ -12,6 +12,7 @@ import {
   fetchFinancialJuiceNews,
   fetchSchwabNews,
 } from "./newsFetchers";
+import { financialJuiceStreamer } from "../../core/network/financialJuice/financialJuiceStreamer";
 import { sortNewsItemsNewestFirst } from "./types";
 import type { UnifiedNewsItem } from "./types";
 import {
@@ -114,6 +115,8 @@ class NewsService {
   private refreshIntervals: NewsRefreshIntervals = {
     ...DEFAULT_NEWS_REFRESH_INTERVALS,
   };
+  private streamerEnabled = true;
+  private streamerListener: (() => void) | null = null;
   private providerResolver: (() => Promise<AIProvidersConfig>) | null = null;
 
   /**
@@ -149,6 +152,7 @@ class NewsService {
       // Pre-warm the memory store eagerly so rebuildFromSources/markRead
       // don't pay the async DB-open cost on their first call.
       void this.ensureMemory();
+      if (this.streamerEnabled) this.attachStreamer();
       this.startPolling();
       void this.refresh();
     }
@@ -158,6 +162,52 @@ class NewsService {
     this.stopPolling();
     this.pendingSources.clear();
     this.started = false;
+    this.detachStreamer();
+  }
+
+  /**
+   * Connect the FJ realtime stream. When the WS pushes new items, they
+   * become authoritative for the financialJuice source; the RSS poll
+   * falls back to fetching only if the streamer isn't connected.
+   */
+  private attachStreamer(): void {
+    if (this.streamerListener) return;
+    const listener = (): void => {
+      // Streamer pushed: re-merge buffered streamer items into the
+      // financialJuice bucket.
+      void this.requestFetch(["financialJuice"]);
+    };
+    this.streamerListener = listener;
+    financialJuiceStreamer.addListener(listener);
+    void financialJuiceStreamer.start();
+  }
+
+  private detachStreamer(): void {
+    if (this.streamerListener) {
+      financialJuiceStreamer.removeListener(this.streamerListener);
+      this.streamerListener = null;
+    }
+    financialJuiceStreamer.stop();
+  }
+
+  /**
+   * Toggle the FinancialJuice realtime stream independent of RSS. The
+   * RSS-source `financialJuice` flag continues to govern polling-based
+   * fallback fetches.
+   */
+  setStreamerEnabled(next: boolean): void {
+    if (this.streamerEnabled === next) return;
+    this.streamerEnabled = next;
+    if (!this.started) return;
+    if (next) {
+      this.attachStreamer();
+    } else {
+      this.detachStreamer();
+    }
+  }
+
+  getStreamerEnabled(): boolean {
+    return this.streamerEnabled;
   }
 
   updateSymbols(symbols: string[]): void {
@@ -209,8 +259,11 @@ class NewsService {
 
   getAutoRefreshLabel(): string {
     const i = this.refreshIntervals;
+    const fjLabel = this.streamerEnabled
+      ? "stream"
+      : formatInterval(i.financialJuiceMs);
     return (
-      `Auto-refresh: FJ ${formatInterval(i.financialJuiceMs)}` +
+      `Auto-refresh: FJ ${fjLabel}` +
       ` · Yahoo Macro ${formatInterval(i.yahooMacroMs)}` +
       ` · Yahoo Symbol ${formatInterval(i.yahooSymbolMs)}` +
       ` · Barron's ${formatInterval(i.barronsMs)}` +
@@ -401,7 +454,19 @@ class NewsService {
       if (source === "yahooMacro") {
         items = this.sortNewestFirst(await fetchYahooMacroNews());
       } else if (source === "financialJuice") {
-        items = this.sortNewestFirst(await fetchFinancialJuiceNews());
+        // Streamer items are authoritative when connected; RSS only runs
+        // as a fallback when the stream is disabled or hasn't connected
+        // yet. The two pull modes share the financialJuice source bucket.
+        const useStream =
+          this.streamerEnabled && financialJuiceStreamer.isConnected;
+        const streamerItems = useStream
+          ? financialJuiceStreamer.getItems()
+          : [];
+        const fresh =
+          streamerItems.length > 0
+            ? streamerItems
+            : await fetchFinancialJuiceNews();
+        items = this.sortNewestFirst(fresh);
       } else if (source === "schwab") {
         items = this.sortNewestFirst(await fetchSchwabNews());
       } else if (source === "yahooSymbol") {

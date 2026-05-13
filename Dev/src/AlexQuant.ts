@@ -122,6 +122,9 @@ function syncRecorderSettings(
           ? 0
           : settings.newsSchwabRefreshInterval,
     });
+    newsService.setStreamerEnabled(
+      (settings as any).newsFinancialJuiceStreamEnabled !== false,
+    );
   };
 
   let renderEngine: RenderEngineLike | null = null;
