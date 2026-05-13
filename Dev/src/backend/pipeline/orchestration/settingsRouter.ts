@@ -4,6 +4,7 @@ import type { PhaseManager } from "./PhaseManager";
 import type { HoldingsDataService } from "../HoldingsDataService";
 import type { StreamerBridge } from "../bridges/StreamerBridge";
 import type { OvernightBridge } from "../bridges/OvernightBridge";
+import { isFeatureEnabled } from "../../../shared/settings/settingsNormalization";
 import {
   type BackendContext,
   DEFAULT_BETA_RECALC_INTERVAL_MS,
@@ -80,7 +81,7 @@ export function routeSettingsUpdate(
   }
 
   if (newSettings.enableBalances !== undefined) {
-    if (newSettings.enableBalances === false) {
+    if (!isFeatureEnabled(newSettings.enableBalances)) {
       scheduler.pauseSource("balances");
     } else if (scheduler.hasSource("balances")) {
       scheduler.resumeSource("balances");
@@ -97,17 +98,15 @@ export function routeSettingsUpdate(
   }
 
   if (newSettings.enableStreamer !== undefined) {
-    if (
-      !phaseManager.usesStreamer() &&
-      newSettings.enableStreamer !== false
-    ) {
+    const enable = isFeatureEnabled(newSettings.enableStreamer);
+    if (!phaseManager.usesStreamer() && enable) {
       logger.info(
         "enableStreamer requested but current phase does not use streamer — deferring",
         { phase: phaseManager.getPhase() },
       );
     } else {
-      streamerBridge.setEnabled(newSettings.enableStreamer !== false);
-      if (newSettings.enableStreamer === false) {
+      streamerBridge.setEnabled(enable);
+      if (!enable) {
         streamerBridge.teardown();
       } else {
         streamerBridge.reconnect(ctx.authToken, ctx.customerId ?? null);
@@ -116,7 +115,7 @@ export function routeSettingsUpdate(
   }
 
   if (newSettings.enableOvernightPrice !== undefined) {
-    overnightBridge.setEnabled(newSettings.enableOvernightPrice !== false);
+    overnightBridge.setEnabled(isFeatureEnabled(newSettings.enableOvernightPrice));
   }
 
   if (newSettings.betaRefreshIntervalMs !== undefined) {

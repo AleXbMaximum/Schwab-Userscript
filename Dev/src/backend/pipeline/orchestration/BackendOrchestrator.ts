@@ -46,6 +46,7 @@ import {
 import { SourceOverrideManager } from "./sourceOverrideManager";
 import { setupPolling as runSetupPolling } from "./pollingOrchestrator";
 import { routeSettingsUpdate } from "./settingsRouter";
+import { isFeatureEnabled } from "../../../shared/settings/settingsNormalization";
 
 export type {
   BackendOrchestratorOptions,
@@ -79,7 +80,7 @@ export class BackendOrchestrator {
   private readonly phaseManager: PhaseManager;
   private readonly sourceOverrideManager: SourceOverrideManager;
 
-  constructor(ctx: BackendContext, options: BackendOrchestratorOptions = {}) {
+  constructor(ctx: BackendContext, options: BackendOrchestratorOptions) {
     this.ctx = ctx;
     this.initialOptions = options;
     this.logger = logService.namespace("pipeline");
@@ -288,17 +289,10 @@ export class BackendOrchestrator {
 
     // Enable overnight after polling sources exist, so onActiveChange
     // can correctly apply streamer ingestion mode on first load.
-    // Use ctx.settings as fallback: initialOptions may be undefined when
-    // storage hydration (Phase 2) races ahead of the constructor call (Phase 3).
-    const enableOvernight =
-      this.initialOptions.enableOvernightPrice ??
-      (this.ctx.settings as Record<string, unknown>)?.enableOvernightPrice;
-    this.logger.info("overnightEnable", {
-      fromOptions: this.initialOptions.enableOvernightPrice,
-      fromSettings: (this.ctx.settings as Record<string, unknown>)
-        ?.enableOvernightPrice,
-      resolved: enableOvernight,
-    });
+    const enableOvernight = isFeatureEnabled(
+      this.initialOptions.enableOvernightPrice,
+    );
+    this.logger.info("overnightEnable", { enabled: enableOvernight });
     if (enableOvernight) {
       this.overnightBridge.setEnabled(true);
     }

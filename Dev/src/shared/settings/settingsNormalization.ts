@@ -11,6 +11,17 @@ import {
   normalizeHoldingsTableActiveViewModeId,
 } from "../types/holdingsTableColumns";
 
+/**
+ * Resolve "is this feature enabled?" from an arbitrary stored value.
+ * Returns false only if the value is explicitly the boolean `false`.
+ * All other values (true, undefined, null, etc.) resolve to true.
+ *
+ * Mirrors the router's delta semantics so startup and runtime updates agree.
+ */
+export function isFeatureEnabled(value: unknown): boolean {
+  return value !== false;
+}
+
 export const defaultSettings: Settings = {
   refreshInterval: 1000,
   holdingsRefreshInterval: 10000,
@@ -31,6 +42,8 @@ export const defaultSettings: Settings = {
   isHoldingsRefreshing: true,
   isQuotesRefreshing: true,
   enableStreamer: true,
+  enableOvernightPrice: true,
+  enableBalances: true,
   warningRulesJson: '{\n  "version": 1,\n  "rules": []\n}',
   holdingsTableViewModes: [
     {

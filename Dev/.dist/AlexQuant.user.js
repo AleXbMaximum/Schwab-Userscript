@@ -12824,20 +12824,28 @@ const overnightStreamer_log = logService.namespace("streamer");
 // Decoded fields:
 //   1 (string)  id            — ticker symbol
 //   2 (float32) price         — current price
-//   3 (sint64)  time          — epoch ms (zigzag encoded)
 //   5 (string)  exchange      — e.g. "NMS", "NYQ"
 //   6 (varint)  quoteType     — 8 = EQUITY
-//   7 (varint)  marketHours   — 1=PRE, 2=REGULAR, 3=POST, 4=EXTENDED
+//   7 (varint)  marketHours   — see MarketHours enum below
 //   8 (float32) changePercent — % change from close (percentage-point form)
 //  12 (float32) change        — $ change from close
 //  27 (varint)  priceHint     — decimal precision hint
+// Fields not decoded (skipped by skipField): 3 (time/sint64 — JS int safety; we use
+// the receive-side wall clock downstream), 5/6/27 (don't influence routing).
 
+/** Yahoo's `marketHours` enum on field 7. */
+const MarketHours = {
+  PRE: 1,
+  REGULAR: 2,
+  POST: 3,
+  EXTENDED: 4
+};
 const WS_ENDPOINT = "wss://streamer.finance.yahoo.com/?version=2";
 const RECONNECT_BASE_MS = 2_000;
 const RECONNECT_MAX_MS = 60_000;
 
 /** Market-hours values that represent overnight / extended trading */
-const OVERNIGHT_MARKET_HOURS = new Set([3, 4]); // POST_MARKET, EXTENDED_HOURS
+const OVERNIGHT_MARKET_HOURS = new Set([MarketHours.POST, MarketHours.EXTENDED]);
 
 // ── Protobuf primitives (no external dependency) ────────────────────────────
 
@@ -12905,7 +12913,6 @@ function decodeYahooPricing(b64) {
   }
   let id = "";
   let price = NaN;
-  let time = 0;
   let marketHours = 0;
   let changePercent = NaN;
   let change = NaN;
@@ -12932,17 +12939,6 @@ function decodeYahooPricing(b64) {
         if (wireType === 5) {
           price = readFloat32(bytes, pos);
           pos += 4;
-        } else {
-          pos = skipField(bytes, pos, wireType);
-        }
-        break;
-      case 3:
-        // time (sint64 zigzag varint) — read as raw varint for epoch ms
-        if (wireType === 0) {
-          // Read raw varint, zigzag-decode to get epoch ms
-          const [raw, p] = readVarint(bytes, pos);
-          pos = p;
-          time = raw >>> 1 ^ -(raw & 1); // zigzag decode (safe for 32-bit portion)
         } else {
           pos = skipField(bytes, pos, wireType);
         }
@@ -12984,7 +12980,6 @@ function decodeYahooPricing(b64) {
   return {
     id,
     price,
-    time,
     marketHours,
     changePercent,
     change
@@ -13048,8 +13043,11 @@ class YahooOvernightStreamer {
         });
       }
     };
-    this.socket.onclose = () => {
+    this.socket.onclose = event => {
       overnightStreamer_log.info("ws.disconnected", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
         intentional: this.intentionalDisconnect
       });
       this.socket = null;
@@ -13090,7 +13088,8 @@ class YahooOvernightStreamer {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
       this.visibilityHandler = null;
     }
-    overnightStreamer_log.info("ws.disconnect");
+    // No log here — socket.close() will fire onclose which logs ws.disconnected
+    // with intentional=true. Avoids duplicate-event noise.
   }
   subscribe(symbols) {
     const added = symbols.filter(s => !this.subscribedSymbols.has(s));
@@ -13144,8 +13143,7 @@ class YahooOvernightStreamer {
       change: Number.isFinite(decoded.change) ? decoded.change : 0,
       // Convert from percentage-point form to ratio (÷100) to match Schwab convention
       changePercent: Number.isFinite(decoded.changePercent) ? decoded.changePercent / 100 : 0,
-      marketHours: decoded.marketHours,
-      time: decoded.time
+      marketHours: decoded.marketHours
     };
     for (const listener of this.listeners) {
       try {
@@ -18476,7 +18474,485 @@ function setupPolling(deps) {
     }
   });
 }
+;// ./src/shared/types/holdingsTableColumns.ts
+const HOLDINGS_TABLE_COLUMNS = [{
+  id: "symbol",
+  label: "Symbol"
+}, {
+  id: "name",
+  label: "Name"
+}, {
+  id: "price",
+  label: "Price"
+}, {
+  id: "bid",
+  label: "Bid"
+}, {
+  id: "ask",
+  label: "Ask"
+}, {
+  id: "bidSize",
+  label: "Bid Size"
+}, {
+  id: "askSize",
+  label: "Ask Size"
+}, {
+  id: "last",
+  label: "Last"
+}, {
+  id: "lastSize",
+  label: "Last Size"
+}, {
+  id: "open",
+  label: "Open"
+}, {
+  id: "costPerShare",
+  label: "Cost/Share"
+}, {
+  id: "priceChngPct",
+  label: "Price Chng %"
+}, {
+  id: "priceChngDol",
+  label: "Price Chng $"
+}, {
+  id: "dayChngPct",
+  label: "Day Chng %"
+}, {
+  id: "dayChngDol",
+  label: "Day Chng $"
+}, {
+  id: "qty",
+  label: "Qty"
+}, {
+  id: "gainLossDol",
+  label: "Gain/Loss $"
+}, {
+  id: "gainLossPct",
+  label: "Gain/Loss %"
+}, {
+  id: "marketValue",
+  label: "Mkt Val"
+}, {
+  id: "pctOfAcct",
+  label: "% of Acct"
+}, {
+  id: "marginReq",
+  label: "Margin $"
+}, {
+  id: "ratings",
+  label: "Ratings"
+}, {
+  id: "costBasis",
+  label: "Cost Basis"
+}, {
+  id: "peRatio",
+  label: "P/E Ratio"
+}, {
+  id: "divYield",
+  label: "Div Yld"
+}, {
+  id: "volume",
+  label: "Volume"
+}, {
+  id: "delta",
+  label: "Delta"
+}, {
+  id: "gamma",
+  label: "Gamma"
+}, {
+  id: "theta",
+  label: "Theta"
+}, {
+  id: "vega",
+  label: "Vega"
+}, {
+  id: "rho",
+  label: "Rho"
+}, {
+  id: "openInterest",
+  label: "Open Int"
+}, {
+  id: "reinvest",
+  label: "Reinvest?"
+}, {
+  id: "dayLow",
+  label: "Day Low"
+}, {
+  id: "dayHigh",
+  label: "Day High"
+}, {
+  id: "close",
+  label: "Close"
+}, {
+  id: "mid",
+  label: "Mid"
+}, {
+  id: "spreadDol",
+  label: "Spread $"
+}, {
+  id: "spreadPct",
+  label: "Spread %"
+}, {
+  id: "quoteImbalance",
+  label: "Quote Imb"
+}, {
+  id: "dayRangeDol",
+  label: "Day Range $"
+}, {
+  id: "dayRangePct",
+  label: "Day Range %"
+}, {
+  id: "deltaShares",
+  label: "Delta Sh"
+}, {
+  id: "gammaSharesPerDol",
+  label: "Gamma Sh/$"
+}, {
+  id: "absGammaSharesPerDol",
+  label: "Abs Gamma Sh/$"
+}, {
+  id: "thetaPerDay",
+  label: "Theta/Day"
+}, {
+  id: "vegaPerVolPoint",
+  label: "Vega/Vol"
+}, {
+  id: "absVegaPerVolPoint",
+  label: "Abs Vega/Vol"
+}, {
+  id: "rhoPer1pctRate",
+  label: "Rho/1%"
+}, {
+  id: "marginUsageRatioPct",
+  label: "Margin %MV"
+}, {
+  id: "deltaSharesPerMargin",
+  label: "Delta Sh/M"
+}, {
+  id: "deltaNotionalPerMargin",
+  label: "Delta$/M"
+}, {
+  id: "thetaPerMargin",
+  label: "Theta/M"
+}, {
+  id: "vegaPerMargin",
+  label: "Vega/M"
+}, {
+  id: "thetaOnMargin",
+  label: "TOM"
+}, {
+  id: "vegaOnMargin",
+  label: "VOM"
+}, {
+  id: "gammaOnMargin",
+  label: "GOM"
+}, {
+  id: "carryPerVega",
+  label: "Carry/Vega"
+}, {
+  id: "carryPerGamma",
+  label: "Carry/Gamma"
+}, {
+  id: "carryToStress",
+  label: "CTS"
+}, {
+  id: "marginReqReason",
+  label: "Margin Reason"
+}, {
+  id: "marginToUnderlyingNotional",
+  label: "Margin %Notl"
+}, {
+  id: "deltaNotionalDol",
+  label: "Delta $"
+}, {
+  id: "deltaNotionalConcentrationPct",
+  label: "Delta Conc %"
+}, {
+  id: "betaNotionalDol",
+  label: "Beta $"
+}, {
+  id: "betaNotionalConcentrationPct",
+  label: "Beta Conc %"
+}, {
+  id: "vegaConcentrationPct",
+  label: "Vega Conc %"
+}, {
+  id: "gammaDensityNearTerm",
+  label: "Gamma Dens"
+}, {
+  id: "gammaDensityWeighted",
+  label: "Gamma Dens Wt"
+}, {
+  id: "pnlUp1PctDol",
+  label: "Leg PnL +1%"
+}, {
+  id: "pnlDn1PctDol",
+  label: "Leg PnL -1%"
+}, {
+  id: "convexityDol",
+  label: "Convexity"
+}, {
+  id: "underlying",
+  label: "Underlying"
+}, {
+  id: "expDate",
+  label: "Exp"
+}, {
+  id: "dte",
+  label: "DTE"
+}, {
+  id: "strike",
+  label: "Strike"
+}, {
+  id: "callPut",
+  label: "C/P"
+}, {
+  id: "rowType",
+  label: "Row Type"
+}, {
+  id: "priceLow52W",
+  label: "52W Low"
+}, {
+  id: "priceHigh52W",
+  label: "52W High"
+}, {
+  id: "overnightPrice",
+  label: "ON Price"
+}, {
+  id: "overnightChgDol",
+  label: "ON Chg $"
+}, {
+  id: "overnightChgPct",
+  label: "ON Chg %"
+}, {
+  id: "afterHoursPrice",
+  label: "AH Price"
+}, {
+  id: "postMarketChg",
+  label: "AH Chg $"
+}, {
+  id: "postMarketChgPct",
+  label: "AH Chg %"
+}, {
+  id: "assetType",
+  label: "Asset Type"
+}, {
+  id: "exchangeName",
+  label: "Exchange"
+}, {
+  id: "warnings",
+  label: "Warnings"
+}, {
+  id: "betaSP1D",
+  label: "SPβ1D"
+}, {
+  id: "betaSP1M",
+  label: "SPβ1M"
+}, {
+  id: "betaSP6M",
+  label: "SPβ6M"
+}, {
+  id: "betaSP2Y",
+  label: "SPβ2Y"
+}];
+const ALL_HOLDINGS_TABLE_COLUMN_IDS = new Set(HOLDINGS_TABLE_COLUMNS.map(c => c.id));
+const DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER = ["symbol", "name", "price", "bid", "ask", "bidSize", "askSize", "last", "lastSize", "open", "costPerShare", "priceChngPct", "priceChngDol", "dayChngPct", "dayChngDol", "qty", "gainLossDol", "gainLossPct", "marketValue", "pctOfAcct", "marginReq", "ratings", "costBasis", "peRatio", "divYield", "volume", "delta", "gamma", "theta", "vega", "rho", "openInterest", "reinvest", "dayLow", "dayHigh", "close"];
+function normalizeHoldingsTableColumnOrder(order) {
+  const allowed = ALL_HOLDINGS_TABLE_COLUMN_IDS;
+  const result = [];
+  if (Array.isArray(order)) {
+    for (const item of order) {
+      if (typeof item !== "string") continue;
+      const id = item;
+      if (!allowed.has(id)) continue;
+      if (result.includes(id)) continue;
+      result.push(id);
+    }
+  }
+  return result;
+}
+function safeModeName(name, fallback) {
+  if (typeof name !== "string") return fallback;
+  const trimmed = name.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+function safeModeId(id) {
+  if (typeof id !== "string") return null;
+  const trimmed = id.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function normalizeHoldingsTableViewModes(modes) {
+  const fallbackOrder = normalizeHoldingsTableColumnOrder(DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER);
+  const fallback = {
+    id: "default",
+    name: "Default",
+    isVisible: true,
+    columnOrder: fallbackOrder
+  };
+  if (!Array.isArray(modes) || modes.length === 0) return [fallback];
+  const result = [];
+  const usedIds = new Set();
+  for (const item of modes) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item;
+    const id = safeModeId(raw.id);
+    if (!id) continue;
+    if (usedIds.has(id)) continue;
+    usedIds.add(id);
+    result.push({
+      id,
+      name: safeModeName(raw.name, id),
+      isVisible: raw.isVisible !== false,
+      columnOrder: normalizeHoldingsTableColumnOrder(raw.columnOrder ?? fallbackOrder)
+    });
+  }
+  if (result.length === 0) return [fallback];
+  return result;
+}
+function normalizeHoldingsTableActiveViewModeId(activeId, modes) {
+  const fallback = modes[0]?.id ?? "default";
+  if (typeof activeId !== "string") return fallback;
+  const trimmed = activeId.trim();
+  if (!trimmed) return fallback;
+  return modes.some(m => m.id === trimmed) ? trimmed : fallback;
+}
+;// ./src/shared/settings/settingsNormalization.ts
+
+
+
+/**
+ * Resolve "is this feature enabled?" from an arbitrary stored value.
+ * Returns false only if the value is explicitly the boolean `false`.
+ * All other values (true, undefined, null, etc.) resolve to true.
+ *
+ * Mirrors the router's delta semantics so startup and runtime updates agree.
+ */
+function isFeatureEnabled(value) {
+  return value !== false;
+}
+const defaultSettings = {
+  refreshInterval: 1000,
+  holdingsRefreshInterval: 10000,
+  quotesRefreshInterval: 15000,
+  newsYahooMacroRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.yahooMacroMs,
+  newsYahooSymbolRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs,
+  newsBarronsRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs,
+  newsFinancialJuiceRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs,
+  newsSchwabRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
+  newsYahooMacroEnabled: true,
+  newsYahooSymbolEnabled: true,
+  newsBarronsEnabled: true,
+  newsFinancialJuiceEnabled: true,
+  newsSchwabEnabled: true,
+  isRefreshing: true,
+  isHoldingsRefreshing: true,
+  isQuotesRefreshing: true,
+  enableStreamer: true,
+  enableOvernightPrice: true,
+  enableBalances: true,
+  warningRulesJson: '{\n  "version": 1,\n  "rules": []\n}',
+  holdingsTableViewModes: [{
+    id: "default",
+    name: "Default",
+    isVisible: true,
+    columnOrder: DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER
+  }],
+  holdingsTableActiveViewModeId: "default",
+  accountSnapshotIntervalMs: 10_000,
+  accountSnapshotRecordNight: false,
+  accountSnapshotAutoArchive: true,
+  accountSnapshotArchiveThreshold: 200_000,
+  accountSnapshotRetentionDays: 7,
+  betaRefreshIntervalMs: 7_200_000
+};
+const VALID_ANCHOR_MODES = new Set(["shares", "deltaDollar", "deltaDollarPct", "betaPct"]);
+const normalizeRebalanceTargets = raw => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const obj = raw;
+  const result = {};
+  for (const [key, entry] of Object.entries(obj)) {
+    if (typeof key !== "string" || key.length === 0) continue;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const e = entry;
+    const anchor = e.anchor;
+    const value = Number(e.value);
+    if (!VALID_ANCHOR_MODES.has(anchor) || !Number.isFinite(value)) continue;
+    result[key] = {
+      anchor,
+      value: Math.round(value * 100) / 100
+    };
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+};
+const normalizeRebalanceProfiles = raw => {
+  if (!Array.isArray(raw)) return undefined;
+  const byId = new Map();
+  let fallbackIdx = 0;
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const candidate = entry;
+    const rebalanceTargets = normalizeRebalanceTargets(candidate.rebalanceTargets);
+    if (!rebalanceTargets) continue;
+    const createdAtRaw = Number(candidate.createdAt);
+    const createdAt = Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? Math.round(createdAtRaw) : Date.now();
+    const fallbackId = `rp_${createdAt}_${fallbackIdx++}`;
+    const id = typeof candidate.id === "string" && candidate.id.trim().length > 0 ? candidate.id.trim().slice(0, 80) : fallbackId;
+    const fallbackName = new Date(createdAt).toISOString().slice(0, 16).replace("T", " ");
+    const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim().slice(0, 160) : fallbackName;
+    const normalized = {
+      id,
+      name,
+      createdAt,
+      rebalanceTargets
+    };
+    const prev = byId.get(id);
+    if (!prev || normalized.createdAt >= prev.createdAt) byId.set(id, normalized);
+  }
+  const profiles = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
+  return profiles.length > 0 ? profiles : undefined;
+};
+const normalizeSettings = input => {
+  const next = {
+    ...input
+  };
+  const normalizePositiveInt = (value, fallback) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.round(parsed);
+  };
+  next.newsYahooMacroRefreshInterval = normalizePositiveInt(next.newsYahooMacroRefreshInterval, defaultSettings.newsYahooMacroRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.yahooMacroMs);
+  next.newsYahooSymbolRefreshInterval = normalizePositiveInt(next.newsYahooSymbolRefreshInterval, defaultSettings.newsYahooSymbolRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs);
+  next.newsBarronsRefreshInterval = normalizePositiveInt(next.newsBarronsRefreshInterval, defaultSettings.newsBarronsRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs);
+  next.newsFinancialJuiceRefreshInterval = normalizePositiveInt(next.newsFinancialJuiceRefreshInterval, defaultSettings.newsFinancialJuiceRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs);
+  next.newsSchwabRefreshInterval = normalizePositiveInt(next.newsSchwabRefreshInterval, defaultSettings.newsSchwabRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs);
+  next.holdingsTableViewModes = normalizeHoldingsTableViewModes(next.holdingsTableViewModes);
+  next.holdingsTableActiveViewModeId = normalizeHoldingsTableActiveViewModeId(next.holdingsTableActiveViewModeId, next.holdingsTableViewModes);
+  const snapshotIntervalRaw = Number(next.accountSnapshotIntervalMs);
+  next.accountSnapshotIntervalMs = Number.isFinite(snapshotIntervalRaw) && snapshotIntervalRaw > 0 ? Math.round(snapshotIntervalRaw) : defaultSettings.accountSnapshotIntervalMs;
+  next.accountSnapshotRecordNight = next.accountSnapshotRecordNight === true;
+  next.accountSnapshotAutoArchive = next.accountSnapshotAutoArchive !== false;
+  const snapshotArchiveThresholdRaw = Number(next.accountSnapshotArchiveThreshold);
+  next.accountSnapshotArchiveThreshold = Number.isFinite(snapshotArchiveThresholdRaw) && snapshotArchiveThresholdRaw > 0 ? Math.round(snapshotArchiveThresholdRaw) : defaultSettings.accountSnapshotArchiveThreshold;
+  const snapshotRetentionDaysRaw = Number(next.accountSnapshotRetentionDays);
+  next.accountSnapshotRetentionDays = Number.isFinite(snapshotRetentionDaysRaw) && snapshotRetentionDaysRaw >= 1 ? Math.round(snapshotRetentionDaysRaw) : defaultSettings.accountSnapshotRetentionDays;
+  if (next.targetAllocations && typeof next.targetAllocations === "object" && !Array.isArray(next.targetAllocations)) {
+    const cleaned = {};
+    for (const [key, val] of Object.entries(next.targetAllocations)) {
+      const num = Number(val);
+      if (typeof key === "string" && key.length > 0 && Number.isFinite(num) && num >= 0 && num <= 100) {
+        cleaned[key] = Math.round(num * 100) / 100;
+      }
+    }
+    next.targetAllocations = Object.keys(cleaned).length > 0 ? cleaned : undefined;
+  } else {
+    next.targetAllocations = undefined;
+  }
+  next.rebalanceTargets = normalizeRebalanceTargets(next.rebalanceTargets);
+  next.rebalanceProfiles = normalizeRebalanceProfiles(next.rebalanceProfiles);
+  return next;
+};
 ;// ./src/backend/pipeline/orchestration/settingsRouter.ts
+
 
 function routeSettingsUpdate(deps, newSettings) {
   const {
@@ -18519,7 +18995,7 @@ function routeSettingsUpdate(deps, newSettings) {
     scheduler.updateInterval("quotes", newSettings.quotesRefreshInterval || 15000);
   }
   if (newSettings.enableBalances !== undefined) {
-    if (newSettings.enableBalances === false) {
+    if (!isFeatureEnabled(newSettings.enableBalances)) {
       scheduler.pauseSource("balances");
     } else if (scheduler.hasSource("balances")) {
       scheduler.resumeSource("balances");
@@ -18531,13 +19007,14 @@ function routeSettingsUpdate(deps, newSettings) {
     scheduler.updateInterval("balances", newSettings.balancesRefreshInterval || 1000);
   }
   if (newSettings.enableStreamer !== undefined) {
-    if (!phaseManager.usesStreamer() && newSettings.enableStreamer !== false) {
+    const enable = isFeatureEnabled(newSettings.enableStreamer);
+    if (!phaseManager.usesStreamer() && enable) {
       logger.info("enableStreamer requested but current phase does not use streamer — deferring", {
         phase: phaseManager.getPhase()
       });
     } else {
-      streamerBridge.setEnabled(newSettings.enableStreamer !== false);
-      if (newSettings.enableStreamer === false) {
+      streamerBridge.setEnabled(enable);
+      if (!enable) {
         streamerBridge.teardown();
       } else {
         streamerBridge.reconnect(ctx.authToken, ctx.customerId ?? null);
@@ -18545,13 +19022,14 @@ function routeSettingsUpdate(deps, newSettings) {
     }
   }
   if (newSettings.enableOvernightPrice !== undefined) {
-    overnightBridge.setEnabled(newSettings.enableOvernightPrice !== false);
+    overnightBridge.setEnabled(isFeatureEnabled(newSettings.enableOvernightPrice));
   }
   if (newSettings.betaRefreshIntervalMs !== undefined) {
     scheduler.updateInterval("beta-recalc", newSettings.betaRefreshIntervalMs || DEFAULT_BETA_RECALC_INTERVAL_MS);
   }
 }
 ;// ./src/backend/pipeline/orchestration/BackendOrchestrator.ts
+
 
 
 
@@ -18581,7 +19059,7 @@ class BackendOrchestrator {
   fetchHoldingsTask = null;
   fetchBalancesTask = null;
   fetchQuotesTask = null;
-  constructor(ctx, options = {}) {
+  constructor(ctx, options) {
     this.ctx = ctx;
     this.initialOptions = options;
     this.logger = logService.namespace("pipeline");
@@ -18747,13 +19225,9 @@ class BackendOrchestrator {
 
     // Enable overnight after polling sources exist, so onActiveChange
     // can correctly apply streamer ingestion mode on first load.
-    // Use ctx.settings as fallback: initialOptions may be undefined when
-    // storage hydration (Phase 2) races ahead of the constructor call (Phase 3).
-    const enableOvernight = this.initialOptions.enableOvernightPrice ?? this.ctx.settings?.enableOvernightPrice;
+    const enableOvernight = isFeatureEnabled(this.initialOptions.enableOvernightPrice);
     this.logger.info("overnightEnable", {
-      fromOptions: this.initialOptions.enableOvernightPrice,
-      fromSettings: this.ctx.settings?.enableOvernightPrice,
-      resolved: enableOvernight
+      enabled: enableOvernight
     });
     if (enableOvernight) {
       this.overnightBridge.setEnabled(true);
@@ -24862,348 +25336,6 @@ function createAccountTimelinePanel(deps) {
     }
   };
 }
-;// ./src/shared/types/holdingsTableColumns.ts
-const HOLDINGS_TABLE_COLUMNS = [{
-  id: "symbol",
-  label: "Symbol"
-}, {
-  id: "name",
-  label: "Name"
-}, {
-  id: "price",
-  label: "Price"
-}, {
-  id: "bid",
-  label: "Bid"
-}, {
-  id: "ask",
-  label: "Ask"
-}, {
-  id: "bidSize",
-  label: "Bid Size"
-}, {
-  id: "askSize",
-  label: "Ask Size"
-}, {
-  id: "last",
-  label: "Last"
-}, {
-  id: "lastSize",
-  label: "Last Size"
-}, {
-  id: "open",
-  label: "Open"
-}, {
-  id: "costPerShare",
-  label: "Cost/Share"
-}, {
-  id: "priceChngPct",
-  label: "Price Chng %"
-}, {
-  id: "priceChngDol",
-  label: "Price Chng $"
-}, {
-  id: "dayChngPct",
-  label: "Day Chng %"
-}, {
-  id: "dayChngDol",
-  label: "Day Chng $"
-}, {
-  id: "qty",
-  label: "Qty"
-}, {
-  id: "gainLossDol",
-  label: "Gain/Loss $"
-}, {
-  id: "gainLossPct",
-  label: "Gain/Loss %"
-}, {
-  id: "marketValue",
-  label: "Mkt Val"
-}, {
-  id: "pctOfAcct",
-  label: "% of Acct"
-}, {
-  id: "marginReq",
-  label: "Margin $"
-}, {
-  id: "ratings",
-  label: "Ratings"
-}, {
-  id: "costBasis",
-  label: "Cost Basis"
-}, {
-  id: "peRatio",
-  label: "P/E Ratio"
-}, {
-  id: "divYield",
-  label: "Div Yld"
-}, {
-  id: "volume",
-  label: "Volume"
-}, {
-  id: "delta",
-  label: "Delta"
-}, {
-  id: "gamma",
-  label: "Gamma"
-}, {
-  id: "theta",
-  label: "Theta"
-}, {
-  id: "vega",
-  label: "Vega"
-}, {
-  id: "rho",
-  label: "Rho"
-}, {
-  id: "openInterest",
-  label: "Open Int"
-}, {
-  id: "reinvest",
-  label: "Reinvest?"
-}, {
-  id: "dayLow",
-  label: "Day Low"
-}, {
-  id: "dayHigh",
-  label: "Day High"
-}, {
-  id: "close",
-  label: "Close"
-}, {
-  id: "mid",
-  label: "Mid"
-}, {
-  id: "spreadDol",
-  label: "Spread $"
-}, {
-  id: "spreadPct",
-  label: "Spread %"
-}, {
-  id: "quoteImbalance",
-  label: "Quote Imb"
-}, {
-  id: "dayRangeDol",
-  label: "Day Range $"
-}, {
-  id: "dayRangePct",
-  label: "Day Range %"
-}, {
-  id: "deltaShares",
-  label: "Delta Sh"
-}, {
-  id: "gammaSharesPerDol",
-  label: "Gamma Sh/$"
-}, {
-  id: "absGammaSharesPerDol",
-  label: "Abs Gamma Sh/$"
-}, {
-  id: "thetaPerDay",
-  label: "Theta/Day"
-}, {
-  id: "vegaPerVolPoint",
-  label: "Vega/Vol"
-}, {
-  id: "absVegaPerVolPoint",
-  label: "Abs Vega/Vol"
-}, {
-  id: "rhoPer1pctRate",
-  label: "Rho/1%"
-}, {
-  id: "marginUsageRatioPct",
-  label: "Margin %MV"
-}, {
-  id: "deltaSharesPerMargin",
-  label: "Delta Sh/M"
-}, {
-  id: "deltaNotionalPerMargin",
-  label: "Delta$/M"
-}, {
-  id: "thetaPerMargin",
-  label: "Theta/M"
-}, {
-  id: "vegaPerMargin",
-  label: "Vega/M"
-}, {
-  id: "thetaOnMargin",
-  label: "TOM"
-}, {
-  id: "vegaOnMargin",
-  label: "VOM"
-}, {
-  id: "gammaOnMargin",
-  label: "GOM"
-}, {
-  id: "carryPerVega",
-  label: "Carry/Vega"
-}, {
-  id: "carryPerGamma",
-  label: "Carry/Gamma"
-}, {
-  id: "carryToStress",
-  label: "CTS"
-}, {
-  id: "marginReqReason",
-  label: "Margin Reason"
-}, {
-  id: "marginToUnderlyingNotional",
-  label: "Margin %Notl"
-}, {
-  id: "deltaNotionalDol",
-  label: "Delta $"
-}, {
-  id: "deltaNotionalConcentrationPct",
-  label: "Delta Conc %"
-}, {
-  id: "betaNotionalDol",
-  label: "Beta $"
-}, {
-  id: "betaNotionalConcentrationPct",
-  label: "Beta Conc %"
-}, {
-  id: "vegaConcentrationPct",
-  label: "Vega Conc %"
-}, {
-  id: "gammaDensityNearTerm",
-  label: "Gamma Dens"
-}, {
-  id: "gammaDensityWeighted",
-  label: "Gamma Dens Wt"
-}, {
-  id: "pnlUp1PctDol",
-  label: "Leg PnL +1%"
-}, {
-  id: "pnlDn1PctDol",
-  label: "Leg PnL -1%"
-}, {
-  id: "convexityDol",
-  label: "Convexity"
-}, {
-  id: "underlying",
-  label: "Underlying"
-}, {
-  id: "expDate",
-  label: "Exp"
-}, {
-  id: "dte",
-  label: "DTE"
-}, {
-  id: "strike",
-  label: "Strike"
-}, {
-  id: "callPut",
-  label: "C/P"
-}, {
-  id: "rowType",
-  label: "Row Type"
-}, {
-  id: "priceLow52W",
-  label: "52W Low"
-}, {
-  id: "priceHigh52W",
-  label: "52W High"
-}, {
-  id: "overnightPrice",
-  label: "ON Price"
-}, {
-  id: "overnightChgDol",
-  label: "ON Chg $"
-}, {
-  id: "overnightChgPct",
-  label: "ON Chg %"
-}, {
-  id: "afterHoursPrice",
-  label: "AH Price"
-}, {
-  id: "postMarketChg",
-  label: "AH Chg $"
-}, {
-  id: "postMarketChgPct",
-  label: "AH Chg %"
-}, {
-  id: "assetType",
-  label: "Asset Type"
-}, {
-  id: "exchangeName",
-  label: "Exchange"
-}, {
-  id: "warnings",
-  label: "Warnings"
-}, {
-  id: "betaSP1D",
-  label: "SPβ1D"
-}, {
-  id: "betaSP1M",
-  label: "SPβ1M"
-}, {
-  id: "betaSP6M",
-  label: "SPβ6M"
-}, {
-  id: "betaSP2Y",
-  label: "SPβ2Y"
-}];
-const ALL_HOLDINGS_TABLE_COLUMN_IDS = new Set(HOLDINGS_TABLE_COLUMNS.map(c => c.id));
-const DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER = ["symbol", "name", "price", "bid", "ask", "bidSize", "askSize", "last", "lastSize", "open", "costPerShare", "priceChngPct", "priceChngDol", "dayChngPct", "dayChngDol", "qty", "gainLossDol", "gainLossPct", "marketValue", "pctOfAcct", "marginReq", "ratings", "costBasis", "peRatio", "divYield", "volume", "delta", "gamma", "theta", "vega", "rho", "openInterest", "reinvest", "dayLow", "dayHigh", "close"];
-function normalizeHoldingsTableColumnOrder(order) {
-  const allowed = ALL_HOLDINGS_TABLE_COLUMN_IDS;
-  const result = [];
-  if (Array.isArray(order)) {
-    for (const item of order) {
-      if (typeof item !== "string") continue;
-      const id = item;
-      if (!allowed.has(id)) continue;
-      if (result.includes(id)) continue;
-      result.push(id);
-    }
-  }
-  return result;
-}
-function safeModeName(name, fallback) {
-  if (typeof name !== "string") return fallback;
-  const trimmed = name.trim();
-  return trimmed.length > 0 ? trimmed : fallback;
-}
-function safeModeId(id) {
-  if (typeof id !== "string") return null;
-  const trimmed = id.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-function normalizeHoldingsTableViewModes(modes) {
-  const fallbackOrder = normalizeHoldingsTableColumnOrder(DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER);
-  const fallback = {
-    id: "default",
-    name: "Default",
-    isVisible: true,
-    columnOrder: fallbackOrder
-  };
-  if (!Array.isArray(modes) || modes.length === 0) return [fallback];
-  const result = [];
-  const usedIds = new Set();
-  for (const item of modes) {
-    if (!item || typeof item !== "object") continue;
-    const raw = item;
-    const id = safeModeId(raw.id);
-    if (!id) continue;
-    if (usedIds.has(id)) continue;
-    usedIds.add(id);
-    result.push({
-      id,
-      name: safeModeName(raw.name, id),
-      isVisible: raw.isVisible !== false,
-      columnOrder: normalizeHoldingsTableColumnOrder(raw.columnOrder ?? fallbackOrder)
-    });
-  }
-  if (result.length === 0) return [fallback];
-  return result;
-}
-function normalizeHoldingsTableActiveViewModeId(activeId, modes) {
-  const fallback = modes[0]?.id ?? "default";
-  if (typeof activeId !== "string") return fallback;
-  const trimmed = activeId.trim();
-  if (!trimmed) return fallback;
-  return modes.some(m => m.id === trimmed) ? trimmed : fallback;
-}
 ;// ./src/frontend/trade_holdings/holding_table/table/columnMetadata.ts
 
 const BASE_COLUMNS = HOLDINGS_TABLE_COLUMNS;
@@ -27773,7 +27905,7 @@ const TABLE_CSS_STYLES = `
     left: 0;
     z-index: var(--ax-z-table-sticky-header);
     text-align: left;
-    background-color: inherit;
+    background-color: var(--ax-bg-table-head);
     border-right: 1px solid var(--ax-border-subtle);
 }
 
@@ -27794,7 +27926,7 @@ const TABLE_CSS_STYLES = `
     z-index: var(--ax-z-table-sticky-header);
     text-align: center;
     cursor: default;
-    background-color: inherit;
+    background-color: var(--ax-bg-table-head);
     border-left: 1px solid var(--ax-border-subtle);
 }
 
@@ -27908,12 +28040,17 @@ const TABLE_CSS_STYLES = `
     background-color: var(--ax-bg-subtle);
 }
 
+/* Group rows: layer the translucent group tint over the opaque table base so
+   the sticky cell stays fully opaque (otherwise scrolled-under data columns
+   bleed through). Same approach for major-group. */
 .table-row--group .table-cell-sticky {
-    background-color: var(--ax-bg-group);
+    background-color: var(--ax-bg-table);
+    background-image: linear-gradient(var(--ax-bg-group), var(--ax-bg-group));
 }
 
 .table-row--major-group .table-cell-sticky {
-    background-color: var(--ax-bg-group-strong);
+    background-color: var(--ax-bg-table);
+    background-image: linear-gradient(var(--ax-bg-group-strong), var(--ax-bg-group-strong));
 }
 
 .table-cell-sticky::after {
@@ -27940,11 +28077,13 @@ const TABLE_CSS_STYLES = `
 }
 
 .table-row--group .table-cell-sticky-right {
-    background-color: var(--ax-bg-group);
+    background-color: var(--ax-bg-table);
+    background-image: linear-gradient(var(--ax-bg-group), var(--ax-bg-group));
 }
 
 .table-row--major-group .table-cell-sticky-right {
-    background-color: var(--ax-bg-group-strong);
+    background-color: var(--ax-bg-table);
+    background-image: linear-gradient(var(--ax-bg-group-strong), var(--ax-bg-group-strong));
 }
 
 .table-cell-sticky-right::before {
@@ -80639,33 +80778,7 @@ const STORAGE_CONFIG = {
     important: true,
     compress: false,
     type: "object",
-    default: {
-      refreshInterval: 1000,
-      holdingsRefreshInterval: 10000,
-      quotesRefreshInterval: 15000,
-      newsYahooMacroRefreshInterval: 120000,
-      newsYahooSymbolRefreshInterval: 120000,
-      newsBarronsRefreshInterval: 180000,
-      newsFinancialJuiceRefreshInterval: 45000,
-      isRefreshing: true,
-      isHoldingsRefreshing: true,
-      isQuotesRefreshing: true,
-      enableStreamer: true,
-      holdingsTableViewModes: [{
-        id: "default",
-        name: "Default",
-        isVisible: true,
-        columnOrder: DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER
-      }],
-      holdingsTableActiveViewModeId: "default",
-      accountSnapshotIntervalMs: 10_000,
-      accountSnapshotRecordNight: false,
-      accountSnapshotAutoArchive: true,
-      accountSnapshotArchiveThreshold: 200_000,
-      accountSnapshotRetentionDays: 7,
-      betaRefreshIntervalMs: 7_200_000,
-      extraBetaTickers: []
-    }
+    default: defaultSettings
   },
   lastUpdate: {
     important: true,
@@ -82528,128 +82641,6 @@ class AccountSnapshotRecorder {
     }
   }
 }
-;// ./src/shared/settings/settingsNormalization.ts
-
-
-const defaultSettings = {
-  refreshInterval: 1000,
-  holdingsRefreshInterval: 10000,
-  quotesRefreshInterval: 15000,
-  newsYahooMacroRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.yahooMacroMs,
-  newsYahooSymbolRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs,
-  newsBarronsRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs,
-  newsFinancialJuiceRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs,
-  newsSchwabRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
-  newsYahooMacroEnabled: true,
-  newsYahooSymbolEnabled: true,
-  newsBarronsEnabled: true,
-  newsFinancialJuiceEnabled: true,
-  newsSchwabEnabled: true,
-  isRefreshing: true,
-  isHoldingsRefreshing: true,
-  isQuotesRefreshing: true,
-  enableStreamer: true,
-  warningRulesJson: '{\n  "version": 1,\n  "rules": []\n}',
-  holdingsTableViewModes: [{
-    id: "default",
-    name: "Default",
-    isVisible: true,
-    columnOrder: DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER
-  }],
-  holdingsTableActiveViewModeId: "default",
-  accountSnapshotIntervalMs: 10_000,
-  accountSnapshotRecordNight: false,
-  accountSnapshotAutoArchive: true,
-  accountSnapshotArchiveThreshold: 200_000,
-  accountSnapshotRetentionDays: 7,
-  betaRefreshIntervalMs: 7_200_000
-};
-const VALID_ANCHOR_MODES = new Set(["shares", "deltaDollar", "deltaDollarPct", "betaPct"]);
-const normalizeRebalanceTargets = raw => {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const obj = raw;
-  const result = {};
-  for (const [key, entry] of Object.entries(obj)) {
-    if (typeof key !== "string" || key.length === 0) continue;
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const e = entry;
-    const anchor = e.anchor;
-    const value = Number(e.value);
-    if (!VALID_ANCHOR_MODES.has(anchor) || !Number.isFinite(value)) continue;
-    result[key] = {
-      anchor,
-      value: Math.round(value * 100) / 100
-    };
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-};
-const normalizeRebalanceProfiles = raw => {
-  if (!Array.isArray(raw)) return undefined;
-  const byId = new Map();
-  let fallbackIdx = 0;
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const candidate = entry;
-    const rebalanceTargets = normalizeRebalanceTargets(candidate.rebalanceTargets);
-    if (!rebalanceTargets) continue;
-    const createdAtRaw = Number(candidate.createdAt);
-    const createdAt = Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? Math.round(createdAtRaw) : Date.now();
-    const fallbackId = `rp_${createdAt}_${fallbackIdx++}`;
-    const id = typeof candidate.id === "string" && candidate.id.trim().length > 0 ? candidate.id.trim().slice(0, 80) : fallbackId;
-    const fallbackName = new Date(createdAt).toISOString().slice(0, 16).replace("T", " ");
-    const name = typeof candidate.name === "string" && candidate.name.trim().length > 0 ? candidate.name.trim().slice(0, 160) : fallbackName;
-    const normalized = {
-      id,
-      name,
-      createdAt,
-      rebalanceTargets
-    };
-    const prev = byId.get(id);
-    if (!prev || normalized.createdAt >= prev.createdAt) byId.set(id, normalized);
-  }
-  const profiles = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
-  return profiles.length > 0 ? profiles : undefined;
-};
-const normalizeSettings = input => {
-  const next = {
-    ...input
-  };
-  const normalizePositiveInt = (value, fallback) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-    return Math.round(parsed);
-  };
-  next.newsYahooMacroRefreshInterval = normalizePositiveInt(next.newsYahooMacroRefreshInterval, defaultSettings.newsYahooMacroRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.yahooMacroMs);
-  next.newsYahooSymbolRefreshInterval = normalizePositiveInt(next.newsYahooSymbolRefreshInterval, defaultSettings.newsYahooSymbolRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.yahooSymbolMs);
-  next.newsBarronsRefreshInterval = normalizePositiveInt(next.newsBarronsRefreshInterval, defaultSettings.newsBarronsRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.barronsMs);
-  next.newsFinancialJuiceRefreshInterval = normalizePositiveInt(next.newsFinancialJuiceRefreshInterval, defaultSettings.newsFinancialJuiceRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceMs);
-  next.newsSchwabRefreshInterval = normalizePositiveInt(next.newsSchwabRefreshInterval, defaultSettings.newsSchwabRefreshInterval ?? DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs);
-  next.holdingsTableViewModes = normalizeHoldingsTableViewModes(next.holdingsTableViewModes);
-  next.holdingsTableActiveViewModeId = normalizeHoldingsTableActiveViewModeId(next.holdingsTableActiveViewModeId, next.holdingsTableViewModes);
-  const snapshotIntervalRaw = Number(next.accountSnapshotIntervalMs);
-  next.accountSnapshotIntervalMs = Number.isFinite(snapshotIntervalRaw) && snapshotIntervalRaw > 0 ? Math.round(snapshotIntervalRaw) : defaultSettings.accountSnapshotIntervalMs;
-  next.accountSnapshotRecordNight = next.accountSnapshotRecordNight === true;
-  next.accountSnapshotAutoArchive = next.accountSnapshotAutoArchive !== false;
-  const snapshotArchiveThresholdRaw = Number(next.accountSnapshotArchiveThreshold);
-  next.accountSnapshotArchiveThreshold = Number.isFinite(snapshotArchiveThresholdRaw) && snapshotArchiveThresholdRaw > 0 ? Math.round(snapshotArchiveThresholdRaw) : defaultSettings.accountSnapshotArchiveThreshold;
-  const snapshotRetentionDaysRaw = Number(next.accountSnapshotRetentionDays);
-  next.accountSnapshotRetentionDays = Number.isFinite(snapshotRetentionDaysRaw) && snapshotRetentionDaysRaw >= 1 ? Math.round(snapshotRetentionDaysRaw) : defaultSettings.accountSnapshotRetentionDays;
-  if (next.targetAllocations && typeof next.targetAllocations === "object" && !Array.isArray(next.targetAllocations)) {
-    const cleaned = {};
-    for (const [key, val] of Object.entries(next.targetAllocations)) {
-      const num = Number(val);
-      if (typeof key === "string" && key.length > 0 && Number.isFinite(num) && num >= 0 && num <= 100) {
-        cleaned[key] = Math.round(num * 100) / 100;
-      }
-    }
-    next.targetAllocations = Object.keys(cleaned).length > 0 ? cleaned : undefined;
-  } else {
-    next.targetAllocations = undefined;
-  }
-  next.rebalanceTargets = normalizeRebalanceTargets(next.rebalanceTargets);
-  next.rebalanceProfiles = normalizeRebalanceProfiles(next.rebalanceProfiles);
-  return next;
-};
 ;// ./src/AlexQuant.ts
 
 

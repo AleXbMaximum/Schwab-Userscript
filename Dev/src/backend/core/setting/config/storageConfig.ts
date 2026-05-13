@@ -1,5 +1,4 @@
-import type{ Settings } from "shared/types/core";
-import { DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER } from "shared/types/holdingsTableColumns";
+import { defaultSettings } from "shared/settings/settingsNormalization";
 
 export interface StorageConfigEntry {
   important: boolean;
@@ -25,35 +24,7 @@ export const STORAGE_CONFIG: Record<string, StorageConfigEntry> = {
     important: true,
     compress: false,
     type: "object",
-    default: {
-      refreshInterval: 1000,
-      holdingsRefreshInterval: 10000,
-      quotesRefreshInterval: 15000,
-      newsYahooMacroRefreshInterval: 120000,
-      newsYahooSymbolRefreshInterval: 120000,
-      newsBarronsRefreshInterval: 180000,
-      newsFinancialJuiceRefreshInterval: 45000,
-      isRefreshing: true,
-      isHoldingsRefreshing: true,
-      isQuotesRefreshing: true,
-      enableStreamer: true,
-      holdingsTableViewModes: [
-        {
-          id: "default",
-          name: "Default",
-          isVisible: true,
-          columnOrder: DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER,
-        },
-      ],
-      holdingsTableActiveViewModeId: "default",
-      accountSnapshotIntervalMs: 10_000,
-      accountSnapshotRecordNight: false,
-      accountSnapshotAutoArchive: true,
-      accountSnapshotArchiveThreshold: 200_000,
-      accountSnapshotRetentionDays: 7,
-      betaRefreshIntervalMs: 7_200_000,
-      extraBetaTickers: [],
-    } as Settings,
+    default: defaultSettings,
   },
   lastUpdate: {
     important: true,

@@ -10,13 +10,22 @@ const log = logService.namespace("streamer");
 // Decoded fields:
 //   1 (string)  id            — ticker symbol
 //   2 (float32) price         — current price
-//   3 (sint64)  time          — epoch ms (zigzag encoded)
 //   5 (string)  exchange      — e.g. "NMS", "NYQ"
 //   6 (varint)  quoteType     — 8 = EQUITY
-//   7 (varint)  marketHours   — 1=PRE, 2=REGULAR, 3=POST, 4=EXTENDED
+//   7 (varint)  marketHours   — see MarketHours enum below
 //   8 (float32) changePercent — % change from close (percentage-point form)
 //  12 (float32) change        — $ change from close
 //  27 (varint)  priceHint     — decimal precision hint
+// Fields not decoded (skipped by skipField): 3 (time/sint64 — JS int safety; we use
+// the receive-side wall clock downstream), 5/6/27 (don't influence routing).
+
+/** Yahoo's `marketHours` enum on field 7. */
+const MarketHours = {
+  PRE: 1,
+  REGULAR: 2,
+  POST: 3,
+  EXTENDED: 4,
+} as const;
 
 export type OvernightPriceUpdate = {
   symbol: string;
@@ -25,7 +34,6 @@ export type OvernightPriceUpdate = {
   /** Ratio form (÷100), matching Schwab convention */
   changePercent: number;
   marketHours: number;
-  time: number;
 };
 
 export type OvernightListener = (updates: OvernightPriceUpdate[]) => void;
@@ -35,7 +43,10 @@ const RECONNECT_BASE_MS = 2_000;
 const RECONNECT_MAX_MS = 60_000;
 
 /** Market-hours values that represent overnight / extended trading */
-const OVERNIGHT_MARKET_HOURS = new Set([3, 4]); // POST_MARKET, EXTENDED_HOURS
+const OVERNIGHT_MARKET_HOURS = new Set<number>([
+  MarketHours.POST,
+  MarketHours.EXTENDED,
+]);
 
 // ── Protobuf primitives (no external dependency) ────────────────────────────
 
@@ -96,7 +107,6 @@ function skipField(buf: Uint8Array, pos: number, wireType: number): number {
 type DecodedMessage = {
   id: string;
   price: number;
-  time: number;
   marketHours: number;
   changePercent: number;
   change: number;
@@ -112,7 +122,6 @@ function decodeYahooPricing(b64: string): DecodedMessage | null {
 
   let id = "";
   let price = NaN;
-  let time = 0;
   let marketHours = 0;
   let changePercent = NaN;
   let change = NaN;
@@ -139,16 +148,6 @@ function decodeYahooPricing(b64: string): DecodedMessage | null {
         if (wireType === 5) {
           price = readFloat32(bytes, pos);
           pos += 4;
-        } else {
-          pos = skipField(bytes, pos, wireType);
-        }
-        break;
-      case 3: // time (sint64 zigzag varint) — read as raw varint for epoch ms
-        if (wireType === 0) {
-          // Read raw varint, zigzag-decode to get epoch ms
-          const [raw, p] = readVarint(bytes, pos);
-          pos = p;
-          time = (raw >>> 1) ^ -(raw & 1); // zigzag decode (safe for 32-bit portion)
         } else {
           pos = skipField(bytes, pos, wireType);
         }
@@ -185,7 +184,7 @@ function decodeYahooPricing(b64: string): DecodedMessage | null {
   }
 
   if (!id) return null;
-  return { id, price, time, marketHours, changePercent, change };
+  return { id, price, marketHours, changePercent, change };
 }
 
 // ── YahooOvernightStreamer ───────────────────────────────────────────────────
@@ -249,8 +248,13 @@ export class YahooOvernightStreamer {
       }
     };
 
-    this.socket.onclose = () => {
-      log.info("ws.disconnected", { intentional: this.intentionalDisconnect });
+    this.socket.onclose = (event: CloseEvent) => {
+      log.info("ws.disconnected", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+        intentional: this.intentionalDisconnect,
+      });
       this.socket = null;
       if (!this.intentionalDisconnect && this.reconnectEnabled) {
         this.scheduleReconnect();
@@ -296,7 +300,8 @@ export class YahooOvernightStreamer {
       document.removeEventListener("visibilitychange", this.visibilityHandler);
       this.visibilityHandler = null;
     }
-    log.info("ws.disconnect");
+    // No log here — socket.close() will fire onclose which logs ws.disconnected
+    // with intentional=true. Avoids duplicate-event noise.
   }
 
   subscribe(symbols: string[]): void {
@@ -359,7 +364,6 @@ export class YahooOvernightStreamer {
         ? decoded.changePercent / 100
         : 0,
       marketHours: decoded.marketHours,
-      time: decoded.time,
     };
 
     for (const listener of this.listeners) {

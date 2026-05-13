@@ -98,8 +98,8 @@ export type Settings = {
   isHoldingsRefreshing: boolean;
   isQuotesRefreshing: boolean;
   enableStreamer: boolean;
-  enableOvernightPrice?: boolean;
-  enableBalances?: boolean;
+  enableOvernightPrice: boolean;
+  enableBalances: boolean;
   balancesRefreshInterval?: number;
 
   warningRulesJson?: string;

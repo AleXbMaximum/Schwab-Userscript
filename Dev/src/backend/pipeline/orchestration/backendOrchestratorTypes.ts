@@ -5,8 +5,8 @@ export interface BackendOrchestratorOptions {
   holdingsRefreshInterval?: number;
   quotesRefreshInterval?: number;
   betaRefreshIntervalMs?: number;
-  enableStreamer?: boolean;
-  enableOvernightPrice?: boolean;
+  enableStreamer: boolean;
+  enableOvernightPrice: boolean;
   warningRulesJson?: string | null;
   balancesRefreshInterval?: number;
 }
