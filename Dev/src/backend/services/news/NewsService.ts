@@ -80,6 +80,11 @@ const NEWS_SOURCE_LABELS: Record<NewsFetchSource, string> = {
 };
 
 const LOG_SYMBOL_SAMPLE_LIMIT = 10;
+const FJ_SOURCE_LIMIT = 1000;
+const SCHWAB_SOURCE_LIMIT = 1000;
+const YAHOO_MACRO_SOURCE_LIMIT = 1000;
+const YAHOO_SYMBOL_SOURCE_LIMIT = 1000;
+const BARRONS_SOURCE_LIMIT = 1000;
 
 export { DEFAULT_NEWS_REFRESH_INTERVALS };
 
@@ -399,25 +404,77 @@ class NewsService {
 
       let items: UnifiedNewsItem[];
       if (source === "yahooMacro") {
-        items = this.sortNewestFirst(await fetchYahooMacroNews());
+        // Yahoo Macro returns the top global-macro headlines; older items
+        // roll off as new ones arrive. Merge with previous so the feed
+        // accumulates instead of clipping to the latest batch.
+        const fresh = await fetchYahooMacroNews();
+        const merged = new Map<string, UnifiedNewsItem>();
+        for (const it of this.sourceItems.yahooMacro) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(
+          0,
+          YAHOO_MACRO_SOURCE_LIMIT,
+        );
       } else if (source === "financialJuice") {
-        items = this.sortNewestFirst(await fetchFinancialJuiceNews());
+        // FJ RSS returns the top items per poll; merge with previous so the
+        // feed accumulates instead of clipping to the most recent batch.
+        const fresh = await fetchFinancialJuiceNews();
+        const merged = new Map<string, UnifiedNewsItem>();
+        for (const it of this.sourceItems.financialJuice) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(
+          0,
+          FJ_SOURCE_LIMIT,
+        );
       } else if (source === "schwab") {
-        items = this.sortNewestFirst(await fetchSchwabNews());
+        // Schwab returns only the top-N latest headlines per poll, so items
+        // roll off the window as new ones arrive. Merge with the existing
+        // snapshot (deduped by stable id) so the visible feed grows
+        // monotonically instead of clipping to the most recent N.
+        const fresh = await fetchSchwabNews();
+        const merged = new Map<string, UnifiedNewsItem>();
+        for (const it of this.sourceItems.schwab) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(
+          0,
+          SCHWAB_SOURCE_LIMIT,
+        );
       } else if (source === "yahooSymbol") {
-        items = this.sortNewestFirst(
-          await this.fetchPerSymbol(fetchYahooSymbolNews),
+        // Per-symbol pull returns only the top-N per symbol — older items
+        // roll off. Merge with previous so per-symbol history accumulates.
+        // Stale entries from removed symbols get cleared by updateSymbols
+        // when the symbol set transitions to empty.
+        const fresh = await this.fetchPerSymbol(fetchYahooSymbolNews);
+        const merged = new Map<string, UnifiedNewsItem>();
+        for (const it of this.sourceItems.yahooSymbol) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(
+          0,
+          YAHOO_SYMBOL_SOURCE_LIMIT,
         );
       } else {
-        items = this.sortNewestFirst(
-          await this.fetchPerSymbol(fetchBarronsAllNews),
+        // Barron's: same merge rationale as Yahoo Symbol.
+        const fresh = await this.fetchPerSymbol(fetchBarronsAllNews);
+        const merged = new Map<string, UnifiedNewsItem>();
+        for (const it of this.sourceItems.barrons) merged.set(it.id, it);
+        for (const it of fresh) merged.set(it.id, it);
+        items = this.sortNewestFirst(Array.from(merged.values())).slice(
+          0,
+          BARRONS_SOURCE_LIMIT,
         );
       }
 
+      // Surface a delta against the previous snapshot so the log doesn't
+      // look like a successful refresh on every poll when nothing actually
+      // changed. `newIds` = items whose id wasn't present last time.
+      const prevIds = new Set(this.sourceItems[source].map((it) => it.id));
+      let newIds = 0;
+      for (const it of items) if (!prevIds.has(it.id)) newIds++;
       this.logger.info("News Fetched", {
         source: sourceLabel,
         sourceKey: source,
         itemCount: items.length,
+        newIds,
         symbolCount: isSymbolScoped ? this.symbols.length : undefined,
         symbolSample: isSymbolScoped ? this.getSymbolSample() : undefined,
         durationMs: Date.now() - startedAt,
