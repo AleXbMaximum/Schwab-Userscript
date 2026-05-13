@@ -11,9 +11,10 @@ const log = logService.namespace("network");
 export interface SchwabNewsHeadline {
   headline: string;
   source: string;
-  dateTime: string;
-  docKey: string;
-  [key: string]: unknown;
+  date: string;
+  key: string;
+  teaser?: string;
+  [extraKey: string]: unknown;
 }
 
 export interface SchwabNewsSearchResult {
