@@ -5,6 +5,7 @@ import {
   getNewsItemSymbols,
   matchesNewsSourceFilter,
   formatNewsItemsForExport,
+  pinUnreadHeadlines,
   sortNewsItemsNewestFirst,
 } from "../../backend/services/news/types";
 import type {
@@ -148,14 +149,16 @@ export function news_renderPage(
       );
     }
 
+    // Display order: unread first (with headlines pinned to the top of the
+    // unread bucket), then read items in chronological order.
     const timeSorted = sortNewsItemsNewestFirst(filtered);
-    const newFirst: (UnifiedNewsItem & { tags?: string[] })[] = [];
-    const oldAfter: (UnifiedNewsItem & { tags?: string[] })[] = [];
+    const unread: (UnifiedNewsItem & { tags?: string[] })[] = [];
+    const read: (UnifiedNewsItem & { tags?: string[] })[] = [];
     for (const item of timeSorted) {
-      if (item.isNew) newFirst.push(item);
-      else oldAfter.push(item);
+      if (item.isNew) unread.push(item);
+      else read.push(item);
     }
-    return [...newFirst, ...oldAfter];
+    return [...pinUnreadHeadlines(unread), ...read];
   };
 
   const getSelectedItems = (): (UnifiedNewsItem & { tags?: string[] })[] =>

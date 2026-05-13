@@ -107,6 +107,24 @@ export function sortNewsItemsNewestFirst<T extends UnifiedNewsItem>(
   );
 }
 
+/**
+ * Move unread headline items ahead of everything else, preserving relative
+ * order within each bucket. Shared by the news page (so urgent items sit
+ * above chronological order) and the snapshot panel (so they survive the
+ * 8-item slice). Fall back happens automatically once `isNew` flips off.
+ */
+export function pinUnreadHeadlines<
+  T extends Pick<UnifiedNewsItem, "isHeadline" | "isNew">,
+>(items: T[]): T[] {
+  const pinned: T[] = [];
+  const rest: T[] = [];
+  for (const item of items) {
+    if (item.isHeadline && item.isNew) pinned.push(item);
+    else rest.push(item);
+  }
+  return [...pinned, ...rest];
+}
+
 export const NEWS_SOURCE_LABELS: Record<string, string> = {
   yahoo: "Yahoo",
   barrons: "Barron's",
