@@ -114,6 +114,9 @@ function syncRecorderSettings(
       financialJuice: settings.newsFinancialJuiceRssEnabled !== false,
       schwab: settings.newsSchwabEnabled !== false,
     });
+    newsService.setStreamerEnabled(
+      (settings as any).newsFinancialJuiceStreamEnabled !== false,
+    );
   };
 
   let renderEngine: RenderEngineLike | null = null;

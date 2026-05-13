@@ -13,5 +13,6 @@
 // @connect      www.alphavantage.co
 // @connect      www.barrons.com
 // @connect      www.financialjuice.com
+// @connect      rt.financialjuice.com
 // @license      CC BY-NC-ND 4.0
 // ==/UserScript==

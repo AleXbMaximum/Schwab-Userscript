@@ -12,6 +12,7 @@ import {
   fetchFinancialJuiceNews,
   fetchSchwabNews,
 } from "./newsFetchers";
+import { financialJuiceStreamer } from "../../core/network/financialJuice/financialJuiceStreamer";
 import { sortNewsItemsNewestFirst } from "./types";
 import type { UnifiedNewsItem } from "./types";
 import {
@@ -130,6 +131,8 @@ class NewsService {
     financialJuice: true,
     schwab: true,
   };
+  private streamerEnabled = true;
+  private streamerListener: (() => void) | null = null;
   private providerResolver: (() => Promise<AIProvidersConfig>) | null = null;
 
   /**
@@ -165,6 +168,7 @@ class NewsService {
       // Pre-warm the memory store eagerly so rebuildFromSources/markRead
       // don't pay the async DB-open cost on their first call.
       void this.ensureMemory();
+      if (this.streamerEnabled) this.attachStreamer();
       this.startPolling();
       void this.refresh();
     }
@@ -174,6 +178,52 @@ class NewsService {
     this.stopPolling();
     this.pendingSources.clear();
     this.started = false;
+    this.detachStreamer();
+  }
+
+  /**
+   * Connect the FJ realtime stream. When the WS pushes new items, they
+   * become authoritative for the financialJuice source; the RSS poll
+   * falls back to fetching only if the streamer isn't connected.
+   */
+  private attachStreamer(): void {
+    if (this.streamerListener) return;
+    const listener = (): void => {
+      // Streamer pushed: re-merge buffered streamer items into the
+      // financialJuice bucket.
+      void this.requestFetch(["financialJuice"]);
+    };
+    this.streamerListener = listener;
+    financialJuiceStreamer.addListener(listener);
+    void financialJuiceStreamer.start();
+  }
+
+  private detachStreamer(): void {
+    if (this.streamerListener) {
+      financialJuiceStreamer.removeListener(this.streamerListener);
+      this.streamerListener = null;
+    }
+    financialJuiceStreamer.stop();
+  }
+
+  /**
+   * Toggle the FinancialJuice realtime stream independent of RSS. The
+   * RSS-source `financialJuice` flag continues to govern polling-based
+   * fallback fetches.
+   */
+  setStreamerEnabled(next: boolean): void {
+    if (this.streamerEnabled === next) return;
+    this.streamerEnabled = next;
+    if (!this.started) return;
+    if (next) {
+      this.attachStreamer();
+    } else {
+      this.detachStreamer();
+    }
+  }
+
+  getStreamerEnabled(): boolean {
+    return this.streamerEnabled;
   }
 
   updateSymbols(symbols: string[]): void {
@@ -231,12 +281,19 @@ class NewsService {
 
   getAutoRefreshLabel(): string {
     const i = this.refreshIntervals;
+    const label = (source: NewsFetchSource, intervalMs: number): string =>
+      this.sourceEnabled[source] ? formatInterval(intervalMs) : "Off";
+    const fjLabel = this.sourceEnabled.financialJuice
+      ? formatInterval(i.financialJuiceRssMs)
+      : this.streamerEnabled
+        ? "stream"
+        : "Off";
     return (
-      `Auto-refresh: FJ ${formatInterval(i.financialJuiceRssMs)}` +
-      ` · Yahoo Macro ${formatInterval(i.yahooMacroMs)}` +
-      ` · Yahoo Symbol ${formatInterval(i.yahooSymbolMs)}` +
-      ` · Barron's ${formatInterval(i.barronsMs)}` +
-      ` · Schwab ${formatInterval(i.schwabMs)}`
+      `Auto-refresh: FJ ${fjLabel}` +
+      ` · Yahoo Macro ${label("yahooMacro", i.yahooMacroMs)}` +
+      ` · Yahoo Symbol ${label("yahooSymbol", i.yahooSymbolMs)}` +
+      ` · Barron's ${label("barrons", i.barronsMs)}` +
+      ` · Schwab ${label("schwab", i.schwabMs)}`
     );
   }
 
@@ -392,8 +449,18 @@ class NewsService {
     await this._memoryInitPromise;
   }
 
-  /** Whether `source` has any active fetch path right now. */
+  /**
+   * Returns whether `source` has any active fetch path right now.
+   * - Regular sources: just the per-source enabled flag.
+   * - FinancialJuice: RSS-enabled OR (streamer-enabled AND connected) —
+   *   the streamer's connected items are a valid fetch product even
+   *   when RSS polling is off, so we don't want to drop streamer pushes.
+   */
   private isFetchAllowed(source: NewsFetchSource): boolean {
+    if (source === "financialJuice") {
+      if (this.sourceEnabled.financialJuice) return true;
+      return this.streamerEnabled && financialJuiceStreamer.isConnected;
+    }
     return this.sourceEnabled[source];
   }
 
@@ -495,9 +562,28 @@ class NewsService {
           YAHOO_MACRO_SOURCE_LIMIT,
         );
       } else if (source === "financialJuice") {
-        // FJ RSS returns the top items per poll; merge with previous so the
-        // feed accumulates instead of clipping to the most recent batch.
-        const fresh = await fetchFinancialJuiceNews();
+        // Two writers feed this source, each independently togglable:
+        //   1. RSS pull (bootstrap + polling) — gated by sourceEnabled
+        //   2. Streamer pushes (live deltas) — gated by streamerEnabled
+        // When the streamer is connected, its buffered items are
+        // authoritative (RSS would just re-pull the same data); RSS only
+        // runs as a fallback when the stream is disabled or down.
+        const useStream =
+          this.streamerEnabled && financialJuiceStreamer.isConnected;
+        const useRss = this.sourceEnabled.financialJuice;
+        const streamerItems = useStream
+          ? financialJuiceStreamer.getItems()
+          : [];
+        let fresh: UnifiedNewsItem[];
+        if (streamerItems.length > 0) {
+          fresh = streamerItems;
+        } else if (useRss) {
+          fresh = await fetchFinancialJuiceNews();
+        } else {
+          // Both off (or stream on but not yet connected and RSS off):
+          // nothing fresh to merge, just keep prior cache as the snapshot.
+          fresh = [];
+        }
         const merged = new Map<string, UnifiedNewsItem>();
         for (const it of this.sourceItems.financialJuice) merged.set(it.id, it);
         for (const it of fresh) merged.set(it.id, it);
