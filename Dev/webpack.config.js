@@ -58,7 +58,7 @@ function buildLocalLoaderSource(headerContent, bundleFile) {
     );
   }
 
-  const devUrl = `${localDevHost}/.dist/${bundleFile}`;
+  const devUrl = `${localDevHost}/Dev/.dist/${bundleFile}`;
 
   return `${transformed.join("\n")}
 
