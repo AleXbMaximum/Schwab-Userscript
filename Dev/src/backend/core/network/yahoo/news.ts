@@ -10,13 +10,18 @@ export async function fetchYahooNews(symbol: string): Promise<NewsItem[]> {
     const text = await gmGet(url);
     const data = JSON.parse(text) as any;
     const newsArr: any[] = data?.news ?? [];
-    const items = newsArr.map((n) => ({
-      title: String(n.title ?? ""),
-      summary: String(n.summary ?? n.title ?? ""),
-      publishedAt: new Date((n.providerPublishTime ?? 0) * 1000).toISOString(),
-      source: String(n.publisher ?? "Unknown"),
-      url: n.link ?? undefined,
-    }));
+    const items: NewsItem[] = [];
+    for (const n of newsArr) {
+      const publishedAt = parseYahooPublishedAt(n.providerPublishTime);
+      if (!publishedAt) continue;
+      items.push({
+        title: String(n.title ?? ""),
+        summary: String(n.summary ?? n.title ?? ""),
+        publishedAt,
+        source: String(n.publisher ?? "Unknown"),
+        url: n.link ?? undefined,
+      });
+    }
     log.debug("news.fetch.yahoo", { symbol, itemCount: items.length });
     return items;
   } catch (err) {
@@ -26,6 +31,12 @@ export async function fetchYahooNews(symbol: string): Promise<NewsItem[]> {
     });
     return [];
   }
+}
+
+function parseYahooPublishedAt(raw: unknown): string | null {
+  const sec = Number(raw);
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  return new Date(sec * 1000).toISOString();
 }
 
 export async function fetchYahooGlobalMacroNews(): Promise<NewsItem[]> {
@@ -46,18 +57,17 @@ export async function fetchYahooGlobalMacroNews(): Promise<NewsItem[]> {
     try {
       const data = JSON.parse(result.value) as any;
       for (const n of (data?.news ?? []) as any[]) {
-        if (!seenTitles.has(n.title)) {
-          seenTitles.add(n.title);
-          allNews.push({
-            title: String(n.title ?? ""),
-            summary: String(n.summary ?? n.title ?? ""),
-            publishedAt: new Date(
-              (n.providerPublishTime ?? 0) * 1000,
-            ).toISOString(),
-            source: String(n.publisher ?? "Unknown"),
-            url: n.link ?? undefined,
-          });
-        }
+        if (seenTitles.has(n.title)) continue;
+        const publishedAt = parseYahooPublishedAt(n.providerPublishTime);
+        if (!publishedAt) continue;
+        seenTitles.add(n.title);
+        allNews.push({
+          title: String(n.title ?? ""),
+          summary: String(n.summary ?? n.title ?? ""),
+          publishedAt,
+          source: String(n.publisher ?? "Unknown"),
+          url: n.link ?? undefined,
+        });
       }
     } catch {
       // ignore parse errors

@@ -51,11 +51,18 @@ export async function fetchBarronsAllNews(
   const news = await fetchBarronsNewsOnly(symbol);
 
   const out: UnifiedNewsItem[] = [];
-  for (const story of news.barrons)
-    out.push(mapBarrons(story, "barrons", symbol));
-  for (const story of news.dowJones)
-    out.push(mapBarrons(story, "dowjones", symbol));
-  for (const story of news.press) out.push(mapBarrons(story, "press", symbol));
+  for (const story of news.barrons) {
+    const m = mapBarrons(story, "barrons", symbol);
+    if (m) out.push(m);
+  }
+  for (const story of news.dowJones) {
+    const m = mapBarrons(story, "dowjones", symbol);
+    if (m) out.push(m);
+  }
+  for (const story of news.press) {
+    const m = mapBarrons(story, "press", symbol);
+    if (m) out.push(m);
+  }
   return out;
 }
 
@@ -63,12 +70,18 @@ function mapBarrons(
   s: BarronsNewsStory,
   sourceType: "barrons" | "dowjones" | "press",
   symbol: string,
-): UnifiedNewsItem {
+): UnifiedNewsItem | null {
+  // Require a parseable timestamp. An empty `timestampValue`/`timestamp` would
+  // surface as "Invalid Date" in the UI and break newest-first ordering.
+  const raw = s.timestampValue || s.timestamp;
+  if (!raw) return null;
+  const parsedMs = new Date(raw).getTime();
+  if (!Number.isFinite(parsedMs)) return null;
   return {
     id: generateNewsId(s.headline, s.provider || sourceType),
     title: s.headline,
     summary: s.summary,
-    publishedAt: s.timestampValue || s.timestamp,
+    publishedAt: new Date(parsedMs).toISOString(),
     source: s.provider || sourceType,
     sourceType,
     url: s.url,
@@ -229,21 +242,28 @@ function extractFinancialJuiceSymbolTags(
 export async function fetchSchwabNews(): Promise<UnifiedNewsItem[]> {
   try {
     const items = await fetchSchwabNewsHeadlines(null, { limit: 25 });
-    return items.map(mapSchwabHeadline);
+    const out: UnifiedNewsItem[] = [];
+    for (const raw of items) {
+      if (!raw.date) continue;
+      const parsedMs = new Date(raw.date).getTime();
+      if (!Number.isFinite(parsedMs)) continue;
+      out.push(mapSchwabHeadline(raw, parsedMs));
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
-function mapSchwabHeadline(n: SchwabNewsHeadline): UnifiedNewsItem {
-  const publishedAt = n.dateTime
-    ? new Date(n.dateTime).toISOString()
-    : new Date().toISOString();
+function mapSchwabHeadline(
+  n: SchwabNewsHeadline,
+  parsedMs: number,
+): UnifiedNewsItem {
   return {
     id: generateNewsId(n.headline, "schwab"),
     title: n.headline,
-    summary: "",
-    publishedAt,
+    summary: String(n.teaser ?? ""),
+    publishedAt: new Date(parsedMs).toISOString(),
     source: n.source || "Schwab",
     sourceType: "schwab",
     url: undefined,
@@ -274,6 +294,9 @@ export async function fetchFinancialJuiceNews(): Promise<UnifiedNewsItem[]> {
       const link =
         entry.querySelector("link")?.textContent?.trim() || undefined;
       const pubDate = entry.querySelector("pubDate")?.textContent?.trim() ?? "";
+      if (!pubDate) continue;
+      const pubDateMs = new Date(pubDate).getTime();
+      if (!Number.isFinite(pubDateMs)) continue;
       const rawDesc =
         entry.querySelector("description")?.textContent?.trim() ?? "";
       const isHeadline = /<script\b/i.test(rawDesc);
@@ -287,9 +310,7 @@ export async function fetchFinancialJuiceNews(): Promise<UnifiedNewsItem[]> {
         id: generateNewsId(title, "financialjuice"),
         title,
         summary: description,
-        publishedAt: pubDate
-          ? new Date(pubDate).toISOString()
-          : new Date().toISOString(),
+        publishedAt: new Date(pubDateMs).toISOString(),
         source: "FinancialJuice",
         sourceType: "financialjuice",
         url: link,
