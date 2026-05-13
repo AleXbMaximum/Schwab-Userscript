@@ -1,6 +1,7 @@
 import { openAlexQuantDB } from "../../core/db/core/AlexQuantDB";
 import { KVStore } from "../../core/db/core/KVStore";
 import {
+  DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS,
   DEFAULT_NEWS_REFRESH_INTERVALS,
   type NewsRefreshIntervals,
 } from "../../../shared/settings/newsRefreshDefaults";
@@ -135,6 +136,15 @@ class NewsService {
   private streamerEnabled = true;
   private streamerListener: (() => void) | null = null;
   private providerResolver: (() => Promise<AIProvidersConfig>) | null = null;
+  /**
+   * Cold-start grace period before the first fetch fires. Hydration runs
+   * immediately on `start()` so the UI is never blank; the actual network
+   * polling (and FJ streamer) waits this long so login / auth / other
+   * critical init work doesn't fight for bandwidth.
+   */
+  private initialFetchDelayMs: number = DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
+  private initialFetchTimer: ReturnType<typeof setTimeout> | null = null;
+  private initialFetchKicked = false;
 
   /**
    * Inject externally-fetched items (e.g. from Rust native news polling).
@@ -166,12 +176,121 @@ class NewsService {
     });
     if (!this.started) {
       this.started = true;
-      // Pre-warm the memory store eagerly so rebuildFromSources/markRead
-      // don't pay the async DB-open cost on their first call.
-      void this.ensureMemory();
-      if (this.streamerEnabled) this.attachStreamer();
-      this.startPolling();
+      void this.bootstrap();
+    }
+  }
+
+  /**
+   * Cold-start sequence:
+   *   1. Hydrate the in-memory feed from the persisted cache so the UI
+   *      renders the last-known list immediately (no "Waiting for news
+   *      data..." blank state).
+   *   2. Wait `initialFetchDelayMs` to let login / auth / other critical
+   *      init work finish without competing for bandwidth.
+   *   3. Attach the FJ streamer, start polling, fire the first refresh.
+   *
+   * Hydration runs before the delay so the cached items are on screen
+   * immediately. The delay applies uniformly to every news source —
+   * polling timers and the streamer connection both start at step 3.
+   */
+  private async bootstrap(): Promise<void> {
+    await this.hydrateFromCache();
+    this.scheduleInitialFetch();
+  }
+
+  private scheduleInitialFetch(): void {
+    if (this.initialFetchKicked || this.initialFetchTimer !== null) return;
+    const delay = Math.max(0, this.initialFetchDelayMs);
+    this.logger.info("News initial fetch scheduled", { delayMs: delay });
+    this.initialFetchTimer = setTimeout(() => {
+      this.kickInitialFetch();
       void this.refresh();
+    }, delay);
+  }
+
+  /**
+   * Idempotently attach the streamer and start per-source polling. Called
+   * either by the scheduled bootstrap timer or by an explicit manual
+   * `refresh()` / `refreshSource()` — the latter case cancels the pending
+   * timer so user-triggered fetches don't sit behind the cold-start delay.
+   */
+  private kickInitialFetch(): void {
+    if (this.initialFetchKicked) return;
+    this.initialFetchKicked = true;
+    if (this.initialFetchTimer !== null) {
+      clearTimeout(this.initialFetchTimer);
+      this.initialFetchTimer = null;
+    }
+    if (this.streamerEnabled) this.attachStreamer();
+    this.startPolling();
+  }
+
+  /**
+   * Update the cold-start delay (ms). If the bootstrap timer hasn't fired
+   * yet, reschedule with the new value; once the first fetch has kicked,
+   * the value is stored for the next `start()` cycle but does not cancel
+   * already-running polls.
+   */
+  setInitialFetchDelayMs(ms: number): void {
+    const next =
+      Number.isFinite(ms) && ms >= 0
+        ? Math.round(ms)
+        : DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
+    if (next === this.initialFetchDelayMs) return;
+    this.initialFetchDelayMs = next;
+    if (this.initialFetchTimer !== null) {
+      clearTimeout(this.initialFetchTimer);
+      this.initialFetchTimer = null;
+      this.scheduleInitialFetch();
+    }
+  }
+
+  private async hydrateFromCache(): Promise<void> {
+    await this.ensureMemory();
+    await this.memory!.load();
+    const hydrated = this.memory!.getHydratedItems();
+    if (hydrated.length === 0) return;
+
+    // Apply cross-source similarity dedup so the cached feed comes back
+    // already collapsed (otherwise duplicates that pre-date this code
+    // path would show up on reload).
+    const deduped = dedupSimilarNewsItems(hydrated);
+
+    // Seed per-source buckets so the next fetch's merge-by-id naturally
+    // preserves cached items not present in the fresh page (otherwise the
+    // post-fetch feed would clip down to whatever the upstream returns in
+    // its top-N window).
+    for (const item of deduped) {
+      const bucket = this.fetchBucketFor(item);
+      if (bucket) this.sourceItems[bucket].push(item);
+    }
+
+    this.items = this.sortNewestFirst(deduped);
+    // `lastFetchedAt` stays null until a real fetch completes — the status
+    // label shouldn't claim "Updated just now" when we're showing cached
+    // data from a previous session.
+    this.emit();
+  }
+
+  /**
+   * Map an item's `sourceType` to the corresponding fetch bucket so we
+   * can seed `sourceItems` from hydration. Yahoo is disambiguated via
+   * `symbol === null` (macro) vs symbol-scoped.
+   */
+  private fetchBucketFor(item: UnifiedNewsItem): NewsFetchSource | null {
+    switch (item.sourceType) {
+      case "yahoo":
+        return item.symbol === null ? "yahooMacro" : "yahooSymbol";
+      case "barrons":
+      case "dowjones":
+      case "press":
+        return "barrons";
+      case "financialjuice":
+        return "financialJuice";
+      case "schwab":
+        return "schwab";
+      default:
+        return null;
     }
   }
 
@@ -180,6 +299,11 @@ class NewsService {
     this.pendingSources.clear();
     this.started = false;
     this.detachStreamer();
+    if (this.initialFetchTimer !== null) {
+      clearTimeout(this.initialFetchTimer);
+      this.initialFetchTimer = null;
+    }
+    this.initialFetchKicked = false;
   }
 
   /**
@@ -215,7 +339,9 @@ class NewsService {
   setStreamerEnabled(next: boolean): void {
     if (this.streamerEnabled === next) return;
     this.streamerEnabled = next;
-    if (!this.started) return;
+    // Hold off until the cold-start delay fires; bootstrap's kickInitialFetch
+    // attaches the streamer once based on the current flag.
+    if (!this.initialFetchKicked) return;
     if (next) {
       this.attachStreamer();
     } else {
@@ -338,7 +464,9 @@ class NewsService {
     if (!changed) return;
 
     this.refreshIntervals = next;
-    if (this.started) {
+    // Don't restart polling until the cold-start delay has fired; startPolling
+    // will pick up the new intervals when kickInitialFetch runs.
+    if (this.initialFetchKicked) {
       this.stopPolling();
       this.startPolling();
     }
@@ -369,7 +497,10 @@ class NewsService {
     }
     if (!touched) return;
 
-    if (this.started) {
+    // Same gate as updateRefreshIntervals / setStreamerEnabled: don't start
+    // any polling timer before the cold-start delay fires. kickInitialFetch
+    // will iterate enabled sources at that point.
+    if (this.initialFetchKicked) {
       for (const source of turnedOn) {
         this.startSourcePolling(source, this.refreshIntervalFor(source));
       }
@@ -416,6 +547,10 @@ class NewsService {
   // ── Manual refresh ──────────────────────────────────────────────
 
   async refresh(): Promise<void> {
+    // A manual refresh during the cold-start window cancels the pending
+    // delay and brings the streamer / polling online immediately. After
+    // the first kick this is a no-op.
+    this.kickInitialFetch();
     // Stagger: global sources first (fast, ~200ms), then per-symbol
     // sources (heavy, up to 19 symbols × concurrency 6). This gives the
     // user visible news within ~200ms instead of waiting for the slowest
@@ -429,6 +564,7 @@ class NewsService {
 
   /** Refresh a single source on demand. No-op if the source is disabled. */
   async refreshSource(source: NewsFetchSource): Promise<void> {
+    this.kickInitialFetch();
     await this.requestFetch([source]);
   }
 

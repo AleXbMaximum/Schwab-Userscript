@@ -4,7 +4,10 @@ import type {
   RebalanceTargets,
   Settings,
 } from "../types/core";
-import { DEFAULT_NEWS_REFRESH_INTERVALS } from "./newsRefreshDefaults";
+import {
+  DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS,
+  DEFAULT_NEWS_REFRESH_INTERVALS,
+} from "./newsRefreshDefaults";
 import {
   DEFAULT_HOLDINGS_TABLE_COLUMN_ORDER,
   normalizeHoldingsTableViewModes,
@@ -33,6 +36,7 @@ export const defaultSettings: Settings = {
   newsFinancialJuiceRssRefreshInterval:
     DEFAULT_NEWS_REFRESH_INTERVALS.financialJuiceRssMs,
   newsSchwabRefreshInterval: DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
+  newsInitialFetchDelayMs: DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS,
   newsYahooMacroEnabled: true,
   newsYahooSymbolEnabled: true,
   newsBarronsEnabled: true,
@@ -175,6 +179,13 @@ export const normalizeSettings = (input: Settings): Settings => {
     defaultSettings.newsSchwabRefreshInterval ??
       DEFAULT_NEWS_REFRESH_INTERVALS.schwabMs,
   );
+  // Initial-fetch delay: clamp to 0+ (0 = fire immediately after hydration).
+  const delayRaw = Number((next as any).newsInitialFetchDelayMs);
+  (next as any).newsInitialFetchDelayMs =
+    Number.isFinite(delayRaw) && delayRaw >= 0
+      ? Math.round(delayRaw)
+      : (defaultSettings.newsInitialFetchDelayMs ??
+        DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS);
 
   (next as any).holdingsTableViewModes = normalizeHoldingsTableViewModes(
     (next as any).holdingsTableViewModes,

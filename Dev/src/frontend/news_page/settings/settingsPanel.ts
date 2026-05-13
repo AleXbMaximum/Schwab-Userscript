@@ -11,6 +11,7 @@ import {
   appendSettingsMatrixRow,
   appendSettingsFormRow,
 } from "../../components/core/settingsFramework";
+import { DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS } from "../../../shared/settings/newsRefreshDefaults";
 import {
   BUILTIN_MODEL_OPTIONS,
   resolveMainModelLabel,
@@ -181,6 +182,36 @@ export function createNewsSettingsPanel(opts: {
     120_000,
   );
   panel.appendChild(newsRefreshSection.section);
+
+  // -- Cold-start delay --------------------------------------------------
+  // Single setting that applies to every news source: after login the UI
+  // shows the cached feed immediately, then waits this many seconds before
+  // hitting the network for the first fetch (and starting the FJ streamer
+  // and polling timers). 0 = fire as soon as cache hydration finishes.
+  const initialDelaySection = createSettingsSectionCard("Cold Start");
+  const initialDelayInput = createSettingsNumericInput({
+    getResolved: () => {
+      const ms = Number(settings.newsInitialFetchDelayMs);
+      const validMs = Number.isFinite(ms) && ms >= 0
+        ? ms
+        : DEFAULT_NEWS_INITIAL_FETCH_DELAY_MS;
+      return Math.max(0, Math.round(validMs / 1000));
+    },
+    min: 0,
+    step: 1,
+    onCommit: (nextSeconds) => {
+      const nextMs = Math.max(0, Math.round(nextSeconds * 1000));
+      if (!onUpdateSettings) return;
+      onUpdateSettings({ newsInitialFetchDelayMs: nextMs });
+      settings.newsInitialFetchDelayMs = nextMs;
+    },
+  });
+  appendSettingsFormRow({
+    body: initialDelaySection.body,
+    label: "Initial fetch delay",
+    controlEl: createSettingsControlWithUnit(initialDelayInput.element, "sec"),
+  });
+  panel.appendChild(initialDelaySection.section);
 
   if (!onUpdateSettings) {
     panel.appendChild(

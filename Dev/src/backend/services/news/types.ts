@@ -43,6 +43,13 @@ export type StoredNewsRecord = {
   firstSeenAt: string;
   symbol: string | null;
   symbolTags?: string[];
+  /** Article body / teaser. Persisted so cold-start hydration can show
+   *  the same card content the user saw on the previous session. */
+  summary?: string;
+  /** Secondary publisher attribution (FXStreet, Reuters …). */
+  provider?: string;
+  /** Headline / featured news flag — drives red title + pin-to-top UI. */
+  isHeadline?: boolean;
 };
 
 export interface NewsSourceAdapter {

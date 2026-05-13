@@ -117,6 +117,9 @@ function syncRecorderSettings(
     newsService.setStreamerEnabled(
       settings.newsFinancialJuiceStreamEnabled !== false,
     );
+    if (settings.newsInitialFetchDelayMs !== undefined) {
+      newsService.setInitialFetchDelayMs(settings.newsInitialFetchDelayMs);
+    }
   };
 
   let renderEngine: RenderEngineLike | null = null;

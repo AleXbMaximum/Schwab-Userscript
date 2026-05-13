@@ -62,6 +62,11 @@ export class NewsMemoryStore {
           firstSeenAt: now,
           symbol: normalizedItem.symbol,
           symbolTags,
+          summary: normalizedItem.summary,
+          ...(normalizedItem.provider
+            ? { provider: normalizedItem.provider }
+            : {}),
+          ...(normalizedItem.isHeadline ? { isHeadline: true } : {}),
         });
         continue;
       }
@@ -74,11 +79,48 @@ export class NewsMemoryStore {
       ]);
       existing.symbol = mergedSymbols[0] ?? null;
       existing.symbolTags = mergedSymbols;
+      // FJ pushes corrections / re-issues that keep the same NewsID but
+      // change title / summary / time — refresh those so cold-start
+      // hydration reflects the most recent revision.
+      existing.title = normalizedItem.title;
+      existing.summary = normalizedItem.summary;
+      existing.url = normalizedItem.url;
+      existing.publishedAt = normalizedItem.publishedAt;
+      if (normalizedItem.provider) existing.provider = normalizedItem.provider;
+      else delete existing.provider;
+      if (normalizedItem.isHeadline) existing.isHeadline = true;
+      else delete existing.isHeadline;
     }
 
     this.prune();
     await this.save();
     return result;
+  }
+
+  /**
+   * Reconstruct displayable items from persisted records. Carries the
+   * correct `isNew` flag based on stored read state. Returns items in
+   * insertion order — callers should sort with `sortNewsItemsNewestFirst`.
+   */
+  getHydratedItems(): UnifiedNewsItem[] {
+    const out: UnifiedNewsItem[] = [];
+    for (const r of this.records.values()) {
+      out.push({
+        id: r.id,
+        title: r.title,
+        summary: r.summary ?? "",
+        publishedAt: r.publishedAt,
+        source: r.source,
+        sourceType: r.sourceType,
+        url: r.url,
+        symbol: r.symbol,
+        symbolTags: r.symbolTags ?? [],
+        isNew: !this.readIds.has(r.id),
+        ...(r.provider ? { provider: r.provider } : {}),
+        ...(r.isHeadline ? { isHeadline: true } : {}),
+      });
+    }
+    return out;
   }
 
   /** Mark specific items as read and persist */
