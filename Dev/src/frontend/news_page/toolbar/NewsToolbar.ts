@@ -2,15 +2,26 @@ import { ui_createElement } from "../../components/core/builders/createElement";
 import { createPillGroup } from "../../components/core/builders/pillGroup";
 import { DS_COLORS } from "../../components/core/styles/theme";
 import type { NewsSourceType } from "../../../backend/services/news/types";
+import type {
+  NewsFetchSource,
+  NewsSourceEnabled,
+} from "../../../backend/services/news/NewsService";
+import {
+  NEWS_FETCH_SOURCES,
+  NEWS_SOURCE_LABELS,
+} from "../../../backend/services/news/NewsService";
 import { NEWS_FILTER_PILLS } from "../shared/newsConstants";
 import { toolbarBtn } from "../components/toolbarButton";
+
+export type NewsRefreshTarget = "all" | NewsFetchSource;
 
 export interface NewsToolbarDeps {
   onFilterChange: (val: "all" | NewsSourceType) => void;
   onSymbolFilterChange: (val: "all" | string) => void;
   onSearchChange: (query: string) => void;
   onMarkAllRead: () => void;
-  onRefresh: () => Promise<void>;
+  onRefresh: (target: NewsRefreshTarget) => Promise<void>;
+  getSourceEnabled: () => NewsSourceEnabled;
   onCopy: () => void;
 }
 
@@ -85,9 +96,13 @@ export function buildNewsToolbar(deps: NewsToolbarDeps): NewsToolbarResult {
   markSelectedReadBtn.style.cursor = "not-allowed";
   toolbar.appendChild(markSelectedReadBtn);
 
-  const refreshBtn = toolbarBtn("Refresh", "\u21BB");
+  const refreshWrap = ui_createElement("div", {
+    styleString: "position: relative; display: inline-block; flex-shrink: 0;",
+  });
+  const refreshBtn = toolbarBtn("Refresh \u25BE", "\u21BB");
   const refreshBtnIdleHtml = refreshBtn.innerHTML;
   let refreshBtnResetTimer: ReturnType<typeof setTimeout> | null = null;
+  let menuOpen = false;
 
   const setRefreshButtonState = (
     state: "idle" | "loading" | "done" | "error",
@@ -118,7 +133,7 @@ export function buildNewsToolbar(deps: NewsToolbarDeps): NewsToolbarResult {
     refreshBtn.style.opacity = "1";
   };
 
-  const runManualRefresh = async () => {
+  const runManualRefresh = async (target: NewsRefreshTarget) => {
     if (refreshBtn.disabled) return;
     if (refreshBtnResetTimer) {
       clearTimeout(refreshBtnResetTimer);
@@ -127,7 +142,7 @@ export function buildNewsToolbar(deps: NewsToolbarDeps): NewsToolbarResult {
 
     setRefreshButtonState("loading");
     try {
-      await deps.onRefresh();
+      await deps.onRefresh(target);
       setRefreshButtonState("done");
     } catch {
       setRefreshButtonState("error");
@@ -139,14 +154,113 @@ export function buildNewsToolbar(deps: NewsToolbarDeps): NewsToolbarResult {
     }
   };
 
-  refreshBtn.addEventListener("click", () => void runManualRefresh());
+  const refreshMenu = ui_createElement("div", {
+    styleString:
+      "position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;" +
+      " min-width: 180px; padding: 4px 0; display: none; flex-direction: column;" +
+      " background: var(--ax-bg-card); border: 1px solid var(--ax-border);" +
+      " border-radius: var(--ax-radius-md); box-shadow: var(--ax-shadow-lg);" +
+      " font-size: var(--ax-fs-sm);",
+  });
+
+  const setMenuOpen = (open: boolean): void => {
+    menuOpen = open;
+    refreshMenu.style.display = open ? "flex" : "none";
+  };
+
+  const buildMenuItem = (
+    label: string,
+    onPick: () => void,
+    opts: { disabled?: boolean; separator?: boolean } = {},
+  ): HTMLElement => {
+    const item = ui_createElement("button", {
+      props: { type: "button" },
+      styleString:
+        "background: transparent; border: 0; padding: 6px 12px; text-align: left;" +
+        " font-size: var(--ax-fs-sm); cursor: pointer; color: var(--ax-fg);" +
+        (opts.separator ? " border-top: 1px solid var(--ax-border-subtle);" : ""),
+    }) as HTMLButtonElement;
+    item.textContent = label;
+    if (opts.disabled) {
+      item.disabled = true;
+      item.style.opacity = "0.45";
+      item.style.cursor = "not-allowed";
+    } else {
+      item.addEventListener("mouseenter", () => {
+        item.style.background = "var(--ax-bg-chip)";
+      });
+      item.addEventListener("mouseleave", () => {
+        item.style.background = "transparent";
+      });
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setMenuOpen(false);
+        onPick();
+      });
+    }
+    return item;
+  };
+
+  const rebuildMenu = (): void => {
+    refreshMenu.innerHTML = "";
+    const enabled = deps.getSourceEnabled();
+    const anyEnabled = NEWS_FETCH_SOURCES.some((s) => enabled[s]);
+    refreshMenu.appendChild(
+      buildMenuItem(
+        "Refresh All",
+        () => void runManualRefresh("all"),
+        { disabled: !anyEnabled },
+      ),
+    );
+    let first = true;
+    for (const source of NEWS_FETCH_SOURCES) {
+      refreshMenu.appendChild(
+        buildMenuItem(
+          NEWS_SOURCE_LABELS[source],
+          () => void runManualRefresh(source),
+          { disabled: !enabled[source], separator: first },
+        ),
+      );
+      first = false;
+    }
+  };
+
+  refreshBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (refreshBtn.disabled) return;
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    rebuildMenu();
+    setMenuOpen(true);
+  });
+
+  const onDocClick = (e: MouseEvent): void => {
+    if (!menuOpen) return;
+    const target = e.target as Node | null;
+    if (target && refreshWrap.contains(target)) return;
+    setMenuOpen(false);
+  };
+  document.addEventListener("mousedown", onDocClick);
+
+  const onDocKeydown = (e: KeyboardEvent): void => {
+    if (e.key === "Escape" && menuOpen) setMenuOpen(false);
+  };
+  document.addEventListener("keydown", onDocKeydown);
+
   cleanups.push(() => {
     if (refreshBtnResetTimer) {
       clearTimeout(refreshBtnResetTimer);
       refreshBtnResetTimer = null;
     }
+    document.removeEventListener("mousedown", onDocClick);
+    document.removeEventListener("keydown", onDocKeydown);
   });
-  toolbar.appendChild(refreshBtn);
+
+  refreshWrap.appendChild(refreshBtn);
+  refreshWrap.appendChild(refreshMenu);
+  toolbar.appendChild(refreshWrap);
 
   const copyBtn = toolbarBtn("Copy", "\uD83D\uDCCB");
   copyBtn.addEventListener("click", () => deps.onCopy());

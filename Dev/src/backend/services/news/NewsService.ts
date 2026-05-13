@@ -81,6 +81,8 @@ const NEWS_SOURCE_LABELS: Record<NewsFetchSource, string> = {
   schwab: "Schwab",
 };
 
+export { NEWS_FETCH_SOURCES, NEWS_SOURCE_LABELS };
+
 const LOG_SYMBOL_SAMPLE_LIMIT = 10;
 const FJ_SOURCE_LIMIT = 1000;
 const SCHWAB_SOURCE_LIMIT = 1000;
@@ -365,6 +367,11 @@ class NewsService {
     if (this.symbols.length > 0) {
       await this.requestFetch(NEWS_SYMBOL_SOURCES);
     }
+  }
+
+  /** Refresh a single source on demand. No-op if the source is disabled. */
+  async refreshSource(source: NewsFetchSource): Promise<void> {
+    await this.requestFetch([source]);
   }
 
   // ── Internal ────────────────────────────────────────────────────

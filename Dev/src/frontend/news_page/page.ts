@@ -200,7 +200,11 @@ export function news_renderPage(
     onMarkAllRead: () => {
       void newsService.markAllRead();
     },
-    onRefresh: () => newsService.refresh(),
+    onRefresh: (target) =>
+      target === "all"
+        ? newsService.refresh()
+        : newsService.refreshSource(target),
+    getSourceEnabled: () => newsService.getSourceEnabled(),
     onCopy: () => {
       void copyWithFlash(toolbarResult.copyBtn, () => {
         const filtered = getFiltered();
