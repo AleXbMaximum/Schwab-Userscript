@@ -18,6 +18,7 @@ import type { UnifiedNewsItem } from "./types";
 import {
   areSymbolsEqual,
   areItemsEqual,
+  dedupSimilarNewsItems,
   normalizeNewsItemSymbols,
   mergeDuplicateNewsItems,
   normalizeSymbols,
@@ -720,7 +721,11 @@ class NewsService {
       }
       dedupedById.set(item.id, mergeDuplicateNewsItems(existing, item));
     }
-    const sorted = this.sortNewestFirst(Array.from(dedupedById.values()));
+    // Two-pass dedup: by-id (collapses true duplicates) then cross-source
+    // similarity (collapses near-duplicates with different ids — e.g. the
+    // same wire story syndicated to both FJ and Yahoo).
+    const collapsed = dedupSimilarNewsItems(Array.from(dedupedById.values()));
+    const sorted = this.sortNewestFirst(collapsed);
 
     await this.ensureMemory();
 
