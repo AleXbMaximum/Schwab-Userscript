@@ -30,17 +30,37 @@ export async function fetchYahooMacroNews(): Promise<UnifiedNewsItem[]> {
 }
 
 function mapYahoo(symbol: string | null) {
-  return (n: NewsItem): UnifiedNewsItem => ({
-    id: generateNewsId(n.title, n.source),
-    title: n.title,
-    summary: n.summary,
-    publishedAt: n.publishedAt,
-    source: n.source,
-    sourceType: "yahoo",
-    url: n.url,
-    symbol,
-    symbolTags: symbol ? [symbol] : [],
-  });
+  return (n: NewsItem): UnifiedNewsItem => {
+    const provider = pickProvider(n.source, "Yahoo", ["Yahoo Finance"]);
+    return {
+      id: generateNewsId(n.title, n.source),
+      title: n.title,
+      summary: n.summary,
+      publishedAt: n.publishedAt,
+      source: "Yahoo",
+      sourceType: "yahoo",
+      ...(provider ? { provider } : {}),
+      url: n.url,
+      symbol,
+      symbolTags: symbol ? [symbol] : [],
+    };
+  };
+}
+
+/**
+ * Return the underlying publisher name to surface as a secondary badge,
+ * or undefined when it would just duplicate the primary aggregator badge.
+ */
+function pickProvider(
+  raw: string | null | undefined,
+  primary: string,
+  aliases: string[] = [],
+): string | undefined {
+  const value = String(raw ?? "").trim();
+  if (!value) return undefined;
+  if (value === primary) return undefined;
+  for (const alias of aliases) if (value === alias) return undefined;
+  return value;
 }
 
 // ── Barron's: per-symbol news (all 3 channels) ─────────────────────────────
@@ -77,13 +97,15 @@ function mapBarrons(
   if (!raw) return null;
   const parsedMs = new Date(raw).getTime();
   if (!Number.isFinite(parsedMs)) return null;
+  const provider = pickProvider(s.provider, "Barron's");
   return {
     id: generateNewsId(s.headline, s.provider || sourceType),
     title: s.headline,
     summary: s.summary,
     publishedAt: new Date(parsedMs).toISOString(),
-    source: s.provider || sourceType,
+    source: "Barron's",
     sourceType,
+    ...(provider ? { provider } : {}),
     url: s.url,
     symbol,
     symbolTags: [symbol],
@@ -259,13 +281,15 @@ function mapSchwabHeadline(
   n: SchwabNewsHeadline,
   parsedMs: number,
 ): UnifiedNewsItem {
+  const provider = pickProvider(n.source, "Schwab");
   return {
     id: generateNewsId(n.headline, "schwab"),
     title: n.headline,
     summary: String(n.teaser ?? ""),
     publishedAt: new Date(parsedMs).toISOString(),
-    source: n.source || "Schwab",
+    source: "Schwab",
     sourceType: "schwab",
+    ...(provider ? { provider } : {}),
     url: undefined,
     symbol: null,
     symbolTags: [],

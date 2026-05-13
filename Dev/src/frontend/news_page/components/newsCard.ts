@@ -6,7 +6,7 @@ import type {
   NewsSourceType,
 } from "../../../backend/services/news/types";
 import { formatTimeAgo } from "shared/utils/time";
-import { sourceColor } from "../shared/newsConstants";
+import { sourceColor, providerBadgeColor } from "../shared/newsConstants";
 
 // ── Badges ──────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,18 @@ function sourceBadge(sourceType: NewsSourceType, source: string): HTMLElement {
     text: source,
     styleString:
       `font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px;` +
+      ` background: ${c.bg}; color: ${c.text}; white-space: nowrap;`,
+  });
+}
+
+function providerBadge(provider: string): HTMLElement {
+  // Hash-based color so unknown outlets still get a stable, distinguishable
+  // hue without us maintaining a hard-coded palette.
+  const c = providerBadgeColor(provider);
+  return ui_createElement("span", {
+    text: provider,
+    styleString:
+      `font-size: 10px; font-weight: 500; padding: 1px 6px; border-radius: 4px;` +
       ` background: ${c.bg}; color: ${c.text}; white-space: nowrap;`,
   });
 }
@@ -138,6 +150,7 @@ export function renderNewsCard(
       "display: flex; align-items: center; gap: 6px; flex-wrap: wrap;",
   });
   metaRow.appendChild(sourceBadge(item.sourceType, item.source));
+  if (item.provider) metaRow.appendChild(providerBadge(item.provider));
   if (item.isHeadline) metaRow.appendChild(headlineBadge());
   metaRow.appendChild(
     ui_createElement("span", {

@@ -14,9 +14,36 @@ export const SOURCE_COLORS: Record<string, { bg: string; text: string }> = {
   schwab: { bg: "rgba(0, 114, 206, 0.10)", text: "#0072CE" },
 };
 
+/**
+ * Deterministic hash-based color for a provider name. Same name always
+ * yields the same color across renders; different names land on different
+ * hues. Fixed saturation/lightness keeps the palette visually coherent
+ * with the curated primary-source palette above and readable on the dark
+ * canvas. Use this so we don't need a hard-coded list of every outlet FJ /
+ * Yahoo / Barron's might surface.
+ */
+export function providerBadgeColor(name: string): { bg: string; text: string } {
+  // djb2-ish — fast, well-distributed enough for short publisher names.
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) {
+    h = ((h << 5) + h + name.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(h) % 360;
+  return {
+    bg: `hsla(${hue}, 60%, 50%, 0.12)`,
+    text: `hsl(${hue}, 65%, 65%)`,
+  };
+}
+
 export function sourceColor(type: NewsSourceType): { bg: string; text: string } {
+  // Barron's API splits its feed into three sub-channels (`barrons`,
+  // `dowjones`, `press`) but UX-wise they're all "Barron's content" —
+  // collapse the color so the primary badge looks identical across
+  // them. The actual publisher lives on the secondary `provider` badge.
+  const normalized =
+    type === "dowjones" || type === "press" ? "barrons" : type;
   return (
-    SOURCE_COLORS[type] ?? {
+    SOURCE_COLORS[normalized] ?? {
       bg: "var(--ax-tone-muted-soft-bg)",
       text: "var(--ax-fg-2)",
     }
