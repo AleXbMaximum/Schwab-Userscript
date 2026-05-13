@@ -1,5 +1,6 @@
 import { createChartPanel } from "frontend/charts/chartPanel";
-import { niceLinearScale, CHART_FONTS } from "frontend/charts/ChartTheme";
+import { niceLinearScale, CHART_COLORS, CHART_FONTS } from "frontend/charts/ChartTheme";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 import { DS_COLORS } from "frontend/components/core/styles/theme";
 import type { TermStructurePoint, EventFlag } from "backend/computation/options/types";
 
@@ -47,7 +48,7 @@ export function renderTermStructure(
       const refDTE = dtes[refIdx];
 
       ctx.save();
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+      ctx.strokeStyle = isDarkTheme() ? "rgba(255, 255, 255, 0.22)" : "rgba(0, 0, 0, 0.2)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
@@ -74,7 +75,7 @@ export function renderTermStructure(
         const lY = scales.y.getPixelForValue(theorLast);
         if (lY >= chartArea.top && lY <= chartArea.bottom) {
           ctx.setLineDash([]);
-          ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+          ctx.fillStyle = CHART_COLORS.textSecondary;
           ctx.font = CHART_FONTS.labelSmall;
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";

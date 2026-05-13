@@ -56248,6 +56248,7 @@ function renderStateVector(stateVector, metrics) {
 }
 ;// ./src/frontend/analysis_options/controls/controlFormatters.ts
 
+
 const controlFormatters_MONTH_MAP = {
   JAN: "01",
   FEB: "02",
@@ -56313,6 +56314,16 @@ function expirationOptionLabel(exp, oi) {
 function oiColors(oi, minOI, maxOI) {
   const span = Math.max(1, maxOI - minOI);
   const t = clamp01((oi - minOI) / span);
+  if (isDarkTheme()) {
+    const optionBg = `hsl(138 ${6 + t * 40}% ${14 + t * 12}%)`;
+    const optionFg = `hsl(138 ${16 + t * 44}% ${74 + t * 14}%)`;
+    const selectBg = `hsl(138 ${8 + t * 36}% ${16 + t * 10}%)`;
+    return {
+      optionBg,
+      optionFg,
+      selectBg
+    };
+  }
   const optionBg = `hsl(138 ${6 + t * 56}% ${100 - t * 18}%)`;
   const optionFg = `hsl(138 ${20 + t * 48}% ${24 + (1 - t) * 12}%)`;
   const selectBg = `hsl(138 ${10 + t * 48}% ${99 - t * 10}%)`;
@@ -57607,6 +57618,7 @@ function renderIVSkew(skewData, underlyingPrice) {
 
 
 
+
 // Event badge colors matching StateVector.ts
 const EVENT_COLORS = {
   earnings: "#D78100",
@@ -57646,7 +57658,7 @@ function renderTermStructure(termData, eventFlags) {
       const refIV = avgData[refIdx];
       const refDTE = dtes[refIdx];
       ctx.save();
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+      ctx.strokeStyle = isDarkTheme() ? "rgba(255, 255, 255, 0.22)" : "rgba(0, 0, 0, 0.2)";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
@@ -57672,7 +57684,7 @@ function renderTermStructure(termData, eventFlags) {
         const lY = scales.y.getPixelForValue(theorLast);
         if (lY >= chartArea.top && lY <= chartArea.bottom) {
           ctx.setLineDash([]);
-          ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+          ctx.fillStyle = CHART_COLORS.textSecondary;
           ctx.font = CHART_FONTS.labelSmall;
           ctx.textAlign = "left";
           ctx.textBaseline = "middle";
@@ -58477,9 +58489,11 @@ function createRenderFrame(target, render) {
 
 
 
+
 const CELL_GAP = 1;
 const CELL_RAD = 2;
-const GRID_BG = "rgba(0, 0, 0, 0.03)";
+const gridBg = () => isDarkTheme() ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)";
+const missingCellBg = () => isDarkTheme() ? "#26262b" : "#f5f5f5";
 function ivColor(t) {
   const c = Math.max(0, Math.min(1, t));
   if (c <= 0.5) {
@@ -58590,7 +58604,7 @@ function renderVolatilitySurface(surfaceData, underlyingPrice) {
     if (!ctx) return;
 
     // ── Column headers: expiration labels ───────────────────────────────
-    ctx.fillStyle = "#3a3a3c";
+    ctx.fillStyle = CHART_COLORS.textSecondary;
     ctx.font = compact ? CHART_FONTS.denseLight : CHART_FONTS.labelSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -58612,7 +58626,7 @@ function renderVolatilitySurface(surfaceData, underlyingPrice) {
     // Grid background
     const gridW = numCols * cellW;
     const gridH = numRows * cellH;
-    ctx.fillStyle = GRID_BG;
+    ctx.fillStyle = gridBg();
     traceRoundRect(ctx, rowLabelW, colHeaderH, gridW, gridH, 4);
     ctx.fill();
 
@@ -58623,7 +58637,7 @@ function renderVolatilitySurface(surfaceData, underlyingPrice) {
     }
     for (let sIdx = 0; sIdx < numRows; sIdx++) {
       // Row label (strike)
-      ctx.fillStyle = sIdx === atmRowIdx ? "#007AFF" : "#1c1c1e";
+      ctx.fillStyle = sIdx === atmRowIdx ? "#007AFF" : CHART_COLORS.textPrimary;
       ctx.font = compact ? sIdx === atmRowIdx ? CHART_FONTS.labelBold : CHART_FONTS.labelSmall : sIdx === atmRowIdx ? CHART_FONTS.axisBold : CHART_FONTS.axis;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -58643,7 +58657,7 @@ function renderVolatilitySurface(surfaceData, underlyingPrice) {
           const norm = maxIV > minIV ? (iv - minIV) / (maxIV - minIV) : 0.5;
           ctx.fillStyle = ivColor(norm);
         } else {
-          ctx.fillStyle = "#f5f5f5";
+          ctx.fillStyle = missingCellBg();
         }
         traceRoundRect(ctx, x + CELL_GAP, y + CELL_GAP, cellW - CELL_GAP * 2, cellH - CELL_GAP * 2, CELL_RAD);
         ctx.fill();
@@ -58779,11 +58793,11 @@ function renderVolatilitySurface(surfaceData, underlyingPrice) {
     ctx.fillStyle = gradient;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.fill();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+    ctx.strokeStyle = CHART_COLORS.grid;
     ctx.lineWidth = 0.5;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.stroke();
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "left";
     ctx.fillText(`${minIV.toFixed(0)}%`, legendX, legendY + legendBarH + 12);
@@ -59030,7 +59044,7 @@ function renderExpectedMove(emData, rndData, straddleConeData, rndConeData, mode
       ctx.moveTo(pad.left, y);
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
-      ctx.fillStyle = "#8E8E93";
+      ctx.fillStyle = CHART_COLORS.neutral;
       ctx.font = CHART_FONTS.tick;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -59082,7 +59096,7 @@ function renderExpectedMove(emData, rndData, straddleConeData, rndConeData, mode
     ctx.moveTo(toXDays(0), toY(currentPrice));
     for (let i = 0; i < validPoints.length; i++) ctx.lineTo(toXDays(validPoints[i].daysUntil), toY(validPoints[i].lower1Sigma));
     ctx.stroke();
-    ctx.strokeStyle = "#1c1c1e";
+    ctx.strokeStyle = CHART_COLORS.textPrimary;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 3]);
     ctx.beginPath();
@@ -59090,12 +59104,12 @@ function renderExpectedMove(emData, rndData, straddleConeData, rndConeData, mode
     ctx.lineTo(w - pad.right, toY(currentPrice));
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = "#1c1c1e";
+    ctx.fillStyle = CHART_COLORS.textPrimary;
     ctx.font = CHART_FONTS.axisSemibold;
     ctx.textAlign = "left";
     ctx.textBaseline = "bottom";
     ctx.fillText(`Spot $${currentPrice.toFixed(2)}`, pad.left + 4, toY(currentPrice) - 4);
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -59112,9 +59126,9 @@ function renderExpectedMove(emData, rndData, straddleConeData, rndConeData, mode
     }
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "right";
-    ctx.fillStyle = "#007AFF";
+    ctx.fillStyle = CHART_COLORS.info;
     ctx.fillText(currentMode === "straddle" ? "±1σ (68%)" : "16-84%", w - pad.right, pad.top + 10);
-    ctx.fillStyle = "#d73126";
+    ctx.fillStyle = CHART_COLORS.danger;
     ctx.fillText(currentMode === "straddle" ? "±2σ (95%)" : "2.5-97.5%", w - pad.right, pad.top + 22);
   };
   renderContent();
@@ -59252,7 +59266,7 @@ function renderOptionsWalls(wallData) {
       ctx.moveTo(pad.left, y);
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
-      ctx.fillStyle = "#8E8E93";
+      ctx.fillStyle = CHART_COLORS.neutral;
       ctx.font = CHART_FONTS.tickSmall;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -59269,7 +59283,7 @@ function renderOptionsWalls(wallData) {
       ctx.fillStyle = "rgba(215, 49, 38, 0.5)";
       ctx.fillRect(x - halfBar, toYVal(d.putOI), halfBar, putH);
     }
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tickSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -59797,6 +59811,7 @@ function renderGreeksExposure(data, underlyingPrice) {
 
 
 
+
 const IVSmileOverlay_COLORS = [DS_COLORS.raw.info, DS_COLORS.raw.neutral, DS_COLORS.raw.positive, DS_COLORS.raw.negative, "#8E44AD", "#00BCD4"];
 function renderIVSmileOverlay(smileData, underlyingPrice) {
   let currentData = smileData;
@@ -59843,13 +59858,13 @@ function renderIVSmileOverlay(smileData, underlyingPrice) {
       const atmLabel = String(atm.atmStrike);
       const xPixel = xScale.getPixelForValue(atmLabel);
       if (xPixel >= chartArea.left && xPixel <= chartArea.right) {
-        c.strokeStyle = "rgba(0,0,0,0.4)";
+        c.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)";
         c.beginPath();
         c.moveTo(xPixel, chartArea.top);
         c.lineTo(xPixel, chartArea.bottom);
         c.stroke();
         c.setLineDash([]);
-        c.fillStyle = "#1c1c1e";
+        c.fillStyle = CHART_COLORS.textPrimary;
         c.font = "600 10px -apple-system, BlinkMacSystemFont, sans-serif";
         c.textAlign = "center";
         c.textBaseline = "bottom";
@@ -60169,9 +60184,11 @@ function renderCumulativeGex(cumData, underlyingPrice) {
 
 
 
+
 const UnusualActivity_CELL_GAP = 1;
 const UnusualActivity_CELL_RAD = 2;
-const UnusualActivity_GRID_BG = "rgba(0, 0, 0, 0.03)";
+const UnusualActivity_gridBg = () => isDarkTheme() ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)";
+const UnusualActivity_missingCellBg = () => isDarkTheme() ? "#26262b" : "#f5f5f5";
 const MODE_LABELS = {
   vol: "by Vol",
   oi: "by OI",
@@ -60302,7 +60319,7 @@ function renderUnusualActivity(surfaceData, underlyingPrice) {
     const totalH = colHeaderH + expirations.length * cellH + legendH;
     const ctx = setupCanvas(canvas, totalW, totalH);
     if (!ctx) return;
-    ctx.fillStyle = "#3a3a3c";
+    ctx.fillStyle = CHART_COLORS.textSecondary;
     ctx.font = compact ? CHART_FONTS.denseLight : CHART_FONTS.labelSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -60355,11 +60372,11 @@ function renderUnusualActivity(surfaceData, underlyingPrice) {
     // Grid background
     const gridW = strikes.length * cellW;
     const gridH = expirations.length * cellH;
-    ctx.fillStyle = UnusualActivity_GRID_BG;
+    ctx.fillStyle = UnusualActivity_gridBg();
     traceRoundRect(ctx, rowLabelW, colHeaderH, gridW, gridH, 4);
     ctx.fill();
     for (let expIdx = 0; expIdx < expirations.length; expIdx++) {
-      ctx.fillStyle = "#1c1c1e";
+      ctx.fillStyle = CHART_COLORS.textPrimary;
       ctx.font = compact ? CHART_FONTS.labelSmall : CHART_FONTS.axis;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -60377,7 +60394,7 @@ function renderUnusualActivity(surfaceData, underlyingPrice) {
         const cw = cellW - UnusualActivity_CELL_GAP * 2;
         const ch = cellH - UnusualActivity_CELL_GAP * 2;
         if (modeVal == null && totalShare <= 0) {
-          ctx.fillStyle = "#f5f5f5";
+          ctx.fillStyle = UnusualActivity_missingCellBg();
           traceRoundRect(ctx, cx, cy, cw, ch, UnusualActivity_CELL_RAD);
           ctx.fill();
         } else {
@@ -60420,27 +60437,28 @@ function renderUnusualActivity(surfaceData, underlyingPrice) {
     ctx.fillStyle = "rgba(0, 122, 255, 0.58)";
     ctx.fillRect(swatchX + swatchW / 2, shareLegendY, swatchW / 2, swatchH);
     ctx.restore();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+    ctx.strokeStyle = CHART_COLORS.grid;
     ctx.lineWidth = 0.5;
     traceRoundRect(ctx, swatchX, shareLegendY, swatchW, swatchH, swatchH / 2);
     ctx.stroke();
-    ctx.fillStyle = "#777";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
     const splitLabel = currentMode === "oi" ? "Red=Put OI share, Blue=Call OI share" : "Red=Put Vol share, Blue=Call Vol share";
     ctx.fillText(splitLabel, swatchX + swatchW + 6, shareLegendY + swatchH / 2);
     const gradient = ctx.createLinearGradient(legendX, 0, legendX + legendW, 0);
-    gradient.addColorStop(0, "rgba(0,0,0,0.06)");
-    gradient.addColorStop(1, "rgba(0,0,0,0.72)");
+    const dark = isDarkTheme();
+    gradient.addColorStop(0, dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)");
+    gradient.addColorStop(1, dark ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.72)");
     ctx.fillStyle = gradient;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.fill();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+    ctx.strokeStyle = CHART_COLORS.grid;
     ctx.lineWidth = 0.5;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.stroke();
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "left";
     ctx.fillText(fmtModeValue(currentMode, minVal), legendX, legendY + legendBarH + 12);
@@ -60997,11 +61015,11 @@ function renderBiasGauge(score, bias) {
   });
   scaleRow.appendChild(createElement_ui_createElement("span", {
     text: "Bearish",
-    styleString: "font-size: 10px; color: #d73126; font-weight: 600;"
+    styleString: "font-size: 10px; color: var(--ax-red); font-weight: 600;"
   }));
   scaleRow.appendChild(createElement_ui_createElement("span", {
     text: "Bullish",
-    styleString: "font-size: 10px; color: #20a945; font-weight: 600;"
+    styleString: "font-size: 10px; color: var(--ax-green); font-weight: 600;"
   }));
   container.appendChild(scaleRow);
   return container;
@@ -62226,8 +62244,8 @@ function pageHelpers_applySavedViewState(store, view, response) {
 /** Set the Copy-Out button visual state without touching its text. */
 function setCopyOutBtnAppearance(btn, state) {
   if (state === "success") {
-    btn.style.borderColor = "#169c35";
-    btn.style.color = "#0c7a28";
+    btn.style.borderColor = "var(--ax-green)";
+    btn.style.color = "var(--ax-green)";
     return;
   }
   if (state === "error") {
@@ -62706,7 +62724,7 @@ function options_renderPage(ctx) {
       const authToken = ctx?.authToken;
       if (!authToken) {
         statusLabel.textContent = "Options page is waiting for auth token.";
-        statusLabel.style.color = "#c97100";
+        statusLabel.style.color = "var(--ax-orange)";
         updateOptionsStatus("inactive");
         store.setState({
           response: null

@@ -1,5 +1,6 @@
 import { createChartPanel } from "frontend/charts/chartPanel";
-import { niceLinearScale, niceStrikeTicks } from "frontend/charts/ChartTheme";
+import { niceLinearScale, niceStrikeTicks, CHART_COLORS } from "frontend/charts/ChartTheme";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 import { DS_COLORS } from "../../../components/core/styles/theme";
 import type { IVSmileLine } from "backend/computation/options/types";
 import { createVerticalFocusStrikePlugin } from "../../focus/focusStrikeOverlayPlugin";
@@ -67,14 +68,14 @@ export function renderIVSmileOverlay(
       const atmLabel = String(atm.atmStrike);
       const xPixel = xScale.getPixelForValue(atmLabel);
       if (xPixel >= chartArea.left && xPixel <= chartArea.right) {
-        c.strokeStyle = "rgba(0,0,0,0.4)";
+        c.strokeStyle = isDarkTheme() ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)";
         c.beginPath();
         c.moveTo(xPixel, chartArea.top);
         c.lineTo(xPixel, chartArea.bottom);
         c.stroke();
 
         c.setLineDash([]);
-        c.fillStyle = "#1c1c1e";
+        c.fillStyle = CHART_COLORS.textPrimary;
         c.font = "600 10px -apple-system, BlinkMacSystemFont, sans-serif";
         c.textAlign = "center";
         c.textBaseline = "bottom";

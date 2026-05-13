@@ -340,7 +340,7 @@ export function renderExpectedMove(
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
 
-      ctx.fillStyle = "#8E8E93";
+      ctx.fillStyle = CHART_COLORS.neutral;
       ctx.font = CHART_FONTS.tick;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -425,7 +425,7 @@ export function renderExpectedMove(
       );
     ctx.stroke();
 
-    ctx.strokeStyle = "#1c1c1e";
+    ctx.strokeStyle = CHART_COLORS.textPrimary;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 3]);
     ctx.beginPath();
@@ -434,7 +434,7 @@ export function renderExpectedMove(
     ctx.stroke();
     ctx.setLineDash([]);
 
-    ctx.fillStyle = "#1c1c1e";
+    ctx.fillStyle = CHART_COLORS.textPrimary;
     ctx.font = CHART_FONTS.axisSemibold;
     ctx.textAlign = "left";
     ctx.textBaseline = "bottom";
@@ -444,7 +444,7 @@ export function renderExpectedMove(
       toY(currentPrice) - 4,
     );
 
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
@@ -467,13 +467,13 @@ export function renderExpectedMove(
 
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "right";
-    ctx.fillStyle = "#007AFF";
+    ctx.fillStyle = CHART_COLORS.info;
     ctx.fillText(
       currentMode === "straddle" ? "±1σ (68%)" : "16-84%",
       w - pad.right,
       pad.top + 10,
     );
-    ctx.fillStyle = "#d73126";
+    ctx.fillStyle = CHART_COLORS.danger;
     ctx.fillText(
       currentMode === "straddle" ? "±2σ (95%)" : "2.5-97.5%",
       w - pad.right,

@@ -2,8 +2,9 @@ import { ui_createElement } from "../../../components/core/builders/createElemen
 import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/theme";
 import { createTooltipHost } from "shared/utils/dom/tooltipHost";
 import { traceRoundRect, setupCanvas } from "frontend/charts/ChartUtils";
-import { CHART_FONTS } from "frontend/charts/ChartTheme";
+import { CHART_COLORS, CHART_FONTS } from "frontend/charts/ChartTheme";
 import { withShadow } from "frontend/components/core/axTheme/renderMode/canvasShadow";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 import { marchingSquares, pickContourLevels } from "shared/utils/math/marchingSquares";
 import type { VolSurfaceData } from "backend/computation/options/types";
 import { createRenderFrame } from "../renderFrameController";
@@ -11,7 +12,9 @@ import { getFocusedLevels, subscribeFocusedLevels } from "../../focus/focusStrik
 
 const CELL_GAP = 1;
 const CELL_RAD = 2;
-const GRID_BG = "rgba(0, 0, 0, 0.03)";
+const gridBg = (): string =>
+  isDarkTheme() ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)";
+const missingCellBg = (): string => (isDarkTheme() ? "#26262b" : "#f5f5f5");
 
 function ivColor(t: number): string {
   const c = Math.max(0, Math.min(1, t));
@@ -133,7 +136,7 @@ export function renderVolatilitySurface(
     if (!ctx) return;
 
     // ── Column headers: expiration labels ───────────────────────────────
-    ctx.fillStyle = "#3a3a3c";
+    ctx.fillStyle = CHART_COLORS.textSecondary;
     ctx.font = compact ? CHART_FONTS.denseLight : CHART_FONTS.labelSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -155,7 +158,7 @@ export function renderVolatilitySurface(
     // Grid background
     const gridW = numCols * cellW;
     const gridH = numRows * cellH;
-    ctx.fillStyle = GRID_BG;
+    ctx.fillStyle = gridBg();
     traceRoundRect(ctx, rowLabelW, colHeaderH, gridW, gridH, 4);
     ctx.fill();
 
@@ -173,7 +176,7 @@ export function renderVolatilitySurface(
 
     for (let sIdx = 0; sIdx < numRows; sIdx++) {
       // Row label (strike)
-      ctx.fillStyle = sIdx === atmRowIdx ? "#007AFF" : "#1c1c1e";
+      ctx.fillStyle = sIdx === atmRowIdx ? "#007AFF" : CHART_COLORS.textPrimary;
       ctx.font = compact
         ? (sIdx === atmRowIdx ? CHART_FONTS.labelBold : CHART_FONTS.labelSmall)
         : (sIdx === atmRowIdx ? CHART_FONTS.axisBold : CHART_FONTS.axis);
@@ -197,7 +200,7 @@ export function renderVolatilitySurface(
           const norm = maxIV > minIV ? (iv - minIV) / (maxIV - minIV) : 0.5;
           ctx.fillStyle = ivColor(norm);
         } else {
-          ctx.fillStyle = "#f5f5f5";
+          ctx.fillStyle = missingCellBg();
         }
         traceRoundRect(
           ctx,
@@ -352,12 +355,12 @@ export function renderVolatilitySurface(
     ctx.fillStyle = gradient;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.fill();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+    ctx.strokeStyle = CHART_COLORS.grid;
     ctx.lineWidth = 0.5;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.stroke();
 
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "left";
     ctx.fillText(`${minIV.toFixed(0)}%`, legendX, legendY + legendBarH + 12);

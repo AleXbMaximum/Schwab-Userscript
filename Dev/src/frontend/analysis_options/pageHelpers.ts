@@ -51,8 +51,8 @@ export function setCopyOutBtnAppearance(
   state: "default" | "success" | "error",
 ): void {
   if (state === "success") {
-    btn.style.borderColor = "#169c35";
-    btn.style.color = "#0c7a28";
+    btn.style.borderColor = "var(--ax-green)";
+    btn.style.color = "var(--ax-green)";
     return;
   }
   if (state === "error") {

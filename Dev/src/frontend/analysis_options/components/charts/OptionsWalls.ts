@@ -149,7 +149,7 @@ export function renderOptionsWalls(
       ctx.lineTo(w - pad.right, y);
       ctx.stroke();
 
-      ctx.fillStyle = "#8E8E93";
+      ctx.fillStyle = CHART_COLORS.neutral;
       ctx.font = CHART_FONTS.tickSmall;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -175,7 +175,7 @@ export function renderOptionsWalls(
       ctx.fillRect(x - halfBar, toYVal(d.putOI), halfBar, putH);
     }
 
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tickSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";

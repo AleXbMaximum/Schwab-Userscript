@@ -1,5 +1,6 @@
 import type{ OptionsExpiration } from "shared/types/options";
 import { formatCompactNumber } from "shared/utils/format/formatters";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 
 const MONTH_MAP: Record<string, string> = {
   JAN: "01",
@@ -74,6 +75,12 @@ export function oiColors(
 ): { optionBg: string; optionFg: string; selectBg: string } {
   const span = Math.max(1, maxOI - minOI);
   const t = clamp01((oi - minOI) / span);
+  if (isDarkTheme()) {
+    const optionBg = `hsl(138 ${6 + t * 40}% ${14 + t * 12}%)`;
+    const optionFg = `hsl(138 ${16 + t * 44}% ${74 + t * 14}%)`;
+    const selectBg = `hsl(138 ${8 + t * 36}% ${16 + t * 10}%)`;
+    return { optionBg, optionFg, selectBg };
+  }
   const optionBg = `hsl(138 ${6 + t * 56}% ${100 - t * 18}%)`;
   const optionFg = `hsl(138 ${20 + t * 48}% ${24 + (1 - t) * 12}%)`;
   const selectBg = `hsl(138 ${10 + t * 48}% ${99 - t * 10}%)`;

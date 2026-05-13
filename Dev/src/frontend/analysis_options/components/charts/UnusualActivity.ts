@@ -3,7 +3,8 @@ import { DS_COMPONENTS, DS_TYPOGRAPHY } from "../../../components/core/styles/th
 import { createPillGroup } from "../../../components/core/builders/pillGroup";
 import { createTooltipHost } from "shared/utils/dom/tooltipHost";
 import { traceRoundRect, setupCanvas } from "frontend/charts/ChartUtils";
-import { CHART_FONTS } from "frontend/charts/ChartTheme";
+import { CHART_COLORS, CHART_FONTS } from "frontend/charts/ChartTheme";
+import { isDarkTheme } from "frontend/components/core/axTheme";
 import { formatCompactNumber } from "shared/utils/format/formatters";
 import type { ActivitySurfaceData } from "backend/computation/options/types";
 import { createRenderFrame } from "../renderFrameController";
@@ -11,7 +12,9 @@ import { getFocusedLevels, subscribeFocusedLevels } from "../../focus/focusStrik
 
 const CELL_GAP = 1;
 const CELL_RAD = 2;
-const GRID_BG = "rgba(0, 0, 0, 0.03)";
+const gridBg = (): string =>
+  isDarkTheme() ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.03)";
+const missingCellBg = (): string => (isDarkTheme() ? "#26262b" : "#f5f5f5");
 
 type ActivityMode = "vol" | "oi" | "ratio";
 
@@ -166,7 +169,7 @@ export function renderUnusualActivity(
     const ctx = setupCanvas(canvas, totalW, totalH);
     if (!ctx) return;
 
-    ctx.fillStyle = "#3a3a3c";
+    ctx.fillStyle = CHART_COLORS.textSecondary;
     ctx.font = compact ? CHART_FONTS.denseLight : CHART_FONTS.labelSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -235,12 +238,12 @@ export function renderUnusualActivity(
     // Grid background
     const gridW = strikes.length * cellW;
     const gridH = expirations.length * cellH;
-    ctx.fillStyle = GRID_BG;
+    ctx.fillStyle = gridBg();
     traceRoundRect(ctx, rowLabelW, colHeaderH, gridW, gridH, 4);
     ctx.fill();
 
     for (let expIdx = 0; expIdx < expirations.length; expIdx++) {
-      ctx.fillStyle = "#1c1c1e";
+      ctx.fillStyle = CHART_COLORS.textPrimary;
       ctx.font = compact ? CHART_FONTS.labelSmall : CHART_FONTS.axis;
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
@@ -265,7 +268,7 @@ export function renderUnusualActivity(
         const ch = cellH - CELL_GAP * 2;
 
         if (modeVal == null && totalShare <= 0) {
-          ctx.fillStyle = "#f5f5f5";
+          ctx.fillStyle = missingCellBg();
           traceRoundRect(ctx, cx, cy, cw, ch, CELL_RAD);
           ctx.fill();
         } else {
@@ -318,12 +321,12 @@ export function renderUnusualActivity(
     ctx.fillStyle = "rgba(0, 122, 255, 0.58)";
     ctx.fillRect(swatchX + swatchW / 2, shareLegendY, swatchW / 2, swatchH);
     ctx.restore();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+    ctx.strokeStyle = CHART_COLORS.grid;
     ctx.lineWidth = 0.5;
     traceRoundRect(ctx, swatchX, shareLegendY, swatchW, swatchH, swatchH / 2);
     ctx.stroke();
 
-    ctx.fillStyle = "#777";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -334,17 +337,18 @@ export function renderUnusualActivity(
     ctx.fillText(splitLabel, swatchX + swatchW + 6, shareLegendY + swatchH / 2);
 
     const gradient = ctx.createLinearGradient(legendX, 0, legendX + legendW, 0);
-    gradient.addColorStop(0, "rgba(0,0,0,0.06)");
-    gradient.addColorStop(1, "rgba(0,0,0,0.72)");
+    const dark = isDarkTheme();
+    gradient.addColorStop(0, dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)");
+    gradient.addColorStop(1, dark ? "rgba(255,255,255,0.72)" : "rgba(0,0,0,0.72)");
     ctx.fillStyle = gradient;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.fill();
-    ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+    ctx.strokeStyle = CHART_COLORS.grid;
     ctx.lineWidth = 0.5;
     traceRoundRect(ctx, legendX, legendY, legendW, legendBarH, legendBarH / 2);
     ctx.stroke();
 
-    ctx.fillStyle = "#8E8E93";
+    ctx.fillStyle = CHART_COLORS.neutral;
     ctx.font = CHART_FONTS.tick;
     ctx.textAlign = "left";
     ctx.fillText(

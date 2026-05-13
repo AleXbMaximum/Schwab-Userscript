@@ -339,7 +339,7 @@ export function options_renderPage(
       const authToken = (ctx as any)?.authToken as string | undefined;
       if (!authToken) {
         statusLabel.textContent = "Options page is waiting for auth token.";
-        statusLabel.style.color = "#c97100";
+        statusLabel.style.color = "var(--ax-orange)";
         updateOptionsStatus("inactive");
         store.setState({ response: null });
         return;

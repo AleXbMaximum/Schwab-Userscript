@@ -111,13 +111,13 @@ function renderBiasGauge(
   scaleRow.appendChild(
     ui_createElement("span", {
       text: "Bearish",
-      styleString: "font-size: 10px; color: #d73126; font-weight: 600;",
+      styleString: "font-size: 10px; color: var(--ax-red); font-weight: 600;",
     }),
   );
   scaleRow.appendChild(
     ui_createElement("span", {
       text: "Bullish",
-      styleString: "font-size: 10px; color: #20a945; font-weight: 600;",
+      styleString: "font-size: 10px; color: var(--ax-green); font-weight: 600;",
     }),
   );
   container.appendChild(scaleRow);

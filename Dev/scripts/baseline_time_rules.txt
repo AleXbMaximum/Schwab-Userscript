@@ -17,7 +17,7 @@ src/frontend/analysis_optionFlow/monitor/monitorUniverse.ts:60: Do not use senti
 src/frontend/analysis_optionFlow/setting_panel/TickerGridManager.ts:294: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_optionFlow/setting_panel/TickerGridManager.ts:417: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
 src/frontend/analysis_optionFlow/setting_panel/monitoredTickers_infoPanel.ts:531: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
-src/frontend/analysis_options/controls/controlFormatters.ts:49: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
+src/frontend/analysis_options/controls/controlFormatters.ts:50: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
 src/frontend/analysis_options/page.ts:148: Legacy time fields must not be used in live runtime paths
 src/frontend/analysis_options/savedView/savedViewSerializer.ts:107: Do not hardcode 'America/Chicago' outside shared/utils/time.ts — import APP_TIMEZONE instead
 src/frontend/analysis_visualize/timeseries/dual_overlay/DualTickerOverlay.ts:246: Locale-based date/time formatting must pass an explicit timeZone or use canonical formatters
