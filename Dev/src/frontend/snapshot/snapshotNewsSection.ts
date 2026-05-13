@@ -12,7 +12,7 @@ import {
 } from "../../backend/services/news/types";
 import { renderNewsCard } from "../news_page/components/newsCard";
 
-const SNAPSHOT_NEWS_MAX_ITEMS = 8;
+const SNAPSHOT_NEWS_MAX_ITEMS = 50;
 
 const ACTION_BUTTON_STYLE =
   "padding:4px 8px; border:1px solid var(--ax-border); border-radius: var(--ax-radius-md);" +
@@ -73,7 +73,8 @@ export function createSnapshotNewsSection(
     styleString:
       `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` +
       ` margin-top:${DS_SPACING.md}; padding-top:${DS_SPACING.md};` +
-      " border-top: 1px solid var(--ax-border);",
+      " border-top: 1px solid var(--ax-border);" +
+      " flex:1 1 auto; min-height:0;",
   });
 
   // ── Header ──────────────────────────────────────────────────────────────
@@ -121,8 +122,13 @@ export function createSnapshotNewsSection(
   }
 
   // ── Body ────────────────────────────────────────────────────────────────
+  // Flex-grows to fill the remaining height of the snapshot panel; the
+  // inner list is the scroll surface so the header row stays pinned.
   const listWrap = ui_createElement("div", {
-    styleString: `display:flex; flex-direction:column; gap:${DS_SPACING.sm};`,
+    styleString:
+      `display:flex; flex-direction:column; gap:${DS_SPACING.sm};` +
+      " flex:1 1 auto; min-height:0; overflow-y:auto;" +
+      " padding-right:2px;",
   });
 
   const syncCollapsedState = () => {
