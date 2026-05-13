@@ -4,6 +4,7 @@ import { newsService } from "backend/services/news/NewsService";
 import type { UnifiedNewsItem } from "../../backend/services/news/types";
 import {
   NEWS_SOURCE_LABELS as SOURCE_LABELS,
+  pinUnreadHeadlines,
   sortNewsItemsNewestFirst,
 } from "../../backend/services/news/types";
 import { formatTimeAgo } from "../../shared/utils/time";
@@ -143,7 +144,10 @@ export function createSnapshotNewsSection(
 
   const render = (items: UnifiedNewsItem[]) => {
     const sorted = sortNewsItemsNewestFirst(items);
-    const display = sorted.slice(0, SNAPSHOT_NEWS_MAX_ITEMS);
+    // Pin unread headlines so high-priority items survive the
+    // SNAPSHOT_NEWS_MAX_ITEMS slice; ordering falls back to chronological
+    // once the user marks them read.
+    const display = pinUnreadHeadlines(sorted).slice(0, SNAPSHOT_NEWS_MAX_ITEMS);
     let newCount = display.filter((i) => i.isNew).length;
     updateHeader(display.length, newCount);
 
